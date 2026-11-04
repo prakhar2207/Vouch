@@ -6,6 +6,7 @@ from .views import (
     NotificationPreferencesAPIView,
     SecureInvoicePublicView,
     EmailDeliveryLogListView,
+    EmailDeliveryLogRetryAPIView,
 )
 
 urlpatterns = [
@@ -23,4 +24,5 @@ urlpatterns = [
 
     # Delivery Logs Forensics
     path('logs/', EmailDeliveryLogListView.as_view(), name='email_delivery_logs'),
+    path('logs/<uuid:log_id>/retry/', EmailDeliveryLogRetryAPIView.as_view(), name='email_delivery_log_retry'),
 ]

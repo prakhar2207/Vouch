@@ -162,40 +162,41 @@ class RegisterInitiateView(TestBypassThrottleMixin, APIView):
         otp_expiry_secs = getattr(settings, 'OTP_EXPIRY_SECONDS', 300)
         otp_cooldown_secs = getattr(settings, 'OTP_RESEND_COOLDOWN_SECONDS', 60)
 
-        # 3. Invalidate any existing active challenges for this email
-        EmailVerificationChallenge.objects.filter(email=email, is_consumed=False).update(is_consumed=True)
+        with transaction.atomic():
+            # 3. Invalidate any existing active challenges for this email
+            EmailVerificationChallenge.objects.filter(email=email, is_consumed=False).update(is_consumed=True)
 
-        # 4. Generate cryptographically secure 6-digit OTP
-        otp_code = f"{secrets.randbelow(900000) + 100000}"
-        otp_hash = make_password(otp_code)
-        session_token = secrets.token_urlsafe(32)
+            # 4. Generate cryptographically secure 6-digit OTP
+            otp_code = f"{secrets.randbelow(900000) + 100000}"
+            otp_hash = make_password(otp_code)
+            session_token = secrets.token_urlsafe(32)
 
-        client_ip = request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0].strip() or request.META.get('REMOTE_ADDR')
+            client_ip = request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0].strip() or request.META.get('REMOTE_ADDR')
 
-        challenge = EmailVerificationChallenge.objects.create(
-            email=email,
-            otp_hash=otp_hash,
-            session_token=session_token,
-            challenge_type='REGISTRATION',
-            expires_at=now + timedelta(seconds=otp_expiry_secs),
-            resend_available_at=now + timedelta(seconds=otp_cooldown_secs),
-            ip_address=client_ip if client_ip and len(client_ip) <= 45 else None,
-        )
+            challenge = EmailVerificationChallenge.objects.create(
+                email=email,
+                otp_hash=otp_hash,
+                session_token=session_token,
+                challenge_type='REGISTRATION',
+                expires_at=now + timedelta(seconds=otp_expiry_secs),
+                resend_available_at=now + timedelta(seconds=otp_cooldown_secs),
+                ip_address=client_ip if client_ip and len(client_ip) <= 45 else None,
+            )
 
-        # 5. Persist unverified PendingRegistration record
-        registration_token = secrets.token_urlsafe(48)
-        PendingRegistration.objects.update_or_create(
-            email=email,
-            defaults={
-                'password_hash': make_password(password),
-                'verification_challenge': challenge,
-                'registration_token': registration_token,
-                'is_verified': False,
-                'expires_at': now + timedelta(hours=1),
-            }
-        )
+            # 5. Persist unverified PendingRegistration record
+            registration_token = secrets.token_urlsafe(48)
+            PendingRegistration.objects.update_or_create(
+                email=email,
+                defaults={
+                    'password_hash': make_password(password),
+                    'verification_challenge': challenge,
+                    'registration_token': registration_token,
+                    'is_verified': False,
+                    'expires_at': now + timedelta(hours=1),
+                }
+            )
 
-        # 6. Dispatch OTP Email
+        # 6. Dispatch OTP Email after atomic database commit
         EmailService.send_registration_otp(email, otp_code)
 
         return Response({
@@ -225,63 +226,79 @@ class RegisterVerifyOtpView(TestBypassThrottleMixin, APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        challenge = EmailVerificationChallenge.objects.filter(session_token=session_token).first()
-        if not challenge or challenge.is_consumed:
-            return Response(
-                {"success": False, "error": "Invalid or expired verification session. Please request a new code."},
-                status=status.HTTP_400_BAD_REQUEST
+        with transaction.atomic():
+            challenge = (
+                EmailVerificationChallenge.objects
+                .select_for_update()
+                .filter(session_token=session_token)
+                .first()
             )
+            if not challenge or challenge.is_consumed:
+                return Response(
+                    {"success": False, "error": "Invalid or expired verification session. Please request a new code."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-        if challenge.is_expired():
-            return Response(
-                {"success": False, "error": "This verification code has expired (5-minute limit). Please request a new code."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if challenge.is_locked():
-            return Response(
-                {"success": False, "error": "Too many failed attempts. For your security, this code has been locked. Please request a new code."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Verify salted PBKDF2 hash
-        if not check_password(otp, challenge.otp_hash):
-            challenge.failed_attempts += 1
-            challenge.save(update_fields=['failed_attempts'])
-            remaining = max(0, challenge.max_attempts - challenge.failed_attempts)
-            if remaining == 0:
+            if challenge.is_expired():
                 challenge.is_consumed = True
                 challenge.save(update_fields=['is_consumed'])
                 return Response(
-                    {"success": False, "error": "Maximum failed attempts exceeded. Please request a new code."},
+                    {"success": False, "error": "This verification code has expired (5-minute limit). Please request a new code."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            return Response(
-                {"success": False, "error": f"Incorrect verification code. {remaining} attempt(s) remaining."},
-                status=status.HTTP_400_BAD_REQUEST
+
+            if challenge.is_locked():
+                challenge.is_consumed = True
+                challenge.save(update_fields=['is_consumed'])
+                return Response(
+                    {"success": False, "error": "Too many failed attempts. For your security, this code has been locked. Please request a new code."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Verify salted PBKDF2 hash
+            if not check_password(otp, challenge.otp_hash):
+                challenge.failed_attempts += 1
+                if challenge.failed_attempts >= challenge.max_attempts:
+                    challenge.is_consumed = True
+                    challenge.save(update_fields=['failed_attempts', 'is_consumed'])
+                    return Response(
+                        {"success": False, "error": "Maximum failed attempts exceeded. Please request a new code."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                challenge.save(update_fields=['failed_attempts'])
+                remaining = max(0, challenge.max_attempts - challenge.failed_attempts)
+                return Response(
+                    {"success": False, "error": f"Incorrect verification code. {remaining} attempt(s) remaining."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Success: atomic transition CREATED -> VERIFIED -> CONSUMED
+            challenge.is_verified = True
+            challenge.is_consumed = True
+            challenge.save(update_fields=['is_verified', 'is_consumed'])
+
+            # Concurrently lock PendingRegistration record
+            pending = (
+                PendingRegistration.objects
+                .select_for_update()
+                .filter(email__iexact=challenge.email)
+                .first()
             )
+            if not pending:
+                return Response(
+                    {"success": False, "error": "Registration session expired. Please restart registration."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-        # Success: consume challenge and activate pending registration
-        challenge.is_verified = True
-        challenge.is_consumed = True
-        challenge.save(update_fields=['is_verified', 'is_consumed'])
+            pending.is_verified = True
+            pending.save(update_fields=['is_verified'])
 
-        pending = PendingRegistration.objects.filter(email__iexact=challenge.email).first()
-        if not pending:
-            return Response(
-                {"success": False, "error": "Registration session expired. Please restart registration."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        pending.is_verified = True
-        pending.save(update_fields=['is_verified'])
-
-        return Response({
-            "success": True,
-            "message": "Email address verified successfully.",
-            "registration_token": pending.registration_token,
-            "email": pending.email,
-        }, status=status.HTTP_200_OK)
+            return Response({
+                "success": True,
+                "message": "Email address verified successfully.",
+                "registration_token": pending.registration_token,
+                "email": pending.email,
+            }, status=status.HTTP_200_OK)
 
 
 # =============================================================================
@@ -297,42 +314,66 @@ class RegisterResendOtpView(TestBypassThrottleMixin, APIView):
         if not session_token:
             return Response({"success": False, "error": "Session token is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        challenge = EmailVerificationChallenge.objects.filter(session_token=session_token).first()
-        if not challenge:
-            return Response({"success": False, "error": "Session not found. Please restart registration."}, status=status.HTTP_400_BAD_REQUEST)
+        with transaction.atomic():
+            challenge = (
+                EmailVerificationChallenge.objects
+                .select_for_update()
+                .filter(session_token=session_token)
+                .first()
+            )
+            if not challenge or challenge.is_consumed:
+                return Response(
+                    {"success": False, "error": "Session not found or already replaced. Please restart registration."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-        now = timezone.now()
-        if not challenge.can_resend():
-            remaining_secs = max(1, int((challenge.resend_available_at - now).total_seconds()))
-            return Response(
-                {"success": False, "error": f"Please wait {remaining_secs} seconds before requesting a new code.", "cooldown": remaining_secs},
-                status=status.HTTP_429_TOO_MANY_REQUESTS
+            now = timezone.now()
+            if not challenge.can_resend():
+                remaining_secs = max(1, int((challenge.resend_available_at - now).total_seconds()))
+                return Response(
+                    {"success": False, "error": f"Please wait {remaining_secs} seconds before requesting a new code.", "cooldown": remaining_secs},
+                    status=status.HTTP_429_TOO_MANY_REQUESTS
+                )
+
+            # Invalidate the current challenge and any other active challenge for this email
+            challenge.is_consumed = True
+            challenge.save(update_fields=['is_consumed'])
+            EmailVerificationChallenge.objects.filter(email__iexact=challenge.email, is_consumed=False).update(is_consumed=True)
+
+            otp_expiry_secs = getattr(settings, 'OTP_EXPIRY_SECONDS', 300)
+            otp_cooldown_secs = getattr(settings, 'OTP_RESEND_COOLDOWN_SECONDS', 60)
+
+            otp_code = f"{secrets.randbelow(900000) + 100000}"
+            otp_hash = make_password(otp_code)
+            new_session_token = secrets.token_urlsafe(32)
+
+            new_challenge = EmailVerificationChallenge.objects.create(
+                email=challenge.email,
+                otp_hash=otp_hash,
+                session_token=new_session_token,
+                challenge_type='REGISTRATION',
+                expires_at=now + timedelta(seconds=otp_expiry_secs),
+                resend_available_at=now + timedelta(seconds=otp_cooldown_secs),
+                ip_address=challenge.ip_address,
             )
 
-        challenge.is_consumed = True
-        challenge.save(update_fields=['is_consumed'])
+            # Atomically lock and update PendingRegistration
+            pending = (
+                PendingRegistration.objects
+                .select_for_update()
+                .filter(email__iexact=challenge.email)
+                .first()
+            )
+            if not pending or pending.is_expired():
+                return Response(
+                    {"success": False, "error": "Registration session expired. Please restart registration."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-        otp_expiry_secs = getattr(settings, 'OTP_EXPIRY_SECONDS', 300)
-        otp_cooldown_secs = getattr(settings, 'OTP_RESEND_COOLDOWN_SECONDS', 60)
+            pending.verification_challenge = new_challenge
+            pending.save(update_fields=['verification_challenge', 'updated_at'])
 
-        otp_code = f"{secrets.randbelow(900000) + 100000}"
-        otp_hash = make_password(otp_code)
-        new_session_token = secrets.token_urlsafe(32)
-
-        new_challenge = EmailVerificationChallenge.objects.create(
-            email=challenge.email,
-            otp_hash=otp_hash,
-            session_token=new_session_token,
-            challenge_type='REGISTRATION',
-            expires_at=now + timedelta(seconds=otp_expiry_secs),
-            resend_available_at=now + timedelta(seconds=otp_cooldown_secs),
-            ip_address=challenge.ip_address,
-        )
-
-        PendingRegistration.objects.filter(email__iexact=challenge.email).update(
-            verification_challenge=new_challenge
-        )
-
+        # Dispatch replacement OTP email after atomic database commit
         EmailService.send_registration_otp(challenge.email, otp_code)
 
         return Response({
@@ -356,20 +397,6 @@ class RegisterCompleteView(TestBypassThrottleMixin, APIView):
         if not registration_token:
             return Response(
                 {"success": False, "error": "Registration verification token is required."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        pending = PendingRegistration.objects.filter(registration_token=registration_token, is_verified=True).first()
-        if not pending or pending.is_expired():
-            return Response(
-                {"success": False, "error": "Invalid or expired registration session. Please verify your email again."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        email = pending.email
-        if User.objects.filter(email__iexact=email).exists():
-            return Response(
-                {"success": False, "error": f"An account with email '{email}' has already been completed. Please log in."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -413,6 +440,27 @@ class RegisterCompleteView(TestBypassThrottleMixin, APIView):
 
         try:
             with transaction.atomic():
+                # Atomically claim and lock PendingRegistration
+                pending = (
+                    PendingRegistration.objects
+                    .select_for_update()
+                    .filter(registration_token=registration_token, is_verified=True)
+                    .first()
+                )
+                if not pending or pending.is_expired():
+                    return Response(
+                        {"success": False, "error": "Invalid, expired, or already completed registration session. Please verify your email again."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                email = pending.email
+                if User.objects.filter(email__iexact=email).exists():
+                    pending.delete()
+                    return Response(
+                        {"success": False, "error": f"An account with email '{email}' has already been completed. Please log in."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
                 # 1. Create User with pre-hashed password and email_verified=True
                 user = User(
                     email=email,
@@ -529,130 +577,24 @@ class RegisterCompleteView(TestBypassThrottleMixin, APIView):
 # =============================================================================
 
 class RegisterView(TestBypassThrottleMixin, APIView):
+    """
+    LEGACY REGISTRATION ENDPOINT — PERMANENTLY DEPRECATED & CLOSED (P0 Remediation).
+    Direct account and company provisioning without verified email ownership is strictly prohibited.
+    All users must complete the verified multi-step OTP workflow starting at /api/v1/auth/register/initiate/.
+    """
     permission_classes = [AllowAny]
     throttle_classes = [RegisterRateThrottle]
 
     def post(self, request):
-        email = (request.data.get('email') or '').strip().lower()
-        password = request.data.get('password')
-
-        if not email or not password:
-            return Response({"success": False, "error": "Email and password are required."}, status=400)
-
-        if User.objects.filter(email__iexact=email).exists():
-            return Response({"success": False, "error": f"An account with email '{email}' already exists. Please log in."}, status=400)
-
-        firm_name = (request.data.get('name') or request.data.get('firm_name') or 'My Firm').strip()
-        is_gst_registered = request.data.get('is_gst_registered')
-        if isinstance(is_gst_registered, str):
-            is_gst_registered = is_gst_registered.strip().lower() in ('true', '1', 'yes')
-        elif is_gst_registered is None:
-            is_gst_registered = bool(request.data.get('gstin'))
-
-        gstin = (request.data.get('gstin') or '').strip().upper()
-        pan = request.data.get('pan') or (gstin[2:12] if len(gstin) >= 12 else '')
-        state_code = (request.data.get('state_code') or '').strip()
-        address = (request.data.get('address') or '').strip()
-        phone = (request.data.get('phone') or '').strip()
-        company_email = (request.data.get('company_email') or email).strip()
-        proprietor_name = (request.data.get('proprietor_name') or '').strip()
-        proprietor_phone = (request.data.get('proprietor_phone') or '').strip()
-        signature_file = request.FILES.get('signature') or request.FILES.get('proprietor_signature')
-
-        if signature_file:
-            if signature_file.size > 5 * 1024 * 1024:
-                return Response({"success": False, "error": "Signature file size exceeds maximum 5MB limit."}, status=400)
-            allowed_extensions = ('.png', '.jpg', '.jpeg', '.webp', '.pdf')
-            file_name_lower = (signature_file.name or '').lower()
-            if not any(file_name_lower.endswith(ext) for ext in allowed_extensions):
-                return Response({"success": False, "error": "Signature must be an image (PNG, JPG, WEBP) or PDF."}, status=400)
-
-        try:
-            validate_password(password, user=User(email=email))
-        except Exception as e:
-            msg = e.messages[0] if hasattr(e, 'messages') and e.messages else str(e)
-            return Response({"success": False, "error": f"Weak password: {msg}"}, status=400)
-
-        if is_gst_registered:
-            if not gstin:
-                return Response({"success": False, "error": "GSTIN is required for GST-registered businesses."}, status=400)
-            gst_res = GSTINValidator.validate(gstin)
-            if not gst_res['is_valid']:
-                return Response({"success": False, "error": f"Invalid GSTIN: {gst_res['error']}"}, status=400)
-            if not state_code:
-                state_code = gst_res['state_code']
-        else:
-            gstin = ''
-
-        try:
-            with transaction.atomic():
-                user = User.objects.create_user(email=email, password=password, role='OWNER', email_verified=True)
-
-                company = Company.objects.create(
-                    name=firm_name,
-                    legal_name=firm_name,
-                    gstin=gstin,
-                    pan=pan,
-                    phone=phone,
-                    email=company_email,
-                    address=address,
-                    state_code=state_code,
-                    proprietor_name=proprietor_name,
-                    proprietor_phone=proprietor_phone,
-                    proprietor_signature=signature_file if signature_file else None,
-                    financial_year_start=datetime.date(datetime.date.today().year, 4, 1)
-                )
-
-                UserCompany.objects.create(user=user, company=company, role='OWNER')
-                CompanySettings.objects.create(company=company)
-                NotificationPreference.objects.create(company=company)
-
-                Warehouse.objects.create(company=company, name="Main Godown", address=address)
-
-                debtors_grp, _ = LedgerGroup.objects.get_or_create(company=company, name="Sundry Debtors", defaults={"nature": "ASSET"})
-                creditors_grp, _ = LedgerGroup.objects.get_or_create(company=company, name="Sundry Creditors", defaults={"nature": "LIABILITY"})
-                sales_grp, _ = LedgerGroup.objects.get_or_create(company=company, name="Sales Accounts", defaults={"nature": "INCOME"})
-                purchase_grp, _ = LedgerGroup.objects.get_or_create(company=company, name="Purchase Accounts", defaults={"nature": "EXPENSE"})
-                duties_grp, _ = LedgerGroup.objects.get_or_create(company=company, name="Duties & Taxes", defaults={"nature": "LIABILITY"})
-                bank_grp, _ = LedgerGroup.objects.get_or_create(company=company, name="Bank Accounts", defaults={"nature": "ASSET"})
-                cash_grp, _ = LedgerGroup.objects.get_or_create(company=company, name="Cash-in-Hand", defaults={"nature": "ASSET"})
-                indirect_grp, _ = LedgerGroup.objects.get_or_create(company=company, name="Indirect Expenses", defaults={"nature": "EXPENSE"})
-                direct_grp, _ = LedgerGroup.objects.get_or_create(company=company, name="Direct Expenses", defaults={"nature": "EXPENSE"})
-
-                Ledger.objects.create(company=company, group=sales_grp, name="Sales Account", ledger_type="SALES")
-                Ledger.objects.create(company=company, group=purchase_grp, name="Purchase Account", ledger_type="PURCHASE")
-                Ledger.objects.create(company=company, group=cash_grp, name="Cash", ledger_type="CASH")
-                Ledger.objects.create(company=company, group=indirect_grp, name="Round Off", ledger_type="ROUND_OFF")
-                Ledger.objects.create(company=company, group=indirect_grp, name="Cartage Outward", ledger_type="EXPENSE")
-                Ledger.objects.create(company=company, group=direct_grp, name="Cartage Inward", ledger_type="EXPENSE")
-                Ledger.objects.create(company=company, group=duties_grp, name="Output CGST", ledger_type="TAX")
-                Ledger.objects.create(company=company, group=duties_grp, name="Output SGST", ledger_type="TAX")
-                Ledger.objects.create(company=company, group=duties_grp, name="Output IGST", ledger_type="TAX")
-                Ledger.objects.create(company=company, group=duties_grp, name="Input CGST", ledger_type="TAX")
-                Ledger.objects.create(company=company, group=duties_grp, name="Input SGST", ledger_type="TAX")
-                Ledger.objects.create(company=company, group=duties_grp, name="Input IGST", ledger_type="TAX")
-
-                transaction.on_commit(lambda: EmailService.send_welcome_email(
-                    to_email=user.email,
-                    company_name=company.name,
-                    user_name=proprietor_name,
-                    gstin=company.gstin,
-                    state=state_code,
-                    company=company,
-                ))
-
-                refresh = RefreshToken.for_user(user)
-
-                return Response({
-                    "success": True,
-                    "access": str(refresh.access_token),
-                    "refresh": str(refresh),
-                    "message": "Registration successful"
-                }, status=201)
-
-        except Exception as e:
-            logger.exception(f"Legacy registration failure for '{email}': {e}")
-            return Response({"success": False, "error": "Registration failed. Please verify your details or try again."}, status=400)
+        return Response(
+            {
+                "success": False,
+                "error": "Direct account registration without email OTP verification has been permanently disabled. Please use /api/v1/auth/register/initiate/ to begin verified registration.",
+                "code": "LEGACY_REGISTRATION_DEPRECATED",
+                "redirect_to": "/api/v1/auth/register/initiate/",
+            },
+            status=status.HTTP_410_GONE
+        )
 
 
 # =============================================================================

@@ -35,7 +35,9 @@ class EmailDeliveryLog(models.Model):
     """
     STATUS_CHOICES = (
         ('PENDING', 'Pending'),
+        ('SENDING', 'Sending'),
         ('SENT', 'Sent'),
+        ('RETRY_PENDING', 'Retry Pending'),
         ('FAILED', 'Failed'),
         ('SKIPPED', 'Skipped'),
     )
@@ -65,6 +67,8 @@ class EmailDeliveryLog(models.Model):
     error_message = models.TextField(null=True, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
     idempotency_key = models.CharField(max_length=255, null=True, blank=True, unique=True, db_index=True)
+    claim_token = models.CharField(max_length=128, null=True, blank=True, db_index=True)
+    claim_expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
     sent_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now, db_index=True)
 
@@ -89,6 +93,7 @@ class TransactionalOutboxEvent(models.Model):
         ('PENDING', 'Pending'),
         ('PROCESSING', 'Processing'),
         ('PROCESSED', 'Processed'),
+        ('RETRY_PENDING', 'Retry Pending'),
         ('FAILED', 'Failed'),
         ('DEAD_LETTER', 'Dead Letter'),
         ('SKIPPED', 'Skipped'),
@@ -105,6 +110,9 @@ class TransactionalOutboxEvent(models.Model):
     retry_count = models.PositiveSmallIntegerField(default=0)
     max_retries = models.PositiveSmallIntegerField(default=3)
     next_retry_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    claimed_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    claim_token = models.CharField(max_length=128, null=True, blank=True, db_index=True)
+    lease_expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
     error_log = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now, db_index=True)
     processed_at = models.DateTimeField(null=True, blank=True)
@@ -153,6 +161,8 @@ class SecureInvoiceAccessToken(models.Model):
     is_revoked = models.BooleanField(default=False)
     view_count = models.PositiveIntegerField(default=0)
     last_accessed_at = models.DateTimeField(null=True, blank=True)
+    last_accessed_ip = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:

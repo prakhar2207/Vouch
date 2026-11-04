@@ -77,6 +77,11 @@ class OutboxService:
         Processes a single TransactionalOutboxEvent with row-level locking.
         Resolves customer recipient email, generates secure view token, renders PDF, and dispatches email.
         """
+        worker_id = secrets.token_urlsafe(16)
+        now = timezone.now()
+        lease_seconds = getattr(settings, 'OUTBOX_LEASE_SECONDS', 300)
+        lease_expires_at = now + timedelta(seconds=lease_seconds)
+
         with transaction.atomic():
             event = (
                 TransactionalOutboxEvent.objects
@@ -92,10 +97,20 @@ class OutboxService:
                 logger.info(f"Outbox event {event_id} already in terminal state {event.status}.")
                 return True
 
-            event.status = 'PROCESSING'
-            event.save(update_fields=['status'])
+            if event.status == 'PROCESSING':
+                if event.lease_expires_at and event.lease_expires_at > now:
+                    logger.info(f"Outbox event {event_id} actively claimed by worker until {event.lease_expires_at}. Suppressing duplicate.")
+                    return True
+                else:
+                    logger.warning(f"Outbox event {event_id} lease expired ({event.lease_expires_at}). Taking over claim via worker {worker_id}.")
 
-        # Outside the lock on the outbox row, execute the actual notification delivery
+            event.status = 'PROCESSING'
+            event.claimed_at = now
+            event.claim_token = worker_id
+            event.lease_expires_at = lease_expires_at
+            event.save(update_fields=['status', 'claimed_at', 'claim_token', 'lease_expires_at'])
+
+        # Outside the lock on the outbox row, execute the notification delivery
         try:
             if event.event_type == 'INVOICE_POSTED':
                 success = cls._process_invoice_posted_event(event)
@@ -104,36 +119,50 @@ class OutboxService:
                 success = True
 
             with transaction.atomic():
-                event = TransactionalOutboxEvent.objects.select_for_update().get(id=event.id)
+                event = TransactionalOutboxEvent.objects.select_for_update().filter(id=event_id).first()
+                if not event:
+                    return False
+
+                # Invariant: verify that this worker still holds the claim
+                if event.claim_token != worker_id:
+                    logger.warning(f"Worker {worker_id} lost claim on event {event_id} (current claim: {event.claim_token}). Aborting commit.")
+                    return False
+
+                event.claim_token = None
+                event.lease_expires_at = None
+
                 if event.status in ('SKIPPED', 'DEAD_LETTER'):
-                    pass
+                    event.save(update_fields=['status', 'claim_token', 'lease_expires_at', 'error_log'])
                 elif success:
                     event.status = 'PROCESSED'
                     event.processed_at = timezone.now()
-                    event.save()
+                    event.save(update_fields=['status', 'processed_at', 'claim_token', 'lease_expires_at'])
                 else:
                     event.retry_count += 1
                     if event.retry_count >= event.max_retries:
                         event.status = 'DEAD_LETTER'
                     else:
-                        event.status = 'PENDING'
+                        event.status = 'RETRY_PENDING'
                         # Exponential backoff: 30s, 60s, 120s...
                         event.next_retry_at = timezone.now() + timedelta(seconds=(2 ** event.retry_count) * 30)
-                event.save()
+                    event.save(update_fields=['status', 'retry_count', 'next_retry_at', 'claim_token', 'lease_expires_at', 'error_log'])
                 return success
 
         except Exception as exc:
             logger.exception(f"Fatal error processing outbox event {event_id}: {exc}")
             with transaction.atomic():
-                event = TransactionalOutboxEvent.objects.select_for_update().get(id=event.id)
-                event.retry_count += 1
-                event.error_log = str(exc)
-                if event.retry_count >= event.max_retries:
-                    event.status = 'DEAD_LETTER'
-                else:
-                    event.status = 'PENDING'
-                    event.next_retry_at = timezone.now() + timedelta(seconds=(2 ** event.retry_count) * 30)
-                event.save()
+                event = TransactionalOutboxEvent.objects.select_for_update().filter(id=event_id).first()
+                if event and event.claim_token == worker_id:
+                    event.retry_count += 1
+                    event.error_log = str(exc)
+                    event.claim_token = None
+                    event.lease_expires_at = None
+                    if event.retry_count >= event.max_retries:
+                        event.status = 'DEAD_LETTER'
+                    else:
+                        event.status = 'RETRY_PENDING'
+                        event.next_retry_at = timezone.now() + timedelta(seconds=(2 ** event.retry_count) * 30)
+                    event.save(update_fields=['status', 'retry_count', 'error_log', 'next_retry_at', 'claim_token', 'lease_expires_at'])
             return False
 
     @classmethod
@@ -284,29 +313,24 @@ class OutboxService:
     def dispatch_outbox_event_async(cls, event_id: Union[str, UUID]):
         """
         Offloads outbox event processing asynchronously.
-        Attempts Celery background worker dispatch first; falls back smoothly to daemon thread.
+        In testing or synchronous notification mode, processes synchronously.
+        In production/staging, dispatches to durable Celery worker.
+        Daemon thread fallback is strictly removed in production to avoid orphaned jobs on process restart.
+        If Celery broker is temporarily unavailable, the event remains durable in the database
+        (status PENDING or RETRY_PENDING) and will be picked up by the periodic sweeper.
         """
         event_id_str = str(event_id)
 
-        # 1. Try Celery task offload
+        if getattr(settings, 'TESTING', False) or getattr(settings, 'SYNCHRONOUS_NOTIFICATIONS', False):
+            cls.process_outbox_event(event_id_str)
+            return
+
         try:
             from apps.notifications.tasks import process_outbox_event_task
             process_outbox_event_task.delay(event_id_str)
             logger.info(f"Dispatched outbox event {event_id_str} to Celery worker.")
-            return
         except Exception as e:
-            logger.info(f"Celery offload bypassed ({e}); processing via background daemon thread.")
-
-        # 2. Daemon thread fallback
-        def _runner():
-            try:
-                cls.process_outbox_event(event_id_str)
-            except Exception as e:
-                logger.exception(f"Background thread outbox processing failed for {event_id_str}: {e}")
-
-        # In testing environments, run synchronously if requested
-        if getattr(settings, 'TESTING', False) or getattr(settings, 'SYNCHRONOUS_NOTIFICATIONS', False):
-            cls.process_outbox_event(event_id_str)
-        else:
-            t = threading.Thread(target=_runner, daemon=True)
-            t.start()
+            logger.warning(
+                f"Celery broker dispatch failed for outbox event {event_id_str}: {e}. "
+                f"Event remains durably recorded in database and will be retried by the periodic sweeper."
+            )

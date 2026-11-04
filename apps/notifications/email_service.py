@@ -1,3 +1,5 @@
+import secrets
+from datetime import timedelta
 import logging
 import uuid
 from typing import Optional, Dict, Any, List, Tuple
@@ -51,28 +53,57 @@ class EmailService:
         sender = from_email or cls.get_default_from_email()
         reply_to_list = reply_to if reply_to is not None else cls.get_default_reply_to()
 
-        # Idempotency check: if key provided and already SENT, do not re-send
-        if idempotency_key:
-            existing = EmailDeliveryLog.objects.filter(idempotency_key=idempotency_key, status='SENT').first()
-            if existing:
-                logger.info(f"Email delivery skipped (idempotent duplicate): key={idempotency_key}")
-                return True, existing, "idempotent_duplicate"
+        worker_claim_token = secrets.token_urlsafe(16)
+        now = timezone.now()
+        claim_timeout = getattr(settings, 'EMAIL_SENDING_LEASE_SECONDS', 180)
+        lease_expiry = now + timedelta(seconds=claim_timeout)
 
-        # Initialize or retrieve delivery log
+        # Sanitize metadata to avoid logging sensitive credentials
+        sanitized_meta = {
+            k: str(v) for k, v in context.items()
+            if k not in ['otp_code', 'password', 'token', 'pdf_content', 'pdf_bytes']
+        }
+
+        from django.db import transaction
         log_entry = None
+
         if idempotency_key:
-            log_entry, _ = EmailDeliveryLog.objects.get_or_create(
-                idempotency_key=idempotency_key,
-                defaults={
-                    'company': company,
-                    'recipient_email': to_email,
-                    'sender_email': sender,
-                    'subject': subject,
-                    'email_type': email_type,
-                    'status': 'PENDING',
-                    'metadata': {k: str(v) for k, v in context.items() if k not in ['otp_code', 'password', 'token']},
-                }
-            )
+            with transaction.atomic():
+                log_entry, created = (
+                    EmailDeliveryLog.objects
+                    .select_for_update()
+                    .get_or_create(
+                        idempotency_key=idempotency_key,
+                        defaults={
+                            'company': company,
+                            'recipient_email': to_email,
+                            'sender_email': sender,
+                            'subject': subject,
+                            'email_type': email_type,
+                            'status': 'SENDING',
+                            'claim_token': worker_claim_token,
+                            'claim_expires_at': lease_expiry,
+                            'attempts': 1,
+                            'metadata': sanitized_meta,
+                        }
+                    )
+                )
+                if not created:
+                    if log_entry.status == 'SENT':
+                        logger.info(f"Email delivery skipped (idempotent duplicate): key={idempotency_key}")
+                        return True, log_entry, "idempotent_duplicate"
+                    elif log_entry.status == 'SENDING':
+                        if log_entry.claim_expires_at and log_entry.claim_expires_at > now:
+                            logger.info(f"Email delivery already in-flight for key={idempotency_key}. Suppressing duplicate.")
+                            return True, log_entry, "in_flight_send"
+                        else:
+                            logger.warning(f"In-flight lease expired for key={idempotency_key}. Taking over send slot.")
+
+                    log_entry.status = 'SENDING'
+                    log_entry.claim_token = worker_claim_token
+                    log_entry.claim_expires_at = lease_expiry
+                    log_entry.attempts += 1
+                    log_entry.save(update_fields=['status', 'claim_token', 'claim_expires_at', 'attempts'])
         else:
             log_entry = EmailDeliveryLog.objects.create(
                 company=company,
@@ -80,8 +111,11 @@ class EmailService:
                 sender_email=sender,
                 subject=subject,
                 email_type=email_type,
-                status='PENDING',
-                metadata={k: str(v) for k, v in context.items() if k not in ['otp_code', 'password', 'token']},
+                status='SENDING',
+                claim_token=worker_claim_token,
+                claim_expires_at=lease_expiry,
+                attempts=1,
+                metadata=sanitized_meta,
             )
 
         # Render HTML and Plain-Text templates
@@ -117,18 +151,37 @@ class EmailService:
 
             msg.send(fail_silently=False)
 
-            log_entry.status = 'SENT'
-            log_entry.sent_at = timezone.now()
-            log_entry.provider_name = getattr(settings, 'EMAIL_BACKEND', 'SMTP').split('.')[-1]
-            log_entry.save(update_fields=['status', 'sent_at', 'attempts', 'provider_name'])
+            with transaction.atomic():
+                locked = EmailDeliveryLog.objects.select_for_update().filter(id=log_entry.id).first()
+                if locked:
+                    if idempotency_key and locked.claim_token != worker_claim_token:
+                        logger.warning(f"Claim lost on email delivery log {log_entry.id} (worker {worker_claim_token} vs {locked.claim_token}).")
+                        return True, locked, "claim_lost"
+
+                    locked.status = 'SENT'
+                    locked.sent_at = timezone.now()
+                    locked.claim_token = None
+                    locked.claim_expires_at = None
+                    locked.provider_name = getattr(settings, 'EMAIL_BACKEND', 'SMTP').split('.')[-1]
+                    locked.save(update_fields=['status', 'sent_at', 'claim_token', 'claim_expires_at', 'provider_name'])
+                    return True, locked, None
             return True, log_entry, None
 
         except Exception as exc:
             err_msg = str(exc)
             logger.error(f"Email delivery failed to {to_email}: {err_msg}")
-            log_entry.status = 'FAILED'
-            log_entry.error_message = err_msg
-            log_entry.save(update_fields=['status', 'attempts', 'error_message'])
+            with transaction.atomic():
+                locked = EmailDeliveryLog.objects.select_for_update().filter(id=log_entry.id).first()
+                if locked:
+                    locked.claim_token = None
+                    locked.claim_expires_at = None
+                    if locked.attempts >= locked.max_attempts:
+                        locked.status = 'FAILED'
+                    else:
+                        locked.status = 'RETRY_PENDING'
+                    locked.error_message = err_msg[:500]  # Sanitize length
+                    locked.save(update_fields=['status', 'claim_token', 'claim_expires_at', 'error_message'])
+                    return False, locked, err_msg
             return False, log_entry, err_msg
 
     # =========================================================================

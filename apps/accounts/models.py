@@ -17,6 +17,7 @@ class UserManager(BaseUserManager):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
         extra_fields.setdefault('role', 'ADMIN')
+        extra_fields.setdefault('email_verified', True)
 
         return self.create_user(email, password, **extra_fields)
 
@@ -36,7 +37,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='VIEWER')
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
-    email_verified = models.BooleanField(default=True, db_index=True)
+    email_verified = models.BooleanField(default=False, db_index=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 

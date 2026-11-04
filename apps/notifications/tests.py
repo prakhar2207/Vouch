@@ -430,3 +430,171 @@ class NotificationSystemTests(TestCase):
         self.assertFalse(res_patch.data["data"]["attach_invoice_pdf"])
         self.assertTrue(res_patch.data["data"]["send_overdue_reminder_email"])
         self.assertEqual(res_patch.data["data"]["updated_by"], self.owner.email)
+
+    # =========================================================================
+    # Phase 6 & 7: Security Headers, Information Minimization, RBAC & Forensics
+    # =========================================================================
+
+    def test_secure_invoice_headers_and_pii_minimization(self):
+        """Phase 6: Public invoice view sets strict anti-caching/referrer headers and omits buyer phone/email."""
+        voucher = Voucher.objects.create(
+            company=self.company,
+            voucher_type='SALES',
+            voucher_number='INV-MINPII-001',
+            voucher_date=date.today(),
+            party_ledger=self.customer_ledger,
+            buyer_name='Privacy First Retailer',
+            buyer_phone='9999999999',
+            buyer_email='secret_buyer@example.com',
+            total_amount=Decimal('1000.00'),
+            status='POSTED',
+            created_by=self.owner,
+        )
+
+        token_obj = SecureInvoiceAccessToken.objects.create(
+            voucher=voucher,
+            token="token_with_pii_test_987654",
+            expires_at=timezone.now() + timedelta(days=30),
+        )
+
+        res = self.client.get(
+            f"/api/v1/invoices/public/view/?token={token_obj.token}",
+            HTTP_USER_AGENT="SriLekhSecurityScanner/1.0",
+            REMOTE_ADDR="192.168.1.100",
+        )
+        self.assertEqual(res.status_code, 200)
+
+        # 1. Security headers
+        self.assertEqual(res['Cache-Control'], 'no-store, no-cache, must-revalidate, private')
+        self.assertEqual(res['Pragma'], 'no-cache')
+        self.assertEqual(res['Referrer-Policy'], 'no-referrer')
+        self.assertEqual(res['X-Content-Type-Options'], 'nosniff')
+
+        # 2. PII minimization: buyer phone and email must NOT be exposed
+        buyer_data = res.data["data"]["buyer"]
+        self.assertNotIn("phone", buyer_data)
+        self.assertNotIn("email", buyer_data)
+        self.assertEqual(buyer_data["name"], "Privacy First Retailer")
+
+        # 3. Forensics recorded
+        token_obj.refresh_from_db()
+        self.assertEqual(token_obj.view_count, 1)
+        self.assertIn("192.168.1.100", token_obj.last_accessed_ip)
+        self.assertEqual(token_obj.user_agent, "SriLekhSecurityScanner/1.0")
+
+    def test_email_delivery_log_rbac_owner_vs_viewer(self):
+        """Phase 7: Delivery logs enforce strict RBAC - OWNER has access, VIEWER is denied with 403."""
+        from apps.companies.models import UserCompany
+
+        # Create viewer user
+        viewer = User.objects.create_user(email="viewer_log@srilekh-sandbox.local", password="ViewerPass123!", role="VIEWER")
+        UserCompany.objects.create(user=viewer, company=self.company, role="VIEWER")
+
+        # Create a delivery log
+        log = EmailDeliveryLog.objects.create(
+            company=self.company,
+            recipient_email="customer@test.local",
+            sender_email="admin@srilekh.com",
+            subject="Test Log",
+            email_type="INVOICE_POSTED",
+            status="SENT",
+        )
+
+        # 1. Viewer attempt -> 403 FORBIDDEN
+        self.client.force_authenticate(user=viewer)
+        res_viewer = self.client.get(f"/api/v1/notifications/logs/?company_id={self.company.id}")
+        self.assertEqual(res_viewer.status_code, 403)
+        self.assertFalse(res_viewer.data["success"])
+
+        # 2. Owner attempt -> 200 OK
+        self.client.force_authenticate(user=self.owner)
+        res_owner = self.client.get(f"/api/v1/notifications/logs/?company_id={self.company.id}")
+        self.assertEqual(res_owner.status_code, 200)
+        self.assertTrue(res_owner.data["success"])
+        self.assertTrue(len(res_owner.data["data"]) >= 1)
+
+    def test_email_delivery_log_manual_retry_rbac(self):
+        """Phase 7: Manual retry is permitted for OWNER, rejected for VIEWER."""
+        from apps.companies.models import UserCompany
+
+        viewer = User.objects.create_user(email="viewer_retry@srilekh-sandbox.local", password="ViewerPass123!", role="VIEWER")
+        UserCompany.objects.create(user=viewer, company=self.company, role="VIEWER")
+
+        failed_log = EmailDeliveryLog.objects.create(
+            company=self.company,
+            recipient_email="customer@failed.local",
+            sender_email="admin@srilekh.com",
+            subject="Failed Invoice",
+            email_type="INVOICE_POSTED",
+            status="FAILED",
+            error_message="SMTP Connection Timeout",
+            idempotency_key="retry_test_key_001",
+        )
+
+        # 1. Viewer attempt -> 403 FORBIDDEN
+        self.client.force_authenticate(user=viewer)
+        res_viewer = self.client.post(f"/api/v1/notifications/logs/{failed_log.id}/retry/?company_id={self.company.id}")
+        self.assertEqual(res_viewer.status_code, 403)
+
+        # 2. Owner attempt -> 200 OK
+        self.client.force_authenticate(user=self.owner)
+        res_owner = self.client.post(f"/api/v1/notifications/logs/{failed_log.id}/retry/?company_id={self.company.id}")
+        self.assertEqual(res_owner.status_code, 200)
+        self.assertTrue(res_owner.data["success"])
+
+        failed_log.refresh_from_db()
+        self.assertEqual(failed_log.status, 'PENDING')
+
+    def test_worker_crash_recovery_resets_abandoned_processing_events(self):
+        """Phase 4: Expired PROCESSING leases are detected and safely recovered by sweeper task."""
+        from apps.notifications.tasks import retry_pending_outbox_events_task
+
+        # Create an abandoned event simulating a crashed worker
+        abandoned_event = TransactionalOutboxEvent.objects.create(
+            event_type='INVOICE_POSTED',
+            aggregate_type='Voucher',
+            aggregate_id='fake-voucher-id',
+            company=self.company,
+            payload={'voucher_id': 'fake-voucher-id'},
+            idempotency_key='abandoned_lease_test_001',
+            status='PROCESSING',
+            claimed_at=timezone.now() - timedelta(minutes=10),
+            claim_token='crashed-worker-uuid-xyz',
+            lease_expires_at=timezone.now() - timedelta(minutes=5),  # Lease expired 5 mins ago
+            retry_count=0,
+            max_retries=3,
+        )
+
+        # Run the crash recovery sweeper
+        retry_pending_outbox_events_task()
+
+        abandoned_event.refresh_from_db()
+        self.assertEqual(abandoned_event.status, 'RETRY_PENDING')
+        self.assertIsNone(abandoned_event.claim_token)
+        self.assertIsNone(abandoned_event.lease_expires_at)
+        self.assertEqual(abandoned_event.retry_count, 1)
+
+    def test_outbox_active_claim_suppresses_duplicate_processing(self):
+        """Phase 4: An active PROCESSING lease prevents a second worker from re-processing the event."""
+        event = TransactionalOutboxEvent.objects.create(
+            event_type='INVOICE_POSTED',
+            aggregate_type='Voucher',
+            aggregate_id='fake-voucher-id-2',
+            company=self.company,
+            payload={'voucher_id': 'fake-voucher-id-2'},
+            idempotency_key='active_lease_test_002',
+            status='PROCESSING',
+            claimed_at=timezone.now(),
+            claim_token='active-worker-token-123',
+            lease_expires_at=timezone.now() + timedelta(minutes=5),  # Active lease
+            retry_count=0,
+        )
+
+        # Worker 2 attempts to process
+        success = OutboxService.process_outbox_event(event.id)
+        self.assertTrue(success)
+
+        # Claim token remains with Worker 1
+        event.refresh_from_db()
+        self.assertEqual(event.status, 'PROCESSING')
+        self.assertEqual(event.claim_token, 'active-worker-token-123')
