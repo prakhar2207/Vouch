@@ -338,6 +338,7 @@ class BankTransactionResolveAPIView(APIView):
         tx = get_object_or_404(BankTransaction, id=pk, company=company)
         action = request.data.get('action')
         payload = request.data.get('payload', {})
+        idempotency_key = request.headers.get('Idempotency-Key') or request.data.get('idempotency_key') or payload.get('idempotency_key')
 
         if not action:
             return Response({"error": "'action' is required."}, status=status.HTTP_400_BAD_REQUEST)
@@ -347,7 +348,8 @@ class BankTransactionResolveAPIView(APIView):
                 bank_tx=tx,
                 action_type=action,
                 payload=payload,
-                user=request.user
+                user=request.user,
+                idempotency_key=idempotency_key
             )
             return Response(res, status=status.HTTP_200_OK)
         except (ValidationError, DRFValidationError) as e:
@@ -658,6 +660,9 @@ class BankTransactionUnreconcileAPIView(APIView):
         try:
             res = BankReconciliationService.unreconcile_transaction(tx, reason=reason, user=request.user)
             return Response(res, status=status.HTTP_200_OK)
+        except (ValidationError, DRFValidationError) as e:
+            msg = e.messages[0] if hasattr(e, 'messages') else str(e)
+            return Response({"error": msg}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             logger.exception("Failed to unreconcile transaction: %s", e)
             return Response({"error": "Failed to unreconcile transaction."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

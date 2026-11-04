@@ -32,6 +32,8 @@ interface BankTransactionCardProps {
   isTogglingDirection?: boolean;
   onExclude: (tx: BankTransactionItem) => void;
   onRestore: (tx: BankTransactionItem) => void;
+  onUnreconcile?: (tx: BankTransactionItem) => void;
+  isUnreconciling?: boolean;
   onViewVouchers?: () => void;
   partyOptions?: SearchableOption[];
   expenseOptions?: SearchableOption[];
@@ -51,6 +53,8 @@ export default function BankTransactionCard({
   isTogglingDirection = false,
   onExclude,
   onRestore,
+  onUnreconcile,
+  isUnreconciling = false,
   onViewVouchers,
   partyOptions = [],
   expenseOptions = [],
@@ -172,7 +176,7 @@ export default function BankTransactionCard({
                   ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
                   : "bg-rose-500/10 text-rose-500 border border-rose-500/20"
               }`}
-              title={isCredit ? "Deposit / Inward Credit" : "Withdrawal / Outward Debit"}
+              title={isCredit ? "Money IN (Deposit)" : "Money OUT (Payment/Withdrawal)"}
             >
               {isCredit ? <ArrowDownRight className="w-5 h-5" /> : <ArrowUpRight className="w-5 h-5" />}
             </div>
@@ -189,8 +193,10 @@ export default function BankTransactionCard({
                   className={`text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider ${
                     tx.is_excluded || tx.status === "EXCLUDED"
                       ? "bg-muted text-muted-foreground border border-border"
-                      : tx.status === "MATCHED" || tx.status === "RECONCILED" || tx.status === "MATCHED_AUTO"
+                      : tx.status === "MATCHED" || tx.status === "RECONCILED"
                       ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/25"
+                      : tx.status === "MATCHED_AUTO"
+                      ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/25"
                       : tx.status === "NEEDS_REVIEW" || tx.status === "MATCHED_SUGGESTED"
                       ? "bg-amber-500/10 text-amber-500 border border-amber-500/25"
                       : tx.status === "IGNORED"
@@ -200,10 +206,12 @@ export default function BankTransactionCard({
                 >
                   {tx.is_excluded || tx.status === "EXCLUDED"
                     ? "Excluded"
-                    : tx.status === "MATCHED" || tx.status === "RECONCILED" || tx.status === "MATCHED_AUTO"
-                    ? "Completed"
+                    : tx.status === "MATCHED" || tx.status === "RECONCILED"
+                    ? "Reconciled"
+                    : tx.status === "MATCHED_AUTO"
+                    ? "AI Auto-Match"
                     : tx.status === "NEEDS_REVIEW" || tx.status === "MATCHED_SUGGESTED"
-                    ? "Ready to Confirm"
+                    ? "Suggested Match"
                     : tx.status === "IGNORED"
                     ? "Ignored"
                     : "Needs Attention"}
@@ -460,21 +468,38 @@ export default function BankTransactionCard({
         {/* Tier B: Reconciled / Done State                                 */}
         {/* ------------------------------------------------------------- */}
         {tx.matched_voucher && !tx.is_excluded && tx.status !== "EXCLUDED" && (
-          <div className="text-xs text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-3.5 py-2 rounded-xl flex items-center justify-between font-mono">
-            <span className="font-semibold">✓ Reconciled: Voucher #{tx.matched_voucher.voucher_number}</span>
-            <div className="flex items-center gap-2.5">
+          <div className="text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3.5 py-2.5 rounded-xl flex items-center justify-between font-mono flex-wrap gap-2">
+            <span className="font-semibold flex items-center gap-1.5">
+              <Check className="w-3.5 h-3.5 text-emerald-500" />
+              <span>Reconciled: Voucher #{tx.matched_voucher.voucher_number}</span>
+            </span>
+            <div className="flex items-center gap-2.5 font-sans">
               {onViewVouchers && (
                 <button
+                  type="button"
                   onClick={onViewVouchers}
-                  className="hover:underline text-[11px] font-sans font-semibold cursor-pointer flex items-center gap-1 text-primary"
+                  className="hover:underline text-[11px] font-semibold cursor-pointer flex items-center gap-1 text-primary"
                 >
                   <span>View Voucher</span>
                   <ExternalLink className="w-3 h-3" />
                 </button>
               )}
+              {onUnreconcile && (
+                <button
+                  type="button"
+                  onClick={() => onUnreconcile(tx)}
+                  disabled={isUnreconciling}
+                  className="text-rose-500 hover:text-rose-600 hover:underline text-[11px] font-semibold cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                  title="Reverse reconciliation and return to unresolved"
+                >
+                  <ArrowLeftRight className="w-3 h-3" />
+                  <span>{isUnreconciling ? "Reversing..." : "Unreconcile"}</span>
+                </button>
+              )}
               <button
+                type="button"
                 onClick={() => onExclude(tx)}
-                className="text-amber-500/80 hover:text-amber-400 hover:underline text-[11px] font-sans cursor-pointer flex items-center gap-1 ml-1"
+                className="text-amber-500/80 hover:text-amber-400 hover:underline text-[11px] cursor-pointer flex items-center gap-1 ml-1"
                 title="Exclude transaction and reverse reconciliation"
               >
                 <EyeOff className="w-3 h-3" />

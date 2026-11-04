@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import SearchableSelect, { SearchableOption } from "@/components/SearchableSelect";
 import {
@@ -13,6 +13,10 @@ import {
   ArrowRight,
   ShieldCheck,
   Scale,
+  FileText,
+  SlidersHorizontal,
+  HelpCircle,
+  Check,
 } from "lucide-react";
 import { BankLedger, ReconciliationSummary, BankingActiveTab } from "./types";
 
@@ -37,6 +41,29 @@ export default function ReconciliationCockpit({
   activeTab,
   onSelectTab,
 }: ReconciliationCockpitProps) {
+  // Simple Mode (default for small business owners) vs Advanced / Accountant Mode
+  const [viewMode, setViewMode] = useState<"simple" | "advanced">("simple");
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("srilekh_recon_mode");
+      if (saved === "advanced" || saved === "simple") {
+        setViewMode(saved);
+      }
+    } catch {
+      // Local storage not accessible
+    }
+  }, []);
+
+  const toggleViewMode = (newMode: "simple" | "advanced") => {
+    setViewMode(newMode);
+    try {
+      localStorage.setItem("srilekh_recon_mode", newMode);
+    } catch {
+      // Local storage not accessible
+    }
+  };
+
   const selectedBank = bankLedgers.find((b) => b.id === selectedBankId);
   const bal = selectedBank
     ? (selectedBank.currentBalance !== undefined ? selectedBank.currentBalance : selectedBank.current_balance)
@@ -59,19 +86,27 @@ export default function ReconciliationCockpit({
       })
     : null;
 
-  const statementBal = parseFloat(summary?.statement_closing_balance || "0");
-  const bookBal = parseFloat(summary?.book_closing_balance || "0");
+  // Evidence validation: Missing statement evidence is NOT zero!
+  const hasStatementEvidence = summary?.statement_closing_balance !== null && summary?.statement_closing_balance !== undefined;
+  const statementBal = hasStatementEvidence ? parseFloat(summary!.statement_closing_balance!) : null;
+  const bookBal = summary?.book_closing_balance !== null && summary?.book_closing_balance !== undefined
+    ? parseFloat(summary.book_closing_balance)
+    : 0;
+
   const rawGap = summary?.reconciliation_gap !== null && summary?.reconciliation_gap !== undefined
     ? parseFloat(summary.reconciliation_gap)
-    : Math.abs(statementBal - bookBal);
-  const gap = Math.abs(rawGap);
+    : null;
+  const gap = rawGap !== null ? Math.abs(rawGap) : null;
 
-  const isBalanced = summary?.is_balanced || gap < 0.01;
-  const isFullyReconciled = summary?.reconciliation_state === "FULLY_RECONCILED" || (isBalanced && (summary?.unresolved_count || 0) === 0);
+  // Trust validated backend reconciliation state
+  const reconState = summary?.reconciliation_state || (hasStatementEvidence ? (summary?.is_balanced ? "BALANCE_MATCHED" : "IN_PROGRESS") : "NOT_VERIFIABLE");
+  const isFullyReconciled = reconState === "FULLY_RECONCILED";
+  const isBalanced = reconState === "FULLY_RECONCILED" || reconState === "BALANCE_MATCHED";
+  const isNotVerifiable = reconState === "NOT_VERIFIABLE" || !hasStatementEvidence;
 
   const total = summary?.total_transactions || 0;
-  const completedCount = summary?.completed_count ?? summary?.matched_count ?? 0;
-  const progressPercent = total > 0 ? Math.min(100, Math.max(0, Math.round((completedCount / total) * 100))) : (isBalanced ? 100 : 0);
+  const completedCount = summary?.completed_count ?? summary?.reconciled_count ?? 0;
+  const progressPercent = total > 0 ? Math.min(100, Math.max(0, Math.round((completedCount / total) * 100))) : (isFullyReconciled ? 100 : 0);
 
   return (
     <div className="relative overflow-hidden bg-card border border-border/60 rounded-3xl p-5 md:p-6 shadow-sm transition-all space-y-6">
@@ -79,7 +114,7 @@ export default function ReconciliationCockpit({
       <div className="pointer-events-none absolute -right-20 -top-20 w-80 h-80 rounded-full bg-primary/5 blur-3xl" />
       <div className="pointer-events-none absolute -left-20 -bottom-20 w-80 h-80 rounded-full bg-emerald-500/5 blur-3xl" />
 
-      {/* TOP TIER: Bank Account Identity & Reconcilation Formula */}
+      {/* TOP TIER: Bank Account Identity & Reconciliation Dashboard */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
         {/* LEFT COLUMN: Bank Selector & Bank Details (4 cols on desktop) */}
         <div className="lg:col-span-4 flex flex-col justify-between border-b lg:border-b-0 lg:border-r border-border/50 pb-6 lg:pb-0 lg:pr-6 space-y-4">
@@ -192,14 +227,18 @@ export default function ReconciliationCockpit({
           )}
         </div>
 
-        {/* RIGHT COLUMN: Reconciliation Equation Cockpit (8 cols on desktop) */}
+        {/* RIGHT COLUMN: Reconciliation Cockpit (8 cols on desktop) */}
         <div className="lg:col-span-8 flex flex-col justify-between space-y-4">
-          {/* Header Row: Title & High-level Status */}
+          {/* Header Row: Title, Mode Toggle & State Pill */}
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2.5">
-              <Scale className="w-4 h-4 text-primary" />
+              {viewMode === "simple" ? (
+                <Sparkles className="w-4 h-4 text-primary" />
+              ) : (
+                <Scale className="w-4 h-4 text-primary" />
+              )}
               <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                Reconciliation Balance Formula
+                {viewMode === "simple" ? "Reconciliation Summary" : "Reconciliation Balance Formula"}
               </span>
               {formattedCutoff && (
                 <span className="text-[11px] font-mono font-medium px-2 py-0.5 rounded bg-muted/40 text-muted-foreground border border-border/40">
@@ -208,107 +247,259 @@ export default function ReconciliationCockpit({
               )}
             </div>
 
-            {isFullyReconciled ? (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 shadow-xs">
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>Reconciled</span>
-              </span>
-            ) : isBalanced ? (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 shadow-xs">
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>Balanced</span>
-              </span>
-            ) : summary?.reconciliation_state === "TRANSACTIONS_REVIEWED" ? (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 shadow-xs">
-                <ShieldCheck className="w-3.5 h-3.5" />
-                <span>Reviewed</span>
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 shadow-xs">
-                <AlertCircle className="w-3.5 h-3.5" />
-                <span>Unreconciled</span>
-              </span>
-            )}
+            <div className="flex items-center gap-2">
+              {/* Progressive Disclosure Mode Toggle */}
+              <div className="inline-flex items-center p-0.5 rounded-lg bg-muted/40 border border-border/40 text-[11px] font-medium">
+                <button
+                  type="button"
+                  onClick={() => toggleViewMode("simple")}
+                  className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                    viewMode === "simple"
+                      ? "bg-card text-foreground shadow-xs font-bold"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  title="Simplified view for business owners"
+                >
+                  Simple View
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggleViewMode("advanced")}
+                  className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                    viewMode === "advanced"
+                      ? "bg-card text-foreground shadow-xs font-bold"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  title="Full accounting formula & BRS bridge"
+                >
+                  Accountant View
+                </button>
+              </div>
+
+              {/* Status Badge */}
+              {isFullyReconciled ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 shadow-xs">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Fully Reconciled</span>
+                </span>
+              ) : isBalanced ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 shadow-xs">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Balances Match</span>
+                </span>
+              ) : isNotVerifiable ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-muted text-muted-foreground border border-border/60 shadow-xs">
+                  <HelpCircle className="w-3.5 h-3.5 text-muted-foreground" />
+                  <span>Awaiting Statement</span>
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 shadow-xs">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  <span>Needs Attention</span>
+                </span>
+              )}
+            </div>
           </div>
 
-          {/* Equation Cards: Statement - Book = Gap */}
-          <div className="grid grid-cols-1 sm:grid-cols-11 gap-2 items-center">
-            {/* Box 1: Statement Balance */}
-            <div className="sm:col-span-3 p-3.5 rounded-2xl bg-muted/20 border border-border/40 flex flex-col justify-between space-y-1">
-              <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
-                Statement Balance
-              </span>
-              <div className="text-base sm:text-lg font-black font-mono tabular-nums text-foreground tracking-tight">
-                ₹{statementBal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </div>
-              <span className="text-[10px] text-muted-foreground/80 font-medium">
-                Bank Passbook closing
-              </span>
-            </div>
-
-            {/* Minus Operator */}
-            <div className="sm:col-span-1 flex justify-center py-1 sm:py-0">
-              <div className="w-7 h-7 rounded-full bg-muted/40 border border-border/50 flex items-center justify-center text-sm font-black text-muted-foreground select-none">
-                −
-              </div>
-            </div>
-
-            {/* Box 2: Book Balance */}
-            <div className="sm:col-span-3 p-3.5 rounded-2xl bg-muted/20 border border-border/40 flex flex-col justify-between space-y-1">
-              <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
-                Book Balance
-              </span>
-              <div className="text-base sm:text-lg font-black font-mono tabular-nums text-foreground tracking-tight">
-                ₹{bookBal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </div>
-              <span className="text-[10px] text-muted-foreground/80 font-medium">
-                Recorded in SriLekh
-              </span>
-            </div>
-
-            {/* Equals Operator */}
-            <div className="sm:col-span-1 flex justify-center py-1 sm:py-0">
-              <div className="w-7 h-7 rounded-full bg-muted/40 border border-border/50 flex items-center justify-center text-sm font-black text-muted-foreground select-none">
-                =
-              </div>
-            </div>
-
-            {/* Box 3: Reconciliation Gap */}
-            <div
-              className={`sm:col-span-3 p-3.5 rounded-2xl border transition-all flex flex-col justify-between space-y-1 ${
-                isBalanced
-                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-500"
-                  : "bg-amber-500/10 border-amber-500/30 text-amber-500"
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-                  {isBalanced ? "Balance Gap" : "Difference (Gap)"}
+          {/* VIEW MODE 1: SIMPLE MODE (For Non-Accountant Business Owners) */}
+          {viewMode === "simple" ? (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-stretch">
+              {/* Card 1: Bank Balance */}
+              <div className="p-4 rounded-2xl bg-muted/20 border border-border/40 flex flex-col justify-between space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                    Bank Passbook
+                  </span>
+                  <Landmark className="w-3.5 h-3.5 text-muted-foreground/60" />
+                </div>
+                <div className="text-lg font-black font-mono tabular-nums text-foreground tracking-tight">
+                  {hasStatementEvidence && statementBal !== null
+                    ? `₹${statementBal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                    : <span className="text-xs font-medium text-muted-foreground italic">No Statement Uploaded</span>}
+                </div>
+                <span className="text-[10px] text-muted-foreground font-medium">
+                  {hasStatementEvidence ? "Closing balance from statement" : "Upload a PDF/Excel statement"}
                 </span>
-                {isBalanced ? (
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                ) : (
-                  <AlertCircle className="w-3.5 h-3.5 text-amber-500" />
-                )}
               </div>
+
+              {/* Card 2: SriLekh Balance */}
+              <div className="p-4 rounded-2xl bg-muted/20 border border-border/40 flex flex-col justify-between space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                    SriLekh Books
+                  </span>
+                  <FileText className="w-3.5 h-3.5 text-muted-foreground/60" />
+                </div>
+                <div className="text-lg font-black font-mono tabular-nums text-foreground tracking-tight">
+                  ₹{bookBal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <span className="text-[10px] text-muted-foreground font-medium">
+                  Recorded in your books
+                </span>
+              </div>
+
+              {/* Card 3: Status & Action Needed */}
               <div
-                className={`text-base sm:text-lg font-black font-mono tabular-nums tracking-tight ${
-                  isBalanced ? "text-emerald-500" : "text-amber-500"
+                className={`p-4 rounded-2xl border transition-all flex flex-col justify-between space-y-1.5 ${
+                  isFullyReconciled
+                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                    : isBalanced
+                    ? "bg-blue-500/10 border-blue-500/30 text-blue-600 dark:text-blue-400"
+                    : isNotVerifiable
+                    ? "bg-muted/30 border-border/60 text-muted-foreground"
+                    : "bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400"
                 }`}
               >
-                ₹{gap.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </div>
-              <div className="text-[10px] font-semibold truncate">
-                {isBalanced ? (
-                  <span className="text-emerald-600 dark:text-emerald-400">✓ Perfectly Reconciled</span>
-                ) : (
-                  <span className="text-amber-600 dark:text-amber-400">
-                    {summary?.unresolved_count || 0} items to resolve
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider">
+                    {isFullyReconciled
+                      ? "Match Status"
+                      : isBalanced
+                      ? "Balance Status"
+                      : isNotVerifiable
+                      ? "Status"
+                      : "Difference"}
                   </span>
-                )}
+                  {isFullyReconciled ? (
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                  ) : isBalanced ? (
+                    <CheckCircle2 className="w-3.5 h-3.5 text-blue-500" />
+                  ) : isNotVerifiable ? (
+                    <HelpCircle className="w-3.5 h-3.5 text-muted-foreground" />
+                  ) : (
+                    <AlertCircle className="w-3.5 h-3.5 text-amber-500" />
+                  )}
+                </div>
+
+                <div className="text-lg font-black font-mono tabular-nums tracking-tight">
+                  {gap !== null ? (
+                    gap < 0.01 ? (
+                      "₹0.00"
+                    ) : (
+                      `₹${gap.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                    )
+                  ) : (
+                    "Pending Check"
+                  )}
+                </div>
+
+                <div className="text-[10px] font-semibold truncate">
+                  {isFullyReconciled ? (
+                    <span>All matched & verified</span>
+                  ) : isBalanced ? (
+                    <span>Balances match • Verify pending</span>
+                  ) : isNotVerifiable ? (
+                    <span>Upload statement to verify balance</span>
+                  ) : (
+                    <span>{summary?.unresolved_count || 0} items need your review</span>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
+          ) : (
+            /* VIEW MODE 2: ADVANCED ACCOUNTANT VIEW (Formal Equation & BRS) */
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-11 gap-2 items-center">
+                {/* Box 1: Statement Balance */}
+                <div className="sm:col-span-3 p-3.5 rounded-2xl bg-muted/20 border border-border/40 flex flex-col justify-between space-y-1">
+                  <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                    Statement Balance
+                  </span>
+                  <div className="text-base sm:text-lg font-black font-mono tabular-nums text-foreground tracking-tight">
+                    {hasStatementEvidence && statementBal !== null
+                      ? `₹${statementBal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                      : <span className="text-xs font-semibold text-muted-foreground">Not Available</span>}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground/80 font-medium">
+                    Passbook closing evidence
+                  </span>
+                </div>
+
+                {/* Minus Operator */}
+                <div className="sm:col-span-1 flex justify-center py-1 sm:py-0">
+                  <div className="w-7 h-7 rounded-full bg-muted/40 border border-border/50 flex items-center justify-center text-sm font-black text-muted-foreground select-none">
+                    −
+                  </div>
+                </div>
+
+                {/* Box 2: Book Balance */}
+                <div className="sm:col-span-3 p-3.5 rounded-2xl bg-muted/20 border border-border/40 flex flex-col justify-between space-y-1">
+                  <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                    Book Balance
+                  </span>
+                  <div className="text-base sm:text-lg font-black font-mono tabular-nums text-foreground tracking-tight">
+                    ₹{bookBal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground/80 font-medium">
+                    SriLekh General Ledger
+                  </span>
+                </div>
+
+                {/* Equals Operator */}
+                <div className="sm:col-span-1 flex justify-center py-1 sm:py-0">
+                  <div className="w-7 h-7 rounded-full bg-muted/40 border border-border/50 flex items-center justify-center text-sm font-black text-muted-foreground select-none">
+                    =
+                  </div>
+                </div>
+
+                {/* Box 3: Reconciliation Gap */}
+                <div
+                  className={`sm:col-span-3 p-3.5 rounded-2xl border transition-all flex flex-col justify-between space-y-1 ${
+                    isFullyReconciled || isBalanced
+                      ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-500"
+                      : isNotVerifiable
+                      ? "bg-muted/30 border-border/60 text-muted-foreground"
+                      : "bg-amber-500/10 border-amber-500/30 text-amber-500"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                      {isBalanced ? "Balance Gap" : isNotVerifiable ? "Verification" : "Reconciliation Gap"}
+                    </span>
+                    {isBalanced ? (
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                    ) : isNotVerifiable ? (
+                      <HelpCircle className="w-3.5 h-3.5 text-muted-foreground" />
+                    ) : (
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-500" />
+                    )}
+                  </div>
+                  <div
+                    className={`text-base sm:text-lg font-black font-mono tabular-nums tracking-tight ${
+                      isBalanced ? "text-emerald-500" : isNotVerifiable ? "text-muted-foreground" : "text-amber-500"
+                    }`}
+                  >
+                    {gap !== null ? `₹${gap.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "NOT_VERIFIABLE"}
+                  </div>
+                  <div className="text-[10px] font-semibold truncate">
+                    {isFullyReconciled ? (
+                      <span className="text-emerald-600 dark:text-emerald-400">✓ Fully Reconciled</span>
+                    ) : isBalanced ? (
+                      <span className="text-emerald-600 dark:text-emerald-400">✓ Mathematically Balanced</span>
+                    ) : isNotVerifiable ? (
+                      <span className="text-muted-foreground">Missing statement closing balance</span>
+                    ) : (
+                      <span className="text-amber-600 dark:text-amber-400">
+                        {summary?.unresolved_count || 0} items to resolve
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {selectedBankId && (
+                <div className="flex justify-end pt-1">
+                  <Link
+                    href={`/reports/brs?bank_id=${selectedBankId}`}
+                    className="text-xs text-primary hover:underline font-semibold flex items-center gap-1"
+                  >
+                    <span>View Statutory BRS Bridge Report</span>
+                    <ArrowRight className="w-3 h-3" />
+                  </Link>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -374,9 +565,9 @@ export default function ReconciliationCockpit({
             }`}
             title="Filter by suggested matches ready to confirm"
           >
-            <div className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
-            <span>Ready to Confirm</span>
-            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono font-black bg-amber-500/15 text-amber-500 leading-none">
+            <div className="w-2 h-2 rounded-full bg-purple-500 shrink-0" />
+            <span>Suggested Matches</span>
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono font-black bg-purple-500/15 text-purple-600 dark:text-purple-400 leading-none">
               {summary?.needs_review_count || 0}
             </span>
           </button>
@@ -392,7 +583,7 @@ export default function ReconciliationCockpit({
             title="Filter by reconciled transactions"
           >
             <div className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-            <span>Completed</span>
+            <span>Reconciled</span>
             <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono font-black bg-emerald-500/15 text-emerald-500 leading-none">
               {completedCount}
             </span>
