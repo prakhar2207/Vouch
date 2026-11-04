@@ -144,6 +144,7 @@ export default function BankingPage() {
   const [actionRemarks, setActionRemarks] = useState<string>("");
   const [actionLoading, setActionLoading] = useState<boolean>(false);
   const [directionTogglingId, setDirectionTogglingId] = useState<string | null>(null);
+  const [unreconcilingId, setUnreconcilingId] = useState<string | null>(null);
   const [resolvingTxId, setResolvingTxId] = useState<string | null>(null);
   const [isBulkResolving, setIsBulkResolving] = useState<boolean>(false);
 
@@ -493,6 +494,28 @@ export default function BankingPage() {
       await fetchTransactionsAndSummary(true);
     } catch (err: any) {
       toast.error("Restore Failed", err.response?.data?.error || err.message || "Failed to restore transaction.");
+    }
+  };
+
+  const handleUnreconcileTransaction = async (tx: BankTransactionItem) => {
+    if (unreconcilingId) return;
+    if (!window.confirm(`Are you sure you want to un-reconcile "${tx.description}"? This will safely reverse the accounting voucher and return the transaction to Unresolved.`)) {
+      return;
+    }
+    setUnreconcilingId(tx.id);
+    try {
+      const headers = getHeaders();
+      const res = await api.post(
+        `${API_BASE_URL}/api/v1/accounting/banking/transactions/${tx.id}/unreconcile/`,
+        { reason: "User requested un-reconciliation" },
+        { headers }
+      );
+      toast.success("Transaction Un-reconciled", res.data.message || "Reconciliation reversed.");
+      await fetchTransactionsAndSummary(true);
+    } catch (err: any) {
+      toast.error("Un-reconciliation Failed", err.response?.data?.error || err.message || "Failed to un-reconcile transaction.");
+    } finally {
+      setUnreconcilingId(null);
     }
   };
 
@@ -1447,6 +1470,8 @@ export default function BankingPage() {
                   isTogglingDirection={directionTogglingId === tx.id}
                   onExclude={handleExcludeTransaction}
                   onRestore={handleRestoreTransaction}
+                  onUnreconcile={handleUnreconcileTransaction}
+                  isUnreconciling={unreconcilingId === tx.id}
                   onViewVouchers={() => router.push("/vouchers")}
                   partyOptions={partyOptions}
                   expenseOptions={expenseOptions}
