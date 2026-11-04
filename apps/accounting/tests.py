@@ -242,7 +242,7 @@ class B2BEDIAndTallyExportTests(TestCase):
         # Total amount must be floored to 290.00
         self.assertEqual(sales_vch_floor.total_amount, Decimal("290.00"))
         # Post voucher should pass double-entry constraint check
-        VoucherService.post_voucher(sales_vch_floor)
+        sales_vch_floor = VoucherService.post_voucher(sales_vch_floor)
         self.assertEqual(sales_vch_floor.status, "POSTED")
 
         # Check Round Off ledger entry: debited 0.28
@@ -275,7 +275,7 @@ class B2BEDIAndTallyExportTests(TestCase):
         # Total amount must be ceiled to 291.00
         self.assertEqual(sales_vch_ceil.total_amount, Decimal("291.00"))
         # Post voucher should pass double-entry constraint check
-        VoucherService.post_voucher(sales_vch_ceil)
+        sales_vch_ceil = VoucherService.post_voucher(sales_vch_ceil)
         self.assertEqual(sales_vch_ceil.status, "POSTED")
 
         # Check Round Off ledger entry: credited 0.25
