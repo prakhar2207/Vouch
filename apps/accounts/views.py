@@ -413,7 +413,7 @@ class RegisterCompleteView(TestBypassThrottleMixin, APIView):
         state_code = (request.data.get('state_code') or '').strip()
         address = (request.data.get('address') or '').strip()
         phone = (request.data.get('phone') or '').strip()
-        company_email = (request.data.get('company_email') or email).strip()
+        company_email = (request.data.get('company_email') or '').strip()
         proprietor_name = (request.data.get('proprietor_name') or '').strip()
         proprietor_phone = (request.data.get('proprietor_phone') or '').strip()
         signature_file = request.FILES.get('signature') or request.FILES.get('proprietor_signature')
@@ -454,6 +454,8 @@ class RegisterCompleteView(TestBypassThrottleMixin, APIView):
                     )
 
                 email = pending.email
+                if not company_email:
+                    company_email = email
                 if User.objects.filter(email__iexact=email).exists():
                     pending.delete()
                     return Response(
