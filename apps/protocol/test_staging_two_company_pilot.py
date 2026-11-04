@@ -412,10 +412,10 @@ def run_two_company_pilot():
     # STAGE 14: CROSS-LEDGER COMMITMENT VERIFICATION
     # -------------------------------------------------------------------------
     print("[Stage 14] Verifying CrossLedgerCommitment cryptographic integrity...")
-    commitments = CryptographicCommitment.objects.filter(transaction_id=tx_id)
+    commitments = CryptographicCommitment.objects.filter(transaction__transaction_id=tx_id)
     assert commitments.count() >= 1, "Missing cryptographic commitments!"
     for c in commitments:
-        print(f"  -> Tenant: {c.tenant_id} | State Root: {c.state_root[:16]}... | Hash: {c.commitment_hash[:16]}...")
+        print(f"  -> State Root: {c.operation_state_root[:16]}... | Hash: {c.commitment_hash[:16]}...")
     print(f"  [PASSED] Cryptographic commitments verified with tamper-evident state roots.\n")
 
     # -------------------------------------------------------------------------

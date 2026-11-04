@@ -1692,6 +1692,12 @@ class BankStatementService:
                 }
             )
 
+            if import_record.is_excluded:
+                for tx_dict in prepared_transactions:
+                    tx_dict['is_excluded'] = True
+                    tx_dict['status'] = 'EXCLUDED'
+                    tx_dict['exclusion_reason'] = import_record.exclusion_reason or "Statement import is excluded"
+
             transactions_to_create = [
                 BankTransaction(
                     company=company,
@@ -1760,6 +1766,28 @@ class BankStatementService:
         ).first()
 
         if existing_import:
+            if existing_import.is_excluded:
+                return {
+                    "import_id": str(existing_import.id),
+                    "source_file": existing_import.source_file_name,
+                    "file_format": existing_import.file_format,
+                    "file_hash": file_hash,
+                    "status": "EXCLUDED",
+                    "is_duplicate_file": True,
+                    "message": f"This statement ('{existing_import.source_file_name}') was previously excluded from books ({existing_import.exclusion_reason}). Please restore it from the Statement History tab before re-importing.",
+                    "total_detected": existing_import.total_rows,
+                    "successful_rows": existing_import.successful_rows,
+                    "imported_count": 0,
+                    "auto_matched_count": 0,
+                    "suggested_count": 0,
+                    "needs_review_count": 0,
+                    "unresolved_rows": 0,
+                    "failed_rows": existing_import.failed_rows,
+                    "duplicates_detected": existing_import.successful_rows,
+                    "balance_chain_valid": existing_import.balance_chain_valid,
+                    "discrepancy_amount": float(existing_import.discrepancy_amount),
+                    "errors": existing_import.error_summary[:10]
+                }
             return {
                 "import_id": str(existing_import.id),
                 "source_file": existing_import.source_file_name,

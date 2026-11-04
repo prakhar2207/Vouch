@@ -414,6 +414,10 @@ export class LocalAnalyticsEngine {
       return this.getEmptyDashboard();
     }
 
+    if (!offlineDb.isOpen()) {
+      await offlineDb.open().catch(() => {});
+    }
+
     // 1. Fetch valid, posted vouchers for active company
     // Omit CANCELLED, REVERSED, DRAFT according to authoritative accounting rules
     const allCompanyVouchers = await offlineDb.syncedVouchers

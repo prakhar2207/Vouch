@@ -62,7 +62,7 @@ class LedgerBridge:
                 company=company,
                 group=group,
                 name=party_name.strip(),
-                gstin=party_gstin.strip().upper() if party_gstin else "",
+                gstin=party_gstin.strip().upper()[:15] if party_gstin else "",
                 state_code=party_state.strip() if party_state else "",
                 ledger_type=ledger_type
             )
@@ -529,10 +529,11 @@ class LedgerBridge:
                 posted_vouchers.append(base_voucher)
 
             # Collect referenced rejection op IDs to prevent duplicate voucher creation
+            relevant_reciprocal_type = OperationType.CREDIT_NOTE_ISSUED if is_seller else OperationType.DEBIT_NOTE_ISSUED
             referenced_rejections = {
                 op.payload.get('reference_rejection_op')
                 for op in converged_operations
-                if op.operation_type in (OperationType.CREDIT_NOTE_ISSUED, OperationType.DEBIT_NOTE_ISSUED)
+                if op.operation_type == relevant_reciprocal_type
                 and op.payload.get('reference_rejection_op')
             }
 

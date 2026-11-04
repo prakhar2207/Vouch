@@ -337,15 +337,32 @@ let coordinationChannel: BroadcastChannel | null = null;
 if (typeof window !== "undefined" && "BroadcastChannel" in window) {
   try {
     coordinationChannel = new BroadcastChannel("vouch_offline_coordination");
-    coordinationChannel.onmessage = (event) => {
+    coordinationChannel.onmessage = async (event) => {
       const data = event.data;
       if (data?.type === "CLOSE_DB_CONNECTION") {
         try {
           offlineDb.close();
         } catch {}
+      } else if (data?.type === "PURGE_COMPLETE") {
+        try {
+          if (!offlineDb.isOpen()) {
+            await offlineDb.open();
+          }
+        } catch {}
       }
     };
   } catch {}
+}
+
+export async function ensureDbOpen(): Promise<void> {
+  if (typeof window === "undefined") return;
+  if (!offlineDb.isOpen()) {
+    try {
+      await offlineDb.open();
+    } catch (err) {
+      console.warn("[offlineDb] Auto-reopen error:", err);
+    }
+  }
 }
 
 /**

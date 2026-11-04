@@ -304,7 +304,22 @@ export default function Dashboard() {
         const validCid = cid;
 
         // 1. Instant local read from IndexedDB (<15ms)
-        const local = await LocalAnalyticsEngine.getDashboardAnalytics(validCid, fyOptions);
+        let local: LocalDashboardResult;
+        try {
+          if (!offlineDb.isOpen()) {
+            await offlineDb.open().catch(() => {});
+          }
+          local = await LocalAnalyticsEngine.getDashboardAnalytics(validCid, fyOptions);
+        } catch (dbErr: any) {
+          console.warn("Local IndexedDB read failed, attempting recovery:", dbErr);
+          try {
+            await offlineDb.open();
+            local = await LocalAnalyticsEngine.getDashboardAnalytics(validCid, fyOptions);
+          } catch (reopenErr) {
+            console.error("Local analytics fallback after reopen error:", reopenErr);
+            local = LocalAnalyticsEngine.getEmptyDashboard();
+          }
+        }
         if (isMounted) {
           setInsights(local);
           setVouchers(local.recent_vouchers || []);

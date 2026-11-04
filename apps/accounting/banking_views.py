@@ -188,11 +188,14 @@ class BankTransactionListAPIView(APIView):
         is_excluded_param = request.query_params.get('is_excluded')
         if is_excluded_param is not None:
             is_exc = is_excluded_param.strip().lower() in ['true', '1']
-            qs = qs.filter(is_excluded=is_exc)
+            if is_exc:
+                qs = qs.filter(Q(is_excluded=True) | Q(statement_import__is_excluded=True))
+            else:
+                qs = qs.filter(is_excluded=False).exclude(statement_import__is_excluded=True)
         elif 'EXCLUDED' in raw_statuses:
-            qs = qs.filter(is_excluded=True)
+            qs = qs.filter(Q(is_excluded=True) | Q(statement_import__is_excluded=True))
         else:
-            qs = qs.filter(is_excluded=False)
+            qs = qs.filter(is_excluded=False).exclude(statement_import__is_excluded=True)
 
         # Direction filter (Money IN vs Money OUT)
         direction = request.query_params.get('direction', '').strip().upper()
