@@ -1,0 +1,43 @@
+{% extends "emails/base_email.html" %}
+
+{% block content %}
+<div style="text-align: center; margin-bottom: 20px;">
+    <span class="badge badge-success">Payment Receipt</span>
+</div>
+
+<h2 style="margin-top: 0; color: #0f172a; font-size: 22px; font-weight: 700; text-align: center;">Payment Received</h2>
+<p style="text-align: center; color: #64748b; font-size: 15px; margin-top: -6px;">
+    <strong>{{ seller_name }}</strong> acknowledges receipt of payment from <strong>{{ recipient_name }}</strong>.
+</p>
+
+<div class="info-card">
+    <div class="info-row">
+        <span style="color: #64748b;">Receipt / Voucher No.</span>
+        <strong style="color: #0f172a; font-family: monospace;">{{ voucher_number }}</strong>
+    </div>
+    <div class="info-row">
+        <span style="color: #64748b;">Payment Date</span>
+        <strong style="color: #0f172a;">{{ payment_date }}</strong>
+    </div>
+    {% if payment_mode %}
+    <div class="info-row">
+        <span style="color: #64748b;">Payment Mode</span>
+        <strong style="color: #0f172a;">{{ payment_mode }}</strong>
+    </div>
+    {% endif %}
+    {% if reference_no %}
+    <div class="info-row">
+        <span style="color: #64748b;">Transaction Reference</span>
+        <strong style="color: #0f172a; font-family: monospace;">{{ reference_no }}</strong>
+    </div>
+    {% endif %}
+    <div class="info-row" style="background: #dcfce7; padding: 12px 14px; border-radius: 8px; margin-top: 10px;">
+        <span style="color: #15803d; font-weight: 700; font-size: 16px;">Amount Received</span>
+        <strong style="color: #15803d; font-size: 18px;">₹{{ amount }}</strong>
+    </div>
+</div>
+
+<p style="font-size: 13px; color: #64748b; text-align: center;">
+    Thank you for your timely settlement.
+</p>
+{% endblock %}

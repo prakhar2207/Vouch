@@ -135,7 +135,7 @@ ROOT_URLCONF = 'config.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'apps' / 'notifications' / 'templates', BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -160,6 +160,7 @@ if 'default' in DATABASES and 'postgresql' in DATABASES['default'].get('ENGINE',
     DATABASES['default']['CONN_HEALTH_CHECKS'] = True
 
 import sys, os
+TESTING = 'test' in sys.argv
 # Dedicated PostgreSQL testing: if USE_POSTGRES_TEST=1 or DJANGO_SETTINGS_MODULE specifies postgres test settings,
 # preserve PostgreSQL configuration; otherwise use fast isolated SQLite for unit testing.
 if 'test' in sys.argv and os.environ.get('USE_POSTGRES_TEST') != '1' and os.environ.get('DJANGO_SETTINGS_MODULE') != 'config.settings_test_pg':
@@ -232,6 +233,11 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.accounting.tasks.automated_nightly_backup_task',
         'schedule': crontab(hour=20, minute=30),  # 20:30 UTC = 02:00 AM IST
         'kwargs': {'upload_s3': True, 'encrypt': True},
+    },
+    'sweep-and-retry-outbox-notifications': {
+        'task': 'apps.notifications.tasks.retry_pending_outbox_events_task',
+        'schedule': 60.0,  # Sweeps every 60 seconds
+        'options': {'expires': 55.0},
     },
 }
 
@@ -375,10 +381,19 @@ EMAIL_PORT = env.int('EMAIL_PORT', default=587)
 EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS', default=True)
 EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
-DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='Vouch Invoicing <billing@vouchapp.in>')
+DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='SriLekh <admin@srilekh.com>')
 
 # Frontend URL for viral claim / invitation links
-FRONTEND_URL = env('FRONTEND_URL', default='https://vouch-pi-one.vercel.app' if not DEBUG else 'http://localhost:3000')
+EMAIL_REPLY_TO = env('EMAIL_REPLY_TO', default='support@srilekh.com')
+
+# Application URLs
+FRONTEND_URL = env('FRONTEND_URL', default='https://srilekh.com' if not DEBUG else 'http://localhost:3000')
+BACKEND_URL = env('BACKEND_URL', default='https://vouch-api-752s.onrender.com' if not DEBUG else 'http://localhost:8000')
+
+# OTP Verification Configuration
+OTP_EXPIRY_SECONDS = env.int('OTP_EXPIRY_SECONDS', default=300)
+OTP_RESEND_COOLDOWN_SECONDS = env.int('OTP_RESEND_COOLDOWN_SECONDS', default=60)
+OTP_MAX_ATTEMPTS = env.int('OTP_MAX_ATTEMPTS', default=5)
 
 
 

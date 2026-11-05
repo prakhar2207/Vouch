@@ -1,0 +1,22 @@
+Welcome to SriLekh, {{ user_name|default:"Partner" }}!
+
+Your business account for {{ company_name }} has been successfully configured and activated.
+
+Account Details:
+- Business / Firm Name: {{ company_name }}
+{% if gstin %}- GSTIN: {{ gstin }}
+{% endif %}{% if state %}- State / Jurisdiction: {{ state }}
+{% endif %}- Status: Active & Verified
+
+You now have full access to SriLekh's connected invoicing network, automated GST-compliant double-entry accounting, real-time inventory management, and instant digital voucher delivery.
+
+Login to your dashboard: {{ login_url|default:'https://srilekh.com/login' }}
+
+Need help setting up opening balances, inventory items, or Tally migration?
+Reach our support team at support@srilekh.com.
+
+--
+SriLekh Technologies
+https://srilekh.com
+Support: support@srilekh.com
+Sender: admin@srilekh.com

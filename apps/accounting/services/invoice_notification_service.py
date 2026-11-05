@@ -1,5 +1,4 @@
 import logging
-import threading
 import urllib.parse
 from decimal import Decimal
 from typing import Dict, Any, Optional
@@ -246,31 +245,24 @@ class InvoiceNotificationService:
     @classmethod
     def dispatch_invoice_on_post(cls, voucher: Voucher, async_mode: bool = True):
         """
-        Dispatches invoice PDF via email and generates sharing payloads.
-        Attempts Celery background task offload first; if Celery broker is unavailable
-        or in local non-worker development, falls back seamlessly to a daemon thread.
+        Durable invoice notification dispatch.
+        Delegates to the authoritative OutboxService to create a durable TransactionalOutboxEvent
+        (atomically with the voucher), ensuring zero dropped notifications.
+        Dispatches via Celery worker; if Celery broker is temporarily unavailable,
+        the event remains durable in the database (status PENDING) and is guaranteed
+        to be processed by the periodic Celery Beat sweeper.
         """
-        voucher_id_str = str(voucher.id)
+        from apps.notifications.outbox_service import OutboxService
 
-        if async_mode:
-            try:
-                from apps.accounting.tasks import dispatch_invoice_notification_task
-                dispatch_invoice_notification_task.delay(voucher_id_str)
-                logger.info(f"Offloaded invoice notification to Celery worker for {voucher.voucher_number}")
-                return
-            except Exception as e:
-                logger.info(f"Celery offload bypassed ({e}); falling back to background thread.")
+        outbox_event = OutboxService.create_invoice_outbox_event(voucher)
+        if not outbox_event:
+            logger.info(f"Outbox event not created for voucher {voucher.voucher_number} (notifications disabled or already processed).")
+            return None
 
-        def _dispatch():
-            try:
-                pdf_bytes = InvoicePDFService.generate_invoice_pdf(voucher)
-                cls.send_invoice_email(voucher, pdf_bytes=pdf_bytes)
-            except Exception as e:
-                logger.exception(f"Background dispatch failed for voucher {voucher.voucher_number}: {e}")
-
-        if async_mode:
-            thread = threading.Thread(target=_dispatch, daemon=True)
-            thread.start()
+        if async_mode and not (getattr(settings, 'TESTING', False) or getattr(settings, 'SYNCHRONOUS_NOTIFICATIONS', False)):
+            OutboxService.dispatch_outbox_event_async(outbox_event.id)
         else:
-            _dispatch()
+            OutboxService.process_outbox_event(outbox_event.id)
+
+        return outbox_event
 

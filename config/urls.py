@@ -108,6 +108,7 @@ urlpatterns = [
     path('api/v1/documents/', include('apps.documents.urls')),
     path('api/v1/superadmin/', include('apps.superadmin.urls')),
     path('api/v1/notifications/', include('apps.notifications.urls')),
+    path('api/v1/invoices/public/view/', apps.notifications.views.SecureInvoicePublicView.as_view(), name='api_v1_invoice_public_view'),
     path('api/v1/protocol/', include('apps.protocol.urls')),
 
     # Offline-First Batch Sync Endpoints
