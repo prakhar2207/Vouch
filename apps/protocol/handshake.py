@@ -89,26 +89,25 @@ class EdiStateMachine:
         if self.persist:
             try:
                 from apps.protocol.models import EdiSession
-                record = EdiSession.objects.filter(session_id=self.session_id).first()
-                if record:
-                    self.current_state = EdiState[record.current_state]
-                    self.created_at = record.created_at
-                    self.timeout_seconds = record.timeout_seconds
-                    if record.transition_history:
-                        self.transition_log = [
-                            (EdiState[item['state']], datetime.fromisoformat(item['timestamp']))
-                            for item in record.transition_history
-                        ]
-                else:
-                    EdiSession.objects.create(
-                        session_id=self.session_id,
-                        current_state=self.current_state.name,
-                        timeout_seconds=self.timeout_seconds,
-                        transition_history=[{
+                record, created = EdiSession.objects.get_or_create(
+                    session_id=self.session_id,
+                    defaults={
+                        "current_state": self.current_state.name,
+                        "timeout_seconds": self.timeout_seconds,
+                        "transition_history": [{
                             "state": self.current_state.name,
                             "timestamp": self.created_at.isoformat()
                         }]
-                    )
+                    }
+                )
+                self.current_state = EdiState[record.current_state]
+                self.created_at = record.created_at
+                self.timeout_seconds = record.timeout_seconds
+                if record.transition_history:
+                    self.transition_log = [
+                        (EdiState[item['state']], datetime.fromisoformat(item['timestamp']))
+                        for item in record.transition_history
+                    ]
             except Exception as ex:
                 logger.error(f"Failed to persist or retrieve EdiSession '{self.session_id}': {ex}", exc_info=True)
                 raise StatePersistenceError(f"Database error initializing EdiSession '{self.session_id}': {ex}") from ex

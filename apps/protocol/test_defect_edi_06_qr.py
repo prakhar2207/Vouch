@@ -2,7 +2,7 @@ import time
 import uuid
 import threading
 from unittest.mock import patch
-from django.test import TestCase, override_settings
+from django.test import TransactionTestCase, override_settings
 from django.conf import settings
 from django.core.cache import cache
 
@@ -11,7 +11,7 @@ from apps.protocol.qr_bootstrap import QRSessionManager, QRBootstrapPayload, Sec
 from apps.protocol.models import ProtocolConsumedNonce
 
 
-class DefectEDI06QRConfigurationSecurityTests(TestCase):
+class DefectEDI06QRConfigurationSecurityTests(TransactionTestCase):
     """
     Dedicated Security Verification Suite for DEFECT-EDI-06:
     Fail-closed QR Replay Protection across all production, staging, and non-test configurations.
