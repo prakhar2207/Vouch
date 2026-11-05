@@ -179,13 +179,39 @@ validate_environment_database_isolation(
 
 import sys, os
 TESTING = 'test' in sys.argv
-# Dedicated PostgreSQL testing: if USE_POSTGRES_TEST=1 or DJANGO_SETTINGS_MODULE specifies postgres test settings,
-# preserve PostgreSQL configuration; otherwise use fast isolated SQLite for unit testing.
-if 'test' in sys.argv and os.environ.get('USE_POSTGRES_TEST') != '1' and os.environ.get('DJANGO_SETTINGS_MODULE') != 'config.settings_test_pg':
-    DATABASES['default'] = {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'test_db.sqlite3',
-    }
+
+# Check for dedicated testing database URL (e.g. TESTING_DATABASE_URL, testIng_database_url, TEST_DATABASE_URL)
+TEST_DB_URL = (
+    os.environ.get('TESTING_DATABASE_URL')
+    or os.environ.get('testIng_database_url')
+    or os.environ.get('testing_database_url')
+    or os.environ.get('TEST_DATABASE_URL')
+    or os.environ.get('test_database_url')
+)
+
+# Dedicated PostgreSQL testing:
+# 1. If TESTING_DATABASE_URL (or variants) is set, use that PostgreSQL instance for tests.
+# 2. Else if USE_POSTGRES_TEST=1 or settings_test_pg is used, retain PostgreSQL from DATABASE_URL.
+# 3. Otherwise, use fast isolated SQLite for unit testing.
+if 'test' in sys.argv:
+    if TEST_DB_URL and 'postgres' in TEST_DB_URL:
+        DATABASES['default'] = env.db_url_config(TEST_DB_URL)
+        DATABASES['default']['CONN_MAX_AGE'] = 0
+        DATABASES['default']['TEST'] = {'CHARSET': 'utf8'}
+        # Safeguard: Verify that testing database does not target production
+        validate_environment_database_isolation(
+            environment='staging',
+            db_config=DATABASES['default'],
+            database_url=TEST_DB_URL,
+            prod_host=PRODUCTION_DB_HOST,
+            prod_db_name=PRODUCTION_DB_NAME,
+            is_testing=True
+        )
+    elif os.environ.get('USE_POSTGRES_TEST') != '1' and os.environ.get('DJANGO_SETTINGS_MODULE') != 'config.settings_test_pg':
+        DATABASES['default'] = {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'test_db.sqlite3',
+        }
 
 
 
