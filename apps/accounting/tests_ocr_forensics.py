@@ -503,8 +503,8 @@ class OCRForensicsTestCase(TestCase):
             transaction_date=datetime.date(2026, 4, 28),
             description="BY CLG:DEL ACCTS SAKSHAM ENTERPRISES",
             normalized_narration="BY CLG DEL ACCTS SAKSHAM ENTERPRISES",
-            debit_amount=Decimal("15000.00"),
-            credit_amount=Decimal("0.00"),
+            debit_amount=Decimal("0.00"),
+            credit_amount=Decimal("15000.00"),
             status="UNRESOLVED"
         )
 
