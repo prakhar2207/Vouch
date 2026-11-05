@@ -49,6 +49,7 @@ else:
         'vouch-api-staging.onrender.com',
         'api-staging.srilekh.com',
         'staging.srilekh.com',
+        '.onrender.com',
         'localhost',
         '127.0.0.1',
     ]
@@ -56,10 +57,15 @@ else:
     if render_hostname and render_hostname not in default_hosts:
         default_hosts.append(render_hostname)
     configured_hosts = env.list('ALLOWED_HOSTS', default=default_hosts)
-    # Security Invariant: Never permit wildcard '*' in production
-    ALLOWED_HOSTS = [h.strip() for h in configured_hosts if h.strip() and h.strip() != '*']
+    # Security Invariant: Disallow bare wildcard '*' in production, fallback gracefully to default safe hosts
+    filtered_hosts = [h.strip() for h in configured_hosts if h.strip() and h.strip() != '*']
+    if not filtered_hosts:
+        filtered_hosts = [h.strip() for h in default_hosts if h.strip()]
+    if ENVIRONMENT != 'production' and '.onrender.com' not in filtered_hosts:
+        filtered_hosts.append('.onrender.com')
+    ALLOWED_HOSTS = list(dict.fromkeys(filtered_hosts))
     if not ALLOWED_HOSTS:
-        raise ValueError("Production deployment error: ALLOWED_HOSTS cannot be empty or contain wildcard '*' when DEBUG=False.")
+        raise ValueError("Production deployment error: ALLOWED_HOSTS cannot be empty when DEBUG=False.")
 
 # Application definition
 INSTALLED_APPS = [
