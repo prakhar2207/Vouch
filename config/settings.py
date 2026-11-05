@@ -28,6 +28,10 @@ SECRET_KEY = env('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env.bool('DEBUG', default=False)
+ENVIRONMENT = env.str('ENVIRONMENT', default='development' if DEBUG else 'production').strip().lower()
+VERSION = '1.0.2'
+PRODUCTION_DB_HOST = env.str('PRODUCTION_DB_HOST', default='ep-lingering-boat-b3994i6f-pooler.c-4.ap-southeast-1.aws.neon.tech').strip()
+PRODUCTION_DB_NAME = env.str('PRODUCTION_DB_NAME', default='neondb').strip()
 
 if DEBUG:
     ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['*'])
@@ -42,6 +46,9 @@ else:
         'api.srilekh.com',
         'app.srilekh.com',
         'vouch-api-752s.onrender.com',
+        'vouch-api-staging.onrender.com',
+        'api-staging.srilekh.com',
+        'staging.srilekh.com',
         'localhost',
         '127.0.0.1',
     ]
@@ -158,6 +165,17 @@ DATABASES = {
 if 'default' in DATABASES and 'postgresql' in DATABASES['default'].get('ENGINE', ''):
     DATABASES['default']['CONN_MAX_AGE'] = env.int('CONN_MAX_AGE', default=600)
     DATABASES['default']['CONN_HEALTH_CHECKS'] = True
+
+# Startup Fail-Closed Staging Database Isolation Safety Guard
+from config.environment_guard import validate_environment_database_isolation
+validate_environment_database_isolation(
+    environment=ENVIRONMENT,
+    db_config=DATABASES.get('default', {}),
+    database_url=env.str('DATABASE_URL', default=''),
+    prod_host=PRODUCTION_DB_HOST,
+    prod_db_name=PRODUCTION_DB_NAME,
+    is_testing=('test' in sys.argv)
+)
 
 import sys, os
 TESTING = 'test' in sys.argv
@@ -278,6 +296,8 @@ _default_cors_origins = [
     'https://srilekh.com',
     'https://www.srilekh.com',
     'https://app.srilekh.com',
+    'https://staging.srilekh.com',
+    'https://api-staging.srilekh.com',
 ]
 if DEBUG or env.bool('ALLOW_LOCAL_ORIGINS', default=False):
     _default_cors_origins.extend([
@@ -329,6 +349,8 @@ CSRF_TRUSTED_ORIGINS = [
     'https://www.srilekh.com',
     'https://api.srilekh.com',
     'https://app.srilekh.com',
+    'https://staging.srilekh.com',
+    'https://api-staging.srilekh.com',
 ]
 if DEBUG or env.bool('ALLOW_LOCAL_ORIGINS', default=False):
     CSRF_TRUSTED_ORIGINS.extend([

@@ -60,13 +60,20 @@ def root_health_view(request):
             "vouchers": "/api/vouchers/",
             "ocr": "/api/ocr/extract/",
             "b2b": "/api/b2b/inbox/",
-            "tally_export": "/api/export/tally/xml/"
+            "tally_export": "/api/export/tally/xml/",
+            "environment": "/api/v1/health/environment/"
         }
     })
+
+def environment_identity_view(request):
+    from config.environment_guard import get_environment_identity_metadata
+    return JsonResponse(get_environment_identity_metadata(settings))
 
 urlpatterns = [
     path('', root_health_view, name='root_health'),
     path('api/health/', root_health_view, name='api_health'),
+    path('api/health/environment/', environment_identity_view, name='api_environment_identity'),
+    path('api/v1/health/environment/', environment_identity_view, name='api_v1_environment_identity'),
     path('admin/', admin.site.urls),
     # Top-Level Direct API Endpoints
     path('api/vouchers/', UniversalVoucherAPIView.as_view(), name='api_vouchers_root'),
