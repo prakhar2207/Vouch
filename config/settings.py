@@ -157,8 +157,16 @@ TEMPLATES = [
 WSGI_APPLICATION = 'config.wsgi.application'
 
 # Database
+# Supports DATABASE_URL as primary; if unset, allows fallback to TESTING_DATABASE_URL in staging/development
+_effective_db_url = (
+    env.str('DATABASE_URL', default='').strip()
+    or env.str('TESTING_DATABASE_URL', default='').strip()
+    or env.str('testIng_database_url', default='').strip()
+    or env.str('testing_database_url', default='').strip()
+)
+
 DATABASES = {
-    'default': env.db('DATABASE_URL', default='sqlite:///' + str(BASE_DIR / 'db.sqlite3'))
+    'default': env.db_url_config(_effective_db_url) if _effective_db_url else env.db('DATABASE_URL', default='sqlite:///' + str(BASE_DIR / 'db.sqlite3'))
 }
 
 # Optimize PostgreSQL connection persistence & keep-alive over WAN
@@ -171,7 +179,7 @@ from config.environment_guard import validate_environment_database_isolation
 validate_environment_database_isolation(
     environment=ENVIRONMENT,
     db_config=DATABASES.get('default', {}),
-    database_url=env.str('DATABASE_URL', default=''),
+    database_url=_effective_db_url,
     prod_host=PRODUCTION_DB_HOST,
     prod_db_name=PRODUCTION_DB_NAME,
     is_testing=('test' in sys.argv)
