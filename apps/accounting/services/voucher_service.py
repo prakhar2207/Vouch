@@ -462,13 +462,13 @@ class VoucherService:
             except Exception:
                 pass
 
-        # 10. Resync voucher sequence counter (resets to highest remaining voucher)
+        # 10. Resync voucher sequence counter (strictly monotonic: never rolled backward or reset)
         if financial_year:
             InvoiceSequenceService.resync_sequence(
                 company=company,
                 financial_year=financial_year,
                 voucher_type=voucher_type,
-                force=True
+                force=False
             )
 
         # 11. Recalculate affected ledger balances

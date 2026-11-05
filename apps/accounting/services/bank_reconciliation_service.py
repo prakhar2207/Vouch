@@ -1285,22 +1285,32 @@ class BankReconciliationService:
         clean_reason = str(reason).strip()
         bank_tx = BankTransaction.objects.select_for_update().get(id=bank_tx.id)
 
+        notes = bank_tx.match_notes if isinstance(bank_tx.match_notes, dict) else {}
+        is_existing_matched = notes.get('is_existing_matched', False)
+
         reversal_voucher = None
         if bank_tx.matched_voucher:
             vch = Voucher.objects.select_for_update().get(id=bank_tx.matched_voucher_id)
-            if vch.status in ['POSTED', 'VALIDATING']:
-                reversal_voucher = VoucherService.create_reversal_voucher(
-                    voucher=vch,
-                    user=user,
-                    reason=f"Bank transaction excluded: {clean_reason}"
-                )
+            if not is_existing_matched:
+                if vch.status in ['POSTED', 'VALIDATING']:
+                    reversal_voucher = VoucherService.create_reversal_voucher(
+                        voucher=vch,
+                        user=user,
+                        reason=f"Bank transaction excluded: {clean_reason}"
+                    )
+            else:
+                logger.info(f"Preserving pre-existing manual voucher #{vch.voucher_number} upon bank transaction exclusion without reversing/cancelling it.")
 
+        # Always safely detach the voucher link upon exclusion so no stale links remain
+        bank_tx.matched_voucher = None
+        bank_tx.matched_party = None
+        bank_tx.matched_invoice = None
         bank_tx.is_excluded = True
         bank_tx.status = 'EXCLUDED'
         bank_tx.exclusion_reason = clean_reason
         bank_tx.excluded_at = timezone.now()
         bank_tx.excluded_by = user
-        bank_tx.save(update_fields=['is_excluded', 'status', 'exclusion_reason', 'excluded_at', 'excluded_by', 'updated_at'])
+        bank_tx.save(update_fields=['matched_voucher', 'matched_party', 'matched_invoice', 'is_excluded', 'status', 'exclusion_reason', 'excluded_at', 'excluded_by', 'updated_at'])
 
         AuditService.log_action(
             company=bank_tx.company,

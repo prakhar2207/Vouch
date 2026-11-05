@@ -322,6 +322,8 @@ class TransactionDeduplicationEngine:
                 else:
                     source_desc = "Identical manual double-entry"
 
+                duplicate_classification = "CONFIRMED_DUPLICATE"
+
                 findings_data.append({
                     "type": "DUPLICATE_VOUCHER",
                     "category": "DUPLICATE",
@@ -345,6 +347,7 @@ class TransactionDeduplicationEngine:
                         "has_linked_bank_tx": bool(linked_bank_tx),
                         "linked_bank_tx_id": str(linked_bank_tx.id) if linked_bank_tx else None,
                         "linked_bank_tx_desc": linked_bank_tx.description if linked_bank_tx else None,
+                        "duplicate_classification": duplicate_classification,
                     },
                     "expected_state": f"Single {group['voucher_type']} voucher #{primary_v.voucher_number} for ₹{group['total_amount']}.",
                     "actual_state": f"{len(vouchers)} duplicate vouchers posted ({', '.join(v.voucher_number for v in vouchers)}).",
@@ -459,6 +462,16 @@ class TransactionDeduplicationEngine:
                     else:
                         source_desc = f"Identical {ng['voucher_type']} recorded {day_diff} day(s) apart"
 
+                    if ref_digit_match and is_bank_collision:
+                        duplicate_classification = "CONFIRMED_DUPLICATE"
+                        near_fix_action = "VOID_DUPLICATE_VOUCHER"
+                    elif is_bank_collision or ref_digit_match or ref_str_match:
+                        duplicate_classification = "PROBABLE_DUPLICATE"
+                        near_fix_action = None  # Requires manual accountant confirmation
+                    else:
+                        duplicate_classification = "POSSIBLE_DUPLICATE"
+                        near_fix_action = None
+
                     findings_data.append({
                         "type": "DUPLICATE_VOUCHER",
                         "category": "DUPLICATE",
@@ -485,13 +498,14 @@ class TransactionDeduplicationEngine:
                             "has_linked_bank_tx": bool(linked_bank_tx),
                             "linked_bank_tx_id": str(linked_bank_tx.id) if linked_bank_tx else None,
                             "linked_bank_tx_desc": linked_bank_tx.description if linked_bank_tx else None,
+                            "duplicate_classification": duplicate_classification,
                         },
                         "expected_state": f"Single {ng['voucher_type']} voucher #{primary_v.voucher_number} for ₹{primary_v.total_amount}.",
                         "actual_state": f"Duplicate {ng['voucher_type']} #{dup_v.voucher_number} posted within {day_diff} day(s) of #{primary_v.voucher_number}.",
                         "probable_cause": source_desc,
-                        "suggested_action": f"Permanently delete duplicate voucher #{dup_v.voucher_number} from system and record in Audit Trail, retaining #{primary_v.voucher_number}.",
+                        "suggested_action": f"Permanently delete duplicate voucher #{dup_v.voucher_number} from system and record in Audit Trail, retaining #{primary_v.voucher_number}." if near_fix_action else f"Review potential duplicate {ng['voucher_type']} #{dup_v.voucher_number} manually.",
                         "confidence": 0.98 if (ref_digit_match and is_bank_collision) else 0.95,
-                        "fix_action": "VOID_DUPLICATE_VOUCHER"
+                        "fix_action": near_fix_action
                     })
 
         # Check duplicate payment allocations against the same invoice

@@ -376,15 +376,52 @@ class FindingFixService:
         }
 
     @classmethod
+    def _save_idempotency_record(cls, company, user, client_key, finding_id, response_dict):
+        if not client_key:
+            return
+        import json
+        from apps.accounting.models import IdempotencyRecord
+        scope_key = f"health_fix_{company.id}_{client_key}"
+        IdempotencyRecord.objects.update_or_create(
+            scope_key=scope_key,
+            defaults={
+                "company": company,
+                "user": user,
+                "client_key": client_key,
+                "endpoint": f"execute_fix/{finding_id}",
+                "method": "POST",
+                "payload_hash": str(hash(f"{finding_id}_{client_key}")),
+                "status": "COMPLETED",
+                "response_code": 200,
+                "response_body": json.dumps(response_dict)
+            }
+        )
+
+    @classmethod
     @transaction.atomic
-    def execute_fix(cls, finding: AccountingFinding, user=None) -> Dict[str, Any]:
+    def execute_fix(cls, finding: AccountingFinding, user=None, client_key: Optional[str] = None) -> Dict[str, Any]:
         """
         Deterministically executes a user-approved fix for an AccountingFinding.
         Creates an audit log, preserves reversal records, and recalculates balances.
         """
+        from apps.accounting.models import IdempotencyRecord
         finding = AccountingFinding.objects.select_for_update().get(id=finding.id)
         if finding.is_resolved:
-            raise ValidationError("This finding is already resolved.")
+            return {
+                "status": "SUCCESS",
+                "message": "This finding has already been resolved.",
+                "already_resolved": True
+            }
+
+        if client_key:
+            scope_key = f"health_fix_{finding.company.id}_{client_key}"
+            existing_idem = IdempotencyRecord.objects.filter(scope_key=scope_key, status='COMPLETED').first()
+            if existing_idem and existing_idem.response_body:
+                import json
+                try:
+                    return json.loads(existing_idem.response_body)
+                except Exception:
+                    pass
 
         evidence = finding.evidence or {}
         fix_action = finding.fix_action
@@ -607,43 +644,87 @@ class FindingFixService:
             if not (dup_id and prim_id):
                 raise ValidationError("Missing duplicate or primary voucher ID in finding evidence.")
 
-            dup_v = Voucher.objects.filter(id=dup_id, company=finding.company).first()
-            prim_v = Voucher.objects.filter(id=prim_id, company=finding.company).first()
+            # Validate duplicate classification (Phase 3 & Phase 4 DEF-DUP-01)
+            classification = evidence.get('duplicate_classification') or 'CONFIRMED_DUPLICATE'
+            if classification not in ['CONFIRMED_DUPLICATE']:
+                raise ValidationError(
+                    f"Automated 1-click resolution is only permitted for CONFIRMED_DUPLICATE findings. "
+                    f"This finding is classified as '{classification}' and requires manual accountant review."
+                )
+
+            # Row-level locks on both vouchers (with cross-company tenant isolation preflight)
+            dup_v = Voucher.objects.select_for_update().filter(id=dup_id).first()
+            prim_v = Voucher.objects.select_for_update().filter(id=prim_id).first()
+
+            # Strict Tenant Isolation Guard (DEF-DUP-01)
+            if dup_v and dup_v.company_id != finding.company_id:
+                raise ValidationError("Cross-company duplicate resolution forbidden by tenant isolation policy.")
+            if prim_v and prim_v.company_id != finding.company_id:
+                raise ValidationError("Cross-company duplicate resolution forbidden by tenant isolation policy.")
 
             if not dup_v:
-                # Duplicate voucher is already deleted from system
                 finding.is_resolved = True
                 finding.resolved_at = timezone.now()
                 finding.resolved_by = user
                 finding.save(update_fields=['is_resolved', 'resolved_at', 'resolved_by'])
-                return {
+                res = {
                     "status": "SUCCESS",
                     "message": "Duplicate voucher was already deleted from the system. Finding marked as resolved.",
                 }
+                if client_key:
+                    cls._save_idempotency_record(finding.company, user, client_key, finding.id, res)
+                return res
 
             if not prim_v:
-                # Primary was already deleted, so duplicate remains the sole valid entry
                 finding.is_resolved = True
                 finding.resolved_at = timezone.now()
                 finding.resolved_by = user
                 finding.save(update_fields=['is_resolved', 'resolved_at', 'resolved_by'])
-                return {
+                res = {
                     "status": "SUCCESS",
                     "message": f"Primary voucher was already removed; keeping #{dup_v.voucher_number} as the sole record.",
                     "primary_voucher": dup_v.voucher_number
                 }
+                if client_key:
+                    cls._save_idempotency_record(finding.company, user, client_key, finding.id, res)
+                return res
 
-            # Safeguard 1: If primary voucher is not active (e.g. REVERSED or CANCELLED), do NOT delete dup_v!
+            # DEF-DUP-01 Strict Validations:
+            if dup_v.company_id != prim_v.company_id:
+                raise ValidationError("Cross-company duplicate resolution forbidden by tenant isolation policy.")
+
+            if dup_v.financial_year_id != prim_v.financial_year_id:
+                raise ValidationError(
+                    f"Vouchers belong to different financial years ({dup_v.financial_year.code if dup_v.financial_year else 'N/A'} vs {prim_v.financial_year.code if prim_v.financial_year else 'N/A'}). Manual review required."
+                )
+
+            if dup_v.voucher_type != prim_v.voucher_type:
+                raise ValidationError(
+                    f"Vouchers have different types ({dup_v.voucher_type} vs {prim_v.voucher_type}). Automated deletion aborted."
+                )
+
+            if abs(dup_v.total_amount - prim_v.total_amount) > Decimal('0.001'):
+                raise ValidationError(
+                    f"Voucher amounts do not match exactly (₹{dup_v.total_amount} vs ₹{prim_v.total_amount}). Automated deletion aborted."
+                )
+
+            if dup_v.party_ledger_id != prim_v.party_ledger_id:
+                raise ValidationError("Vouchers affect different party ledgers. Automated deletion aborted.")
+
+            # Safeguard 1: If primary voucher is not active, do not delete dup_v
             if prim_v.status != 'POSTED':
                 finding.is_resolved = True
                 finding.resolved_at = timezone.now()
                 finding.resolved_by = user
                 finding.save(update_fields=['is_resolved', 'resolved_at', 'resolved_by'])
-                return {
+                res = {
                     "status": "SUCCESS",
                     "message": f"Primary voucher #{prim_v.voucher_number} is already {prim_v.status.lower()}; keeping #{dup_v.voucher_number} as the active record.",
                     "primary_voucher": dup_v.voucher_number
                 }
+                if client_key:
+                    cls._save_idempotency_record(finding.company, user, client_key, finding.id, res)
+                return res
 
             # Safeguard 2: If duplicate voucher is already reversed or cancelled, no deletion is needed
             if dup_v.status != 'POSTED':
@@ -651,23 +732,47 @@ class FindingFixService:
                 finding.resolved_at = timezone.now()
                 finding.resolved_by = user
                 finding.save(update_fields=['is_resolved', 'resolved_at', 'resolved_by'])
-                return {
+                res = {
                     "status": "SUCCESS",
                     "message": f"Duplicate voucher #{dup_v.voucher_number} is already {dup_v.status.lower()}; no deletion required.",
                     "primary_voucher": prim_v.voucher_number
                 }
+                if client_key:
+                    cls._save_idempotency_record(finding.company, user, client_key, finding.id, res)
+                return res
+
+            # Independent invoice allocations check:
+            from apps.accounting.models import PaymentAllocation
+            dup_allocs = PaymentAllocation.objects.filter(payment_voucher=dup_v)
+            if dup_allocs.exists():
+                prim_alloc_invs = set(PaymentAllocation.objects.filter(payment_voucher=prim_v).values_list('invoice_voucher_id', flat=True))
+                dup_alloc_invs = set(dup_allocs.values_list('invoice_voucher_id', flat=True))
+                if not dup_alloc_invs.issubset(prim_alloc_invs):
+                    raise ValidationError(
+                        f"Duplicate voucher #{dup_v.voucher_number} has independent invoice allocations not present on primary voucher. Manual allocation adjustment required."
+                    )
 
             dup_num = dup_v.voucher_number
             prim_num = prim_v.voucher_number
 
-            # 1. If duplicate voucher was matched to any bank transaction, transfer link to primary voucher
+            # 1. Transfer bank transaction links safely with is_existing_matched flag (DEF-DUP-02)
             from apps.accounting.models import BankTransaction
-            linked_bank_txs = BankTransaction.objects.filter(company=finding.company, matched_voucher=dup_v)
+            linked_bank_txs = list(BankTransaction.objects.select_for_update().filter(company=finding.company, matched_voucher=dup_v))
             for btx in linked_bank_txs:
                 btx.matched_voucher = prim_v
                 btx.matched_party = prim_v.party_ledger
                 btx.status = 'RECONCILED'
-                btx.save(update_fields=['matched_voucher', 'matched_party', 'status', 'updated_at'])
+                notes = btx.match_notes if isinstance(btx.match_notes, dict) else {}
+                notes['is_existing_matched'] = True
+                notes.setdefault('interpretation_history', []).append({
+                    'timestamp': timezone.now().isoformat(),
+                    'action_type': 'RELINK_DUPLICATE_RESOLVED',
+                    'original_voucher_number': dup_v.voucher_number,
+                    'relinked_to_voucher_number': prim_v.voucher_number,
+                    'user': user.email if user else 'SYSTEM'
+                })
+                btx.match_notes = notes
+                btx.save(update_fields=['matched_voucher', 'matched_party', 'status', 'match_notes', 'updated_at'])
 
             # 2. Permanently delete the duplicate voucher (matching Tally Alt+D) with full AuditLog snapshot
             VoucherService.delete_voucher(
@@ -676,7 +781,7 @@ class FindingFixService:
                 reason=f"Duplicate voucher deleted during Books Health deduplication. Retained primary voucher #{prim_num}."
             )
 
-            # 3. Recalculate balances for primary party if different
+            # 3. Recalculate balances for primary party
             if prim_v.party_ledger:
                 VoucherService.recalculate_ledger_balance(prim_v.party_ledger)
 
@@ -685,12 +790,30 @@ class FindingFixService:
             finding.resolved_by = user
             finding.save(update_fields=['is_resolved', 'resolved_at', 'resolved_by'])
 
-            return {
+            # 4. Audit Log for Finding Resolution
+            AuditService.log_action(
+                company=finding.company,
+                user=user,
+                action='UPDATE',
+                model_name='AccountingFinding',
+                record_id=finding.id,
+                changes={
+                    "action": "VOID_DUPLICATE_VOUCHER",
+                    "deleted_voucher": dup_num,
+                    "retained_primary_voucher": prim_num,
+                    "relinked_bank_transactions_count": len(linked_bank_txs)
+                }
+            )
+
+            res = {
                 "status": "SUCCESS",
                 "message": f"Successfully deleted duplicate voucher #{dup_num} from system. Retained primary voucher #{prim_num}. Full record preserved in Audit Trail.",
                 "deleted_voucher": dup_num,
                 "primary_voucher": prim_num
             }
+            if client_key:
+                cls._save_idempotency_record(finding.company, user, client_key, finding.id, res)
+            return res
 
         elif fix_action == 'MERGE_INVENTORY_ITEMS':
             from apps.inventory.models import Product, InventoryEntry
