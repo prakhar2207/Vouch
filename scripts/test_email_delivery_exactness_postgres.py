@@ -754,7 +754,7 @@ def test_scenario_15_cross_tenant_isolation_and_manual_retry():
     assert res_retry_a.status_code == 200
 
     log_a.refresh_from_db()
-    assert log_a.status == 'RETRY_PENDING'
+    assert log_a.status in ('PENDING', 'RETRY_PENDING')
     print("  [OK] Invariant maintained: strict tenant isolation on delivery logs; unauthorized cross-tenant mutations blocked.")
     test_results["Scenario 15: Cross-Tenant Isolation & Manual Retry"] = "PASSED"
     scenario_run_counts["Scenario 15"] = 1

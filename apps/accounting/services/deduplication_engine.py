@@ -310,19 +310,54 @@ class TransactionDeduplicationEngine:
                 flagged_voucher_ids.add(dup_v.id)
                 flagged_voucher_ids.add(primary_v.id)
 
-                # Detect origin / cause
-                linked_bank_tx = bank_tx_matched_map.get(dup_v.id)
-                is_bank_recon = bool(linked_bank_tx)
-                is_rapid = (dup_v.created_at - primary_v.created_at).total_seconds() < 300
+                # Detect origin / cause and deterministic corroboration (DEF-DUP-02)
+                bt_dup = bank_tx_matched_map.get(dup_v.id)
+                bt_prim = bank_tx_matched_map.get(primary_v.id)
+                is_bank_recon = bool(bt_dup or bt_prim)
+                is_bank_collision = bool((bt_dup is not None) != (bt_prim is not None))
+                is_rapid = abs((dup_v.created_at - primary_v.created_at).total_seconds()) < 300
 
-                if is_bank_recon:
+                # Reference number / UTR / invoice digits check
+                r1_digits = {n.lstrip('0') for n in re.findall(r'\d+', primary_v.reference_number or '') if n.lstrip('0')}
+                r2_digits = {n.lstrip('0') for n in re.findall(r'\d+', dup_v.reference_number or '') if n.lstrip('0')}
+                ext1_digits = {n.lstrip('0') for n in re.findall(r'\d+', primary_v.external_invoice_number or '') if n.lstrip('0')}
+                ext2_digits = {n.lstrip('0') for n in re.findall(r'\d+', dup_v.external_invoice_number or '') if n.lstrip('0')}
+                common_digits = (r1_digits & r2_digits) | (ext1_digits & ext2_digits)
+                ref_digit_match = bool(common_digits)
+
+                ref_str_match = bool(
+                    primary_v.reference_number and dup_v.reference_number and
+                    primary_v.reference_number.strip().lower() == dup_v.reference_number.strip().lower()
+                )
+                ext_str_match = bool(
+                    primary_v.external_invoice_number and dup_v.external_invoice_number and
+                    primary_v.external_invoice_number.strip().lower() == dup_v.external_invoice_number.strip().lower()
+                )
+
+                linked_bank_tx = bt_dup or bt_prim
+
+                if is_bank_collision or (is_bank_recon and (ref_digit_match or ref_str_match)):
                     source_desc = "Created via Bank Reconciliation while manual voucher already existed"
+                    duplicate_classification = "CONFIRMED_DUPLICATE"
+                    fix_action = "VOID_DUPLICATE_VOUCHER"
+                    suggested_action = f"Permanently delete duplicate voucher #{dup_v.voucher_number} from system and record in Audit Trail, retaining #{primary_v.voucher_number}."
+                elif ref_digit_match or ref_str_match or ext_str_match:
+                    match_ref = next(iter(common_digits), dup_v.reference_number)
+                    source_desc = f"Identical {group['voucher_type']} recorded with matching reference/cheque digits ({match_ref})"
+                    duplicate_classification = "CONFIRMED_DUPLICATE"
+                    fix_action = "VOID_DUPLICATE_VOUCHER"
+                    suggested_action = f"Permanently delete duplicate voucher #{dup_v.voucher_number} from system and record in Audit Trail, retaining #{primary_v.voucher_number}."
                 elif is_rapid:
                     source_desc = "Rapid double-click submission (created within seconds of original)"
+                    duplicate_classification = "CONFIRMED_DUPLICATE"
+                    fix_action = "VOID_DUPLICATE_VOUCHER"
+                    suggested_action = f"Permanently delete duplicate voucher #{dup_v.voucher_number} from system and record in Audit Trail, retaining #{primary_v.voucher_number}."
                 else:
-                    source_desc = "Identical manual double-entry"
-
-                duplicate_classification = "CONFIRMED_DUPLICATE"
+                    # Legitimate distinct payments on the same day must NOT be automatically deleted!
+                    source_desc = "Multiple same-day entries with identical amount (review required)"
+                    duplicate_classification = "PROBABLE_DUPLICATE"
+                    fix_action = None
+                    suggested_action = f"Review vouchers #{primary_v.voucher_number} and #{dup_v.voucher_number}. If this represents two distinct transactions, keep both. Otherwise, void or cancel the duplicate voucher."
 
                 findings_data.append({
                     "type": "DUPLICATE_VOUCHER",
@@ -352,9 +387,9 @@ class TransactionDeduplicationEngine:
                     "expected_state": f"Single {group['voucher_type']} voucher #{primary_v.voucher_number} for ₹{group['total_amount']}.",
                     "actual_state": f"{len(vouchers)} duplicate vouchers posted ({', '.join(v.voucher_number for v in vouchers)}).",
                     "probable_cause": source_desc,
-                    "suggested_action": f"Permanently delete duplicate voucher #{dup_v.voucher_number} from system and record in Audit Trail, retaining #{primary_v.voucher_number}.",
-                    "confidence": 0.98,
-                    "fix_action": "VOID_DUPLICATE_VOUCHER"
+                    "suggested_action": suggested_action,
+                    "confidence": 0.98 if duplicate_classification == "CONFIRMED_DUPLICATE" else 0.75,
+                    "fix_action": fix_action
                 })
 
         # 2. Near-date duplicate detection (1 to 3 days apart for same party & amount):

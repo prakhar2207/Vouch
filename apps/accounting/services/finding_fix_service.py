@@ -381,7 +381,8 @@ class FindingFixService:
             return
         import json
         from apps.accounting.models import IdempotencyRecord
-        scope_key = f"health_fix_{company.id}_{client_key}"
+        scope_key = f"health_fix_{company.id}_{finding_id}_{client_key}"
+        payload_hash = str(hash(f"{company.id}_{finding_id}_{client_key}"))
         IdempotencyRecord.objects.update_or_create(
             scope_key=scope_key,
             defaults={
@@ -390,7 +391,7 @@ class FindingFixService:
                 "client_key": client_key,
                 "endpoint": f"execute_fix/{finding_id}",
                 "method": "POST",
-                "payload_hash": str(hash(f"{finding_id}_{client_key}")),
+                "payload_hash": payload_hash,
                 "status": "COMPLETED",
                 "response_code": 200,
                 "response_body": json.dumps(response_dict)
@@ -405,16 +406,11 @@ class FindingFixService:
         Creates an audit log, preserves reversal records, and recalculates balances.
         """
         from apps.accounting.models import IdempotencyRecord
-        finding = AccountingFinding.objects.select_for_update().get(id=finding.id)
-        if finding.is_resolved:
-            return {
-                "status": "SUCCESS",
-                "message": "This finding has already been resolved.",
-                "already_resolved": True
-            }
 
+        # Defect 4 & 5 (P1): Check idempotency record BEFORE checking finding.is_resolved,
+        # with scope_key strictly qualified by finding_id to prevent cross-finding collisions.
         if client_key:
-            scope_key = f"health_fix_{finding.company.id}_{client_key}"
+            scope_key = f"health_fix_{finding.company_id}_{finding.id}_{client_key}"
             existing_idem = IdempotencyRecord.objects.filter(scope_key=scope_key, status='COMPLETED').first()
             if existing_idem and existing_idem.response_body:
                 import json
@@ -422,6 +418,14 @@ class FindingFixService:
                     return json.loads(existing_idem.response_body)
                 except Exception:
                     pass
+
+        finding = AccountingFinding.objects.select_for_update().get(id=finding.id)
+        if finding.is_resolved:
+            return {
+                "status": "SUCCESS",
+                "message": "This finding has already been resolved.",
+                "already_resolved": True
+            }
 
         evidence = finding.evidence or {}
         fix_action = finding.fix_action
@@ -644,12 +648,12 @@ class FindingFixService:
             if not (dup_id and prim_id):
                 raise ValidationError("Missing duplicate or primary voucher ID in finding evidence.")
 
-            # Validate duplicate classification (Phase 3 & Phase 4 DEF-DUP-01)
-            classification = evidence.get('duplicate_classification') or 'CONFIRMED_DUPLICATE'
-            if classification not in ['CONFIRMED_DUPLICATE']:
+            # Validate duplicate classification (Defect 3 P0: Strict validation, NEVER fail open)
+            classification = evidence.get('duplicate_classification')
+            if not classification or classification != 'CONFIRMED_DUPLICATE':
                 raise ValidationError(
-                    f"Automated 1-click resolution is only permitted for CONFIRMED_DUPLICATE findings. "
-                    f"This finding is classified as '{classification}' and requires manual accountant review."
+                    f"Automated 1-click resolution is strictly permitted ONLY for findings with explicit CONFIRMED_DUPLICATE classification. "
+                    f"This finding has classification '{classification}' and requires manual accountant review."
                 )
 
             # Row-level locks on both vouchers (with cross-company tenant isolation preflight)

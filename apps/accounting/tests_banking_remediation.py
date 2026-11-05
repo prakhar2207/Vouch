@@ -1053,7 +1053,7 @@ class BankReconciliationRemediationTests(APITestCase):
         )
         with self.assertRaises(ValidationError) as ctx:
             FindingFixService.execute_fix(finding, user=self.user)
-        self.assertIn("Automated 1-click resolution is only permitted for CONFIRMED_DUPLICATE", str(ctx.exception))
+        self.assertIn("strictly permitted ONLY for findings with explicit CONFIRMED_DUPLICATE", str(ctx.exception))
 
     def test_36_resolve_same_finding_twice_is_idempotent(self):
         """12. Calling execute_fix on an already resolved finding returns success idempotently."""
@@ -1073,7 +1073,7 @@ class BankReconciliationRemediationTests(APITestCase):
         self.assertTrue(res2.get("already_resolved"))
 
     def test_37_concurrent_duplicate_resolution_idempotency(self):
-        """13. Idempotency key prevents duplicate execution with identical client_key."""
+        """13. Idempotency key prevents duplicate execution and replays original response."""
         from apps.accounting.services.finding_fix_service import FindingFixService
         v_prim = self._create_test_voucher(amount=Decimal('600.00'))
         v_dup = self._create_test_voucher(amount=Decimal('600.00'))
@@ -1085,8 +1085,25 @@ class BankReconciliationRemediationTests(APITestCase):
         )
         res1 = FindingFixService.execute_fix(finding, user=self.user, client_key="uniq_fix_key_999")
         self.assertEqual(res1["status"], "SUCCESS")
+        self.assertIn("deleted_voucher", res1)
+
+        # Defect 5: Replay MUST return exact original response with deleted_voucher, not generic already_resolved
         res2 = FindingFixService.execute_fix(finding, user=self.user, client_key="uniq_fix_key_999")
         self.assertEqual(res2["status"], "SUCCESS")
+        self.assertEqual(res2.get("deleted_voucher"), res1.get("deleted_voucher"))
+        self.assertFalse(res2.get("already_resolved", False))
+
+        # Defect 4: Cross-finding key isolation - same client_key on different finding operates independently
+        v_prim2 = self._create_test_voucher(amount=Decimal('700.00'))
+        v_dup2 = self._create_test_voucher(amount=Decimal('700.00'))
+        finding2 = AccountingFinding.objects.create(
+            company=self.company, category="DUPLICATE", severity="CRITICAL", title="Second Duplicate",
+            evidence={"primary_voucher_id": str(v_prim2.id), "duplicate_voucher_id": str(v_dup2.id), "duplicate_classification": "CONFIRMED_DUPLICATE"},
+            fix_action="VOID_DUPLICATE_VOUCHER"
+        )
+        res_finding2 = FindingFixService.execute_fix(finding2, user=self.user, client_key="uniq_fix_key_999")
+        self.assertEqual(res_finding2["status"], "SUCCESS")
+        self.assertEqual(res_finding2.get("deleted_voucher"), v_dup2.voucher_number)
 
     def test_38_database_failure_during_relink_rolls_back_atomically(self):
         """14. A failure during relinking triggers atomic rollback preserving both vouchers."""
@@ -1211,11 +1228,48 @@ class BankReconciliationRemediationTests(APITestCase):
         self.assertEqual(btx.status, 'UNRESOLVED')
 
     def test_44_concurrent_voucher_numbering_thread_safety(self):
-        """20. Concurrent sequence number allocation produces unique monotonic numbers."""
+        """20. Genuine PostgreSQL multi-threaded concurrency: concurrent sequence allocation produces strictly unique monotonic numbers."""
+        import concurrent.futures
+        from django.db import connection
         from apps.accounting.services.sequence_service import InvoiceSequenceService
-        n1, _ = InvoiceSequenceService.get_next_number(self.company, 'PAYMENT', datetime.date(2026, 5, 20))
-        n2, _ = InvoiceSequenceService.get_next_number(self.company, 'PAYMENT', datetime.date(2026, 5, 20))
-        self.assertNotEqual(n1, n2)
+
+        if connection.vendor == 'sqlite':
+            # SQLite uses whole-database file locks and does not support concurrent write threads.
+            # Execute sequential calls to verify monotonicity and uniqueness in SQLite fallback mode.
+            numbers = [InvoiceSequenceService.get_next_number(self.company, 'PAYMENT', datetime.date(2026, 5, 20))[0] for _ in range(5)]
+            self.assertEqual(len(numbers), 5)
+            self.assertEqual(len(set(numbers)), 5)
+            suffixes = [int(num.split('/')[-1]) for num in numbers]
+            self.assertEqual(suffixes, sorted(suffixes))
+            return
+
+        allocated_numbers = []
+        errors = []
+
+        def allocate():
+            connection.close()
+            try:
+                num, _ = InvoiceSequenceService.get_next_number(self.company, 'PAYMENT', datetime.date(2026, 5, 20))
+                return num
+            except Exception as e:
+                errors.append(str(e))
+                return None
+            finally:
+                connection.close()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [executor.submit(allocate) for _ in range(5)]
+            for f in concurrent.futures.as_completed(futures):
+                res = f.result()
+                if res:
+                    allocated_numbers.append(res)
+
+        self.assertEqual(len(errors), 0, f"Encountered concurrency errors: {errors}")
+        self.assertEqual(len(allocated_numbers), 5, "Expected exactly 5 numbers allocated across 5 threads")
+        self.assertEqual(len(set(allocated_numbers)), 5, "Duplicate sequence numbers allocated during concurrency race!")
+
+        suffixes = [int(num.split('/')[-1]) for num in allocated_numbers]
+        self.assertEqual(len(set(suffixes)), 5)
 
     def test_45_cross_company_voucher_relinking_strictly_rejected(self):
         """21. Cross-company voucher relinking in finding fix is strictly rejected."""
@@ -1360,3 +1414,99 @@ class BankReconciliationRemediationTests(APITestCase):
         VoucherService.recalculate_ledger_balance(self.bank_ledger)
         self.bank_ledger.refresh_from_db()
         self.assertEqual(self.bank_ledger.current_balance, base_bal - Decimal('350.00'))
+
+    def test_53_fail_open_prevention_on_missing_classification(self):
+        """29. Finding fix strictly rejects execution when duplicate_classification is missing, None, or empty (Defect 3)."""
+        from apps.accounting.services.finding_fix_service import FindingFixService
+        v_prim = self._create_test_voucher(amount=Decimal('500.00'))
+        v_dup = self._create_test_voucher(amount=Decimal('500.00'))
+
+        # Case A: Missing key completely
+        finding_missing = AccountingFinding.objects.create(
+            company=self.company, category="DUPLICATE", severity="CRITICAL", title="Missing Classification",
+            evidence={"primary_voucher_id": str(v_prim.id), "duplicate_voucher_id": str(v_dup.id)},
+            fix_action="VOID_DUPLICATE_VOUCHER"
+        )
+        with self.assertRaises(ValidationError) as ctx1:
+            FindingFixService.execute_fix(finding_missing, user=self.user)
+        self.assertIn("strictly permitted ONLY for findings with explicit CONFIRMED_DUPLICATE", str(ctx1.exception))
+
+        # Case B: Explicit None
+        finding_none = AccountingFinding.objects.create(
+            company=self.company, category="DUPLICATE", severity="CRITICAL", title="None Classification",
+            evidence={"primary_voucher_id": str(v_prim.id), "duplicate_voucher_id": str(v_dup.id), "duplicate_classification": None},
+            fix_action="VOID_DUPLICATE_VOUCHER"
+        )
+        with self.assertRaises(ValidationError) as ctx2:
+            FindingFixService.execute_fix(finding_none, user=self.user)
+        self.assertIn("strictly permitted ONLY for findings with explicit CONFIRMED_DUPLICATE", str(ctx2.exception))
+
+        # Case C: Empty string
+        finding_empty = AccountingFinding.objects.create(
+            company=self.company, category="DUPLICATE", severity="CRITICAL", title="Empty Classification",
+            evidence={"primary_voucher_id": str(v_prim.id), "duplicate_voucher_id": str(v_dup.id), "duplicate_classification": ""},
+            fix_action="VOID_DUPLICATE_VOUCHER"
+        )
+        with self.assertRaises(ValidationError) as ctx3:
+            FindingFixService.execute_fix(finding_empty, user=self.user)
+        self.assertIn("strictly permitted ONLY for findings with explicit CONFIRMED_DUPLICATE", str(ctx3.exception))
+
+    def test_54_same_date_identical_payment_probable_duplicate_protection(self):
+        """30. Legitimate same-date payments without corroborating evidence are PROBABLE_DUPLICATE without 1-click delete (Defect 2)."""
+        from apps.accounting.services.deduplication_engine import TransactionDeduplicationEngine
+        from django.utils import timezone
+        # Two distinct payments of Rs 25,000 on the same day (e.g. 2026-05-20)
+        # created >300 seconds apart, no bank recon collision, no reference number match
+        t1 = timezone.now() - datetime.timedelta(hours=2)
+        t2 = timezone.now() - datetime.timedelta(hours=1)
+
+        v1 = self._create_test_voucher(amount=Decimal('25000.00'), voucher_date=datetime.date(2026, 5, 20), voucher_number='PAY/26-27/0080')
+        Voucher.objects.filter(id=v1.id).update(created_at=t1, reference_number="")
+        v1.refresh_from_db()
+
+        v2 = self._create_test_voucher(amount=Decimal('25000.00'), voucher_date=datetime.date(2026, 5, 20), voucher_number='PAY/26-27/0081')
+        Voucher.objects.filter(id=v2.id).update(created_at=t2, reference_number="")
+        v2.refresh_from_db()
+
+        findings = TransactionDeduplicationEngine.scan_duplicate_vouchers(self.company)
+        dup_finding = next((f for f in findings if f.get('title', '').startswith('Duplicate Payment #PAY/26-27/0081')), None)
+
+        self.assertIsNotNone(dup_finding, "Expected finding for duplicate payment")
+        # Must be classified as PROBABLE_DUPLICATE, NOT CONFIRMED_DUPLICATE!
+        self.assertEqual(dup_finding['evidence']['duplicate_classification'], 'PROBABLE_DUPLICATE')
+        # 1-click fix must be DISABLED (None)
+        self.assertIsNone(dup_finding.get('fix_action'))
+
+    def test_55_auto_match_existing_voucher_exclusion_preservation(self):
+        """31. Auto-matched existing vouchers are never reversed when bank transaction is excluded (Defect 1)."""
+        # Pre-existing manual voucher
+        v_manual = self._create_test_voucher(amount=Decimal('8500.00'), voucher_date=datetime.date(2026, 5, 20), voucher_number='PAY/26-27/0085')
+
+        # Bank transaction for same amount and party
+        btx = BankTransaction.objects.create(
+            company=self.company, bank_ledger=self.bank_ledger, transaction_date=datetime.date(2026, 5, 20),
+            debit_amount=Decimal('8500.00'), credit_amount=Decimal('0.00'), status='UNRESOLVED',
+            description='Payment to vendor via NEFT'
+        )
+
+        # Resolve via auto-matching / deduplication match in execute_reconciliation
+        res = BankReconciliationService.resolve_transaction(
+            bank_tx=btx, action_type='RECORD_PAYMENT',
+            payload={'party_id': str(self.vendor_ledger.id)},
+            user=self.user
+        )
+        self.assertEqual(res['status'], 'SUCCESS')
+        btx.refresh_from_db()
+        self.assertEqual(btx.status, 'RECONCILED')
+        self.assertEqual(str(btx.matched_voucher_id), str(v_manual.id))
+        self.assertTrue(btx.match_notes.get('is_existing_matched'))
+
+        # Exclude transaction
+        BankReconciliationService.exclude_transaction(btx, reason="Statement was excluded", user=self.user)
+        btx.refresh_from_db()
+        v_manual.refresh_from_db()
+
+        # Bank transaction is excluded, but manual voucher remains POSTED and NOT reversed/cancelled!
+        self.assertEqual(btx.status, 'EXCLUDED')
+        self.assertIsNone(btx.matched_voucher)
+        self.assertEqual(v_manual.status, 'POSTED')

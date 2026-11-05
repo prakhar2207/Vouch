@@ -346,7 +346,7 @@ class OutboxService:
         """
         event_id_str = str(event_id)
 
-        if getattr(settings, 'TESTING', False) or getattr(settings, 'SYNCHRONOUS_NOTIFICATIONS', False):
+        if getattr(settings, 'SYNCHRONOUS_NOTIFICATIONS', False):
             cls.process_outbox_event(event_id_str)
             return
 

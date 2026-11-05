@@ -189,7 +189,12 @@ class BankReconciliationService:
                     bank_tx.matched_party = party
                     bank_tx.status = 'RECONCILED'
                     bank_tx.match_confidence = existing_match.get('confidence', 1.0)
-                    bank_tx.save(update_fields=['matched_voucher', 'matched_party', 'status', 'match_confidence', 'updated_at'])
+                    notes = bank_tx.match_notes if isinstance(bank_tx.match_notes, dict) else {}
+                    notes['is_existing_matched'] = True
+                    notes['is_system_generated'] = False
+                    notes['matched_voucher_number'] = matched_vch.voucher_number
+                    bank_tx.match_notes = notes
+                    bank_tx.save(update_fields=['matched_voucher', 'matched_party', 'status', 'match_confidence', 'match_notes', 'updated_at'])
 
                     AuditService.log_action(
                         company=company,
@@ -317,6 +322,10 @@ class BankReconciliationService:
             bank_tx.user_classification = v_classification
             bank_tx.is_refund = is_refund
             notes = bank_tx.match_notes if isinstance(bank_tx.match_notes, dict) else {}
+            notes['created_via_reconciliation'] = True
+            notes['is_existing_matched'] = False
+            notes['created_voucher_id'] = str(created_voucher.id)
+            notes['created_voucher_number'] = created_voucher.voucher_number
             notes.setdefault('interpretation_history', []).append({
                 'timestamp': timezone.now().isoformat(),
                 'action_type': action_type,
@@ -498,7 +507,13 @@ class BankReconciliationService:
             bank_tx.matched_voucher = created_voucher
             bank_tx.status = 'RECONCILED'
             bank_tx.match_confidence = 1.0
-            bank_tx.save(update_fields=['matched_party', 'matched_voucher', 'status', 'match_confidence', 'updated_at'])
+            notes = bank_tx.match_notes if isinstance(bank_tx.match_notes, dict) else {}
+            notes['created_via_reconciliation'] = True
+            notes['is_existing_matched'] = False
+            notes['created_voucher_id'] = str(created_voucher.id)
+            notes['created_voucher_number'] = created_voucher.voucher_number
+            bank_tx.match_notes = notes
+            bank_tx.save(update_fields=['matched_party', 'matched_voucher', 'status', 'match_confidence', 'match_notes', 'updated_at'])
 
             res = {
                 "status": "SUCCESS",
@@ -541,7 +556,13 @@ class BankReconciliationService:
 
             bank_tx.matched_voucher = created_voucher
             bank_tx.status = 'RECONCILED'
-            bank_tx.save(update_fields=['matched_voucher', 'status', 'updated_at'])
+            notes = bank_tx.match_notes if isinstance(bank_tx.match_notes, dict) else {}
+            notes['created_via_reconciliation'] = True
+            notes['is_existing_matched'] = False
+            notes['created_voucher_id'] = str(created_voucher.id)
+            notes['created_voucher_number'] = created_voucher.voucher_number
+            bank_tx.match_notes = notes
+            bank_tx.save(update_fields=['matched_voucher', 'status', 'match_notes', 'updated_at'])
 
             res = {
                 "status": "SUCCESS",
@@ -713,7 +734,13 @@ class BankReconciliationService:
             bank_tx.matched_party = drawings_ledger
             bank_tx.matched_voucher = created_voucher
             bank_tx.status = 'RECONCILED'
-            bank_tx.save(update_fields=['matched_party', 'matched_voucher', 'status', 'updated_at'])
+            notes = bank_tx.match_notes if isinstance(bank_tx.match_notes, dict) else {}
+            notes['created_via_reconciliation'] = True
+            notes['is_existing_matched'] = False
+            notes['created_voucher_id'] = str(created_voucher.id)
+            notes['created_voucher_number'] = created_voucher.voucher_number
+            bank_tx.match_notes = notes
+            bank_tx.save(update_fields=['matched_party', 'matched_voucher', 'status', 'match_notes', 'updated_at'])
 
             res = {
                 "status": "SUCCESS",
@@ -1187,6 +1214,34 @@ class BankReconciliationService:
         }
 
     @classmethod
+    def is_system_generated_for_transaction(cls, bank_tx: BankTransaction, voucher: Optional[Voucher]) -> bool:
+        """
+        Determines with mathematical and audit certainty whether the voucher was created
+        by the bank reconciliation service specifically for this bank transaction.
+        Pre-existing manual vouchers matched via auto-match, manual-match, or finding-fix
+        are strictly protected and will NEVER be cancelled or reversed on exclusion/unreconcile.
+        """
+        if not voucher:
+            return False
+        notes = bank_tx.match_notes if isinstance(bank_tx.match_notes, dict) else {}
+        if notes.get('is_existing_matched'):
+            return False
+        if notes.get('is_system_generated') is False:
+            return False
+        if notes.get('created_via_reconciliation') and str(notes.get('created_voucher_id', '')) == str(voucher.id):
+            return True
+        if notes.get('created_via_reconciliation') and notes.get('created_voucher_number') == voucher.voucher_number:
+            return True
+        # If created_at of voucher is earlier than bank_tx, it was pre-existing
+        if bank_tx.created_at and voucher.created_at and (voucher.created_at < bank_tx.created_at - timedelta(seconds=5)):
+            return False
+        # If notes explicitly specify it was matched to existing
+        if notes.get('matched_action') in ['MATCH_EXISTING_VOUCHER', 'AUTO_MATCH_EXISTING_DEDUPLICATED']:
+            return False
+        # Default to False for safety: NEVER reverse/cancel a voucher unless we are 100% certain it was created by this transaction!
+        return bool(notes.get('created_via_reconciliation'))
+
+    @classmethod
     @transaction.atomic
     def unreconcile_transaction(cls, bank_tx: BankTransaction, reason: str = "User un-reconciled transaction", user=None) -> Dict[str, Any]:
         """
@@ -1211,13 +1266,11 @@ class BankReconciliationService:
             )
 
         notes = bank_tx.match_notes if isinstance(bank_tx.match_notes, dict) else {}
-        is_existing_matched = notes.get('is_existing_matched', False)
-
         vch = bank_tx.matched_voucher
         vch_num = vch.voucher_number if vch else None
         reversal_voucher = None
 
-        if vch and not is_existing_matched:
+        if vch and cls.is_system_generated_for_transaction(bank_tx, vch):
             vch = Voucher.objects.select_for_update().get(id=vch.id)
             if vch.status == 'POSTED':
                 # Attempt safe cancellation; if voucher cannot be cancelled directly, create an auditable reversal
@@ -1230,7 +1283,7 @@ class BankReconciliationService:
                         user=user,
                         reason=f"Unreconcile bank transaction: {reason}"
                     )
-        elif vch and is_existing_matched:
+        elif vch:
             logger.info(f"Unlinking pre-existing manual voucher #{vch.voucher_number} from bank transaction without cancellation/reversal.")
 
         bank_tx.matched_voucher = None
@@ -1285,13 +1338,10 @@ class BankReconciliationService:
         clean_reason = str(reason).strip()
         bank_tx = BankTransaction.objects.select_for_update().get(id=bank_tx.id)
 
-        notes = bank_tx.match_notes if isinstance(bank_tx.match_notes, dict) else {}
-        is_existing_matched = notes.get('is_existing_matched', False)
-
         reversal_voucher = None
         if bank_tx.matched_voucher:
             vch = Voucher.objects.select_for_update().get(id=bank_tx.matched_voucher_id)
-            if not is_existing_matched:
+            if cls.is_system_generated_for_transaction(bank_tx, vch):
                 if vch.status in ['POSTED', 'VALIDATING']:
                     reversal_voucher = VoucherService.create_reversal_voucher(
                         voucher=vch,

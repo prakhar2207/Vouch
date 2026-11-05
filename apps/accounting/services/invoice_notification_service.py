@@ -259,7 +259,7 @@ class InvoiceNotificationService:
             logger.info(f"Outbox event not created for voucher {voucher.voucher_number} (notifications disabled or already processed).")
             return None
 
-        if async_mode and not (getattr(settings, 'TESTING', False) or getattr(settings, 'SYNCHRONOUS_NOTIFICATIONS', False)):
+        if async_mode and not getattr(settings, 'SYNCHRONOUS_NOTIFICATIONS', False):
             OutboxService.dispatch_outbox_event_async(outbox_event.id)
         else:
             OutboxService.process_outbox_event(outbox_event.id)

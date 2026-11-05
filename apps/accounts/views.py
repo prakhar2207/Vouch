@@ -191,6 +191,20 @@ class RegisterInitiateView(TestBypassThrottleMixin, APIView):
                     # Serialization: Lock initiation per normalized email and challenge type
                     acquire_registration_advisory_lock(email, 'REGISTRATION')
 
+                    # Protect verified pending registrations from being hijacked or reset
+                    pending = (
+                        PendingRegistration.objects
+                        .select_for_update()
+                        .filter(email=email)
+                        .first()
+                    )
+                    if pending and pending.is_verified and not pending.is_expired():
+                        return Response({
+                            "success": False,
+                            "error": "Email verification is already completed for this address. Please proceed to complete registration.",
+                            "registration_token": pending.registration_token,
+                        }, status=status.HTTP_400_BAD_REQUEST)
+
                     # Check for an active, unexpired challenge within the cooldown window
                     active_challenge = (
                         EmailVerificationChallenge.objects
@@ -235,12 +249,6 @@ class RegisterInitiateView(TestBypassThrottleMixin, APIView):
 
                     # Persist unverified PendingRegistration record under row lock
                     registration_token = secrets.token_urlsafe(48)
-                    pending = (
-                        PendingRegistration.objects
-                        .select_for_update()
-                        .filter(email=email)
-                        .first()
-                    )
                     if pending:
                         pending.password_hash = make_password(password)
                         pending.verification_challenge = challenge
