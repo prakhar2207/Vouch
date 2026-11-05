@@ -5,7 +5,7 @@
 **Repository:** `https://github.com/prakhar2207/Vouch`  
 **Target Production Infrastructure:** PostgreSQL 18.6 (ac70818) on AWS Neon (`ep-lingering-boat-b3994i6f-pooler.c-4.ap-southeast-1.aws.neon.tech`)  
 **Stage 4 Reported Baseline Commit:** `ca1fc1f7841b1bb9c44ac76c4be05dfa66f830bc`  
-**Final Audited Hardened HEAD:** `1d245dc79d5ce1b4e3c8eba2374908abbdc4e411`  
+**Final Audited Hardened HEAD:** `ffc4394a16e821f527e857e980e3b1c0e9810707`  
 **Dedicated Release Candidate Branch:** `fix/stage4-final-hardening`  
 **Audit Verification Branch:** `audit/stage4-independent-production-readiness`  
 
