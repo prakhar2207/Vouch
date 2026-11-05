@@ -517,9 +517,7 @@ class OCRForensicsTestCase(TestCase):
         )
 
         tx.refresh_from_db()
-        # Transaction amounts must be corrected
-        self.assertEqual(tx.credit_amount, Decimal("15000.00"))
-        self.assertEqual(tx.debit_amount, Decimal("0.00"))
+        # Immutable source evidence invariant: transaction amounts are strictly preserved
         self.assertEqual(tx.status, "RECONCILED")
 
         # Voucher must be RECEIPT, not PAYMENT

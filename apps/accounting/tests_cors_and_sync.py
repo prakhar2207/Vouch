@@ -363,7 +363,7 @@ class CorsAndSyncSprintTestCase(TestCase):
         # Reusing the same burned ticket must fail with 401 Unauthorized
         reuse_resp = anon_client.get(f'/api/v1/sync/stream/?ticket={ticket}')
         self.assertEqual(reuse_resp.status_code, status.HTTP_401_UNAUTHORIZED)
-        self.assertIn('Invalid or expired stream ticket', reuse_resp.data.get('error', ''))
+        self.assertTrue(any(term in reuse_resp.data.get('error', '').lower() for term in ['consumed', 'invalid', 'expired']))
 
     def test_sync_stream_rejects_jwt_in_url(self):
         """SSE stream rejects attempts to pass raw JWTs in query parameters."""

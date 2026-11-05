@@ -170,11 +170,23 @@ class DefectEDI06QRConfigurationSecurityTests(TestCase):
         errors = []
 
         def worker():
-            try:
-                session = self.manager.initiate_session_from_scan(qr_str, now)
-                results.append(session.session_id)
-            except SecurityViolation as ex:
-                errors.append(str(ex))
+            from django.db import connections, OperationalError
+            connections.close_all()
+            for attempt in range(5):
+                try:
+                    session = self.manager.initiate_session_from_scan(qr_str, now)
+                    results.append(session.session_id)
+                    break
+                except SecurityViolation as ex:
+                    errors.append(str(ex))
+                    break
+                except (OperationalError, Exception) as ex:
+                    if "database table is locked" in str(ex) or "database is locked" in str(ex):
+                        time.sleep(0.05 * (attempt + 1))
+                        continue
+                    errors.append(str(ex))
+                    break
+            connections.close_all()
 
         t1 = threading.Thread(target=worker)
         t2 = threading.Thread(target=worker)

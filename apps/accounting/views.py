@@ -148,7 +148,7 @@ class CreateSalesInvoiceAPIView(APIView):
                 
                 # 2. Automatically post it if requested
                 if data.get('post_immediately', True):
-                    VoucherService.post_voucher(voucher)
+                    voucher = VoucherService.post_voucher(voucher)
 
                     # 3. Optional Counter Cash / Payment Settlement at billing
                     settle_payment_ledger_id = data.get('payment_ledger_id')
@@ -355,7 +355,7 @@ class CreatePurchaseInvoiceAPIView(APIView):
                     voucher.save(update_fields=['attachment_data', 'attachment_mime'])
                 
                 if data.get('post_immediately', True):
-                    VoucherService.post_voucher(voucher)
+                    voucher = VoucherService.post_voucher(voucher)
 
                     # 3. Optional Counter Cash / Payment Settlement at billing
                     settle_payment_ledger_id = data.get('payment_ledger_id')

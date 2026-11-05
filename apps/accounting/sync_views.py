@@ -472,8 +472,8 @@ class SyncPushAPIView(APIView):
                 })
                 continue
 
-            # DEF-SYNC-01: Offline Command Payload Integrity Verification
-            if not created:
+            # DEF-SYNC-01: Offline Command Payload Integrity Verification (applies to active/processed commands)
+            if not created and cmd_obj.status != 'FAILED':
                 existing_hash = compute_canonical_payload_hash(cmd_obj.payload)
                 if incoming_hash != existing_hash:
                     errors.append({
@@ -507,23 +507,35 @@ class SyncPushAPIView(APIView):
                         'voucher_data': voucher_data
                     })
                     continue
+                if cmd_obj.status == 'FAILED':
+                    cmd_obj.payload = payload
+                    cmd_obj.error_code = None
+                    cmd_obj.error_message = None
+                    cmd_obj.failed_at = None
                 cmd_obj.status = 'PROCESSING'
                 cmd_obj.retry_count += 1
-                cmd_obj.save(update_fields=['status', 'retry_count'])
+                cmd_obj.save(update_fields=['status', 'retry_count', 'payload', 'error_code', 'error_message', 'failed_at'])
 
             try:
                 with transaction.atomic():
                     # Concurrency Lock: lock command row to serialize and prevent double processing
                     cmd_obj = OfflineCommand.objects.select_for_update().get(id=cmd_obj.id)
                     # Recheck payload hash under row-level lock
-                    existing_hash = compute_canonical_payload_hash(cmd_obj.payload)
-                    if incoming_hash != existing_hash:
-                        errors.append({
-                            'command_id': cmd_id,
-                            'error': 'Payload hash does not match original command submission for this command_id',
-                            'error_code': 'COMMAND_PAYLOAD_MISMATCH'
-                        })
-                        continue
+                    if cmd_obj.status != 'FAILED':
+                        existing_hash = compute_canonical_payload_hash(cmd_obj.payload)
+                        if incoming_hash != existing_hash:
+                            errors.append({
+                                'command_id': cmd_id,
+                                'error': 'Payload hash does not match original command submission for this command_id',
+                                'error_code': 'COMMAND_PAYLOAD_MISMATCH'
+                            })
+                            continue
+                    else:
+                        cmd_obj.payload = payload
+                        cmd_obj.error_code = None
+                        cmd_obj.error_message = None
+                        cmd_obj.failed_at = None
+                        cmd_obj.save(update_fields=['payload', 'error_code', 'error_message', 'failed_at'])
 
                     if cmd_obj.status == 'PROCESSED' and cmd_obj.result_voucher:
                         cached_v = cmd_obj.result_voucher
