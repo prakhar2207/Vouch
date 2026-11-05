@@ -6,12 +6,14 @@ Enforces strict fail-closed boundary isolation between production, staging, and 
 import hashlib
 import os
 from typing import Dict, Any, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 from django.core.exceptions import ImproperlyConfigured
 
 
 PROD_HOST_DEFAULT = "ep-lingering-boat-b3994i6f-pooler.c-4.ap-southeast-1.aws.neon.tech"
 PROD_DB_DEFAULT = "neondb"
+PROD_HOST_IPS = ("52.76.246.190", "13.250.9.11", "18.142.141.209")
+STAGING_ENV_ALIASES = ("staging", "stage", "stg", "staging_canary")
 
 
 def validate_environment_database_isolation(
@@ -28,8 +30,8 @@ def validate_environment_database_isolation(
     """
     env_clean = str(environment or "").strip().lower()
 
-    # Rule only applies when environment is explicitly configured as staging / stage
-    if env_clean not in ("staging", "stage"):
+    # Rule applies to any staging alias
+    if env_clean not in STAGING_ENV_ALIASES:
         return True
 
     db_host = str(db_config.get("HOST", "") or "").strip().lower()
@@ -45,12 +47,23 @@ def validate_environment_database_isolation(
                 db_name = parsed.path.lstrip("/").strip()
             if parsed.scheme:
                 db_engine = parsed.scheme.strip().lower()
+            # Also check query parameters in connection string
+            qs = parse_qs(parsed.query)
+            if "database" in qs and qs["database"]:
+                db_name = qs["database"][0].strip()
         except Exception:
             pass
 
     # In test runner with SQLite, allow execution if explicit test mode unless testing the guard itself
     if is_testing and "sqlite" in db_engine and not db_host:
         return True
+
+    # Rule 0: Database name cannot be empty in live staging
+    if not db_name and not is_testing:
+        raise ImproperlyConfigured(
+            f"FATAL ISOLATION DEFECT: Target database name is missing in staging environment '{env_clean}'. "
+            f"Refusing to start."
+        )
 
     # Rule 1: Database name cannot be 'neondb' (the production database)
     if db_name.lower() == prod_db_name.lower():
@@ -60,8 +73,14 @@ def validate_environment_database_isolation(
             f"(e.g., 'neondb_staging'). Refusing to start."
         )
 
-    # Rule 2: Database hostname cannot match the production Neon cluster endpoint without a dedicated staging db
-    if prod_host.lower() in db_host or (db_host and db_host in prod_host.lower()):
+    # Rule 2: Database hostname/IP cannot match the production Neon cluster endpoint without a dedicated staging db
+    is_prod_host_match = (
+        prod_host.lower() in db_host
+        or (db_host and db_host in prod_host.lower())
+        or any(ip in db_host for ip in PROD_HOST_IPS)
+    )
+
+    if is_prod_host_match:
         if "staging" not in db_name.lower() and "stage" not in db_name.lower():
             raise ImproperlyConfigured(
                 f"FATAL ISOLATION DEFECT: Environment is '{env_clean}' and connects to production host '{db_host}', "
@@ -88,7 +107,6 @@ def get_environment_identity_metadata(settings_module) -> Dict[str, Any]:
     engine = db_default.get("ENGINE", "").split(".")[-1]
 
     raw_db_name = str(db_default.get("NAME", "unknown"))
-    # Sanitize database name to prevent leaking internal paths
     if "/" in raw_db_name or "\\" in raw_db_name:
         sanitized_name = os.path.basename(raw_db_name)
     else:
@@ -102,8 +120,9 @@ def get_environment_identity_metadata(settings_module) -> Dict[str, Any]:
     prod_host = getattr(settings_module, "PRODUCTION_DB_HOST", PROD_HOST_DEFAULT)
     prod_name = getattr(settings_module, "PRODUCTION_DB_NAME", PROD_DB_DEFAULT)
 
-    if env_name in ("staging", "stage") and (sanitized_name.lower() == prod_name.lower() or prod_host.lower() in host_raw.lower()):
-        is_isolated = False
+    if env_name in STAGING_ENV_ALIASES and (sanitized_name.lower() == prod_name.lower() or prod_host.lower() in host_raw.lower()):
+        if "staging" not in sanitized_name.lower() and "stage" not in sanitized_name.lower():
+            is_isolated = False
 
     commit_sha = os.environ.get("RENDER_GIT_COMMIT") or os.environ.get("GIT_COMMIT") or os.environ.get("VERCEL_GIT_COMMIT_SHA")
     if not commit_sha:
