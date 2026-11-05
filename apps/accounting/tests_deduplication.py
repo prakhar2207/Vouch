@@ -475,7 +475,8 @@ class TransactionDeduplicationEngineTestCase(TestCase):
                 "duplicate_voucher_id": str(v_active.id),
                 "primary_voucher_id": str(v_reversed.id),
                 "duplicate_voucher_number": v_active.voucher_number,
-                "primary_voucher_number": v_reversed.voucher_number
+                "primary_voucher_number": v_reversed.voucher_number,
+                "duplicate_classification": "CONFIRMED_DUPLICATE"
             },
             fix_action="VOID_DUPLICATE_VOUCHER"
         )
