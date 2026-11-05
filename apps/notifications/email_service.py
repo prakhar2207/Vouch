@@ -1,3 +1,4 @@
+import hashlib
 import secrets
 from datetime import timedelta
 import logging
@@ -27,6 +28,20 @@ class EmailService:
     def get_default_reply_to(cls) -> List[str]:
         reply_to = getattr(settings, 'EMAIL_REPLY_TO', 'support@srilekh.com')
         return [reply_to] if reply_to else []
+
+    @classmethod
+    def generate_message_id(cls, idempotency_key: Optional[str] = None) -> str:
+        """
+        Generates a deterministic, sanitized RFC 5322 compliant Message-ID.
+        Uses sha256(idempotency_key)[:32] to guarantee stability and prevent
+        header injection, while never exposing raw business keys in SMTP headers.
+        """
+        if idempotency_key:
+            clean_key = str(idempotency_key).strip().encode('utf-8', errors='replace')
+            digest = hashlib.sha256(clean_key).hexdigest()[:32]
+        else:
+            digest = secrets.token_hex(16)
+        return f"<{digest}@srilekh.com>"
 
     @classmethod
     def send_email(
@@ -99,15 +114,24 @@ class EmailService:
                             return False, log_entry, "in_flight_send"
                         else:
                             # In-flight lease expired without transition to SENT!
-                            # Could the previous worker have completed delivery before crashing?
-                            # Mark DELIVERY_UNKNOWN rather than blindly sending duplicate emails to customers
-                            logger.warning(f"In-flight lease expired for key={idempotency_key}. Transitioning to DELIVERY_UNKNOWN.")
+                            # Preserve audit metadata before clearing claim fields
+                            orig_expires_at = log_entry.claim_expires_at
+                            orig_worker = log_entry.claim_token
+                            orig_status = log_entry.status
+                            orig_attempt = log_entry.last_attempt_at
+                            trans_time = now
+
+                            logger.warning(f"In-flight lease expired for key={idempotency_key} (expired at {orig_expires_at}). Transitioning to DELIVERY_UNKNOWN.")
                             log_entry.status = 'DELIVERY_UNKNOWN'
                             log_entry.claim_token = None
                             log_entry.claim_expires_at = None
                             log_entry.reconciliation_notes = (
-                                f"Worker lease expired while in SENDING status at {log_entry.claim_expires_at}. "
-                                f"Marked DELIVERY_UNKNOWN to prevent duplicate customer emails pending reconciliation."
+                                f"Worker lease expired while in {orig_status} status. "
+                                f"Original claim expiry: {orig_expires_at.isoformat() if orig_expires_at else 'unknown'}, "
+                                f"last attempt at: {orig_attempt.isoformat() if orig_attempt else 'unknown'}, "
+                                f"worker token: {orig_worker[:8] if orig_worker else 'none'}..., "
+                                f"transitioned at: {trans_time.isoformat()}. "
+                                f"Reason: In-flight lease expired without completion; marked DELIVERY_UNKNOWN to prevent duplicate customer emails."
                             )
                             log_entry.save(update_fields=['status', 'claim_token', 'claim_expires_at', 'reconciliation_notes'])
                             return False, log_entry, "delivery_unknown_lease_expired"
@@ -152,7 +176,14 @@ class EmailService:
             logger.warning(f"Plain-text template emails/{template_name}.txt not found or failed: {str(e)}")
             text_content = html_content or ""
 
-        client_msg_id = f"<{idempotency_key or secrets.token_hex(16)}@srilekh.com>"
+        # RFC 5322 Message-ID: reuse existing persisted ID across retries or generate deterministic ID
+        if log_entry.provider_message_id and log_entry.provider_message_id.startswith('<') and log_entry.provider_message_id.endswith('>'):
+            client_msg_id = log_entry.provider_message_id
+        else:
+            client_msg_id = cls.generate_message_id(idempotency_key)
+            log_entry.provider_message_id = client_msg_id
+            log_entry.save(update_fields=['provider_message_id'])
+
         try:
             msg = EmailMultiAlternatives(
                 subject=subject,
@@ -175,43 +206,77 @@ class EmailService:
 
             with transaction.atomic():
                 locked = EmailDeliveryLog.objects.select_for_update().filter(id=log_entry.id).first()
-                if locked:
-                    if idempotency_key and locked.claim_token != worker_claim_token:
-                        logger.warning(f"Claim lost on email delivery log {log_entry.id} (worker {worker_claim_token} vs {locked.claim_token}).")
-                        return False, locked, "claim_lost"
+                if not locked:
+                    logger.error(f"Email delivery log {log_entry.id} not found after send.")
+                    return False, log_entry, "log_not_found"
 
-                    locked.status = 'SENT'
-                    locked.sent_at = timezone.now()
-                    locked.claim_token = None
-                    locked.claim_expires_at = None
-                    locked.provider_name = getattr(settings, 'EMAIL_BACKEND', 'SMTP').split('.')[-1]
-                    locked.provider_message_id = client_msg_id
-                    locked.save(update_fields=['status', 'sent_at', 'claim_token', 'claim_expires_at', 'provider_name', 'provider_message_id'])
-                    return True, locked, None
-            return True, log_entry, None
+                # Enforce strict single worker ownership rule
+                if locked.claim_token != worker_claim_token:
+                    logger.warning(
+                        f"Ownership lost on email delivery log {log_entry.id} upon send success. "
+                        f"Current worker={worker_claim_token} vs active claim={locked.claim_token} (status={locked.status}). "
+                        f"Suppressing authoritative state mutation to protect newer worker's ownership."
+                    )
+                    return False, locked, "claim_lost"
+
+                if locked.status != 'SENDING':
+                    logger.warning(
+                        f"Email delivery log {log_entry.id} status is {locked.status} (expected SENDING). "
+                        f"Suppressing state change to SENT."
+                    )
+                    return False, locked, f"invalid_state_{locked.status}"
+
+                locked.status = 'SENT'
+                locked.sent_at = timezone.now()
+                locked.claim_token = None
+                locked.claim_expires_at = None
+                locked.provider_name = getattr(settings, 'EMAIL_BACKEND', 'SMTP').split('.')[-1]
+                locked.provider_message_id = client_msg_id
+                locked.save(update_fields=['status', 'sent_at', 'claim_token', 'claim_expires_at', 'provider_name', 'provider_message_id'])
+                return True, locked, None
 
         except Exception as exc:
             err_msg = str(exc)
             is_timeout = any(term in err_msg.lower() for term in ['timed out', 'timeout', 'connection reset', 'econnreset'])
             logger.error(f"Email delivery exception to {to_email}: {err_msg} (is_timeout={is_timeout})")
+
             with transaction.atomic():
                 locked = EmailDeliveryLog.objects.select_for_update().filter(id=log_entry.id).first()
-                if locked:
-                    locked.claim_token = None
-                    locked.claim_expires_at = None
-                    if is_timeout:
-                        locked.status = 'DELIVERY_UNKNOWN'
-                        locked.error_message = f"Ambiguous timeout: {err_msg[:400]}"
-                        locked.reconciliation_notes = "Marked DELIVERY_UNKNOWN due to connection timeout/reset during transmission."
-                    elif locked.attempts >= locked.max_attempts:
-                        locked.status = 'FAILED'
-                        locked.error_message = err_msg[:500]
-                    else:
-                        locked.status = 'RETRY_PENDING'
-                        locked.error_message = err_msg[:500]
-                    locked.save(update_fields=['status', 'claim_token', 'claim_expires_at', 'error_message', 'reconciliation_notes'])
-                    return False, locked, ("timeout_ambiguous" if is_timeout else err_msg)
-            return False, log_entry, err_msg
+                if not locked:
+                    return False, log_entry, err_msg
+
+                # Enforce strict single worker ownership rule on exception handling
+                if locked.claim_token != worker_claim_token:
+                    logger.warning(
+                        f"Ownership lost on email delivery log {log_entry.id} during error handling. "
+                        f"Failing worker={worker_claim_token} vs active claim={locked.claim_token} (status={locked.status}). "
+                        f"Suppressing error state mutation to protect newer worker's ownership."
+                    )
+                    return False, locked, "claim_lost"
+
+                if locked.status != 'SENDING':
+                    logger.warning(
+                        f"Email delivery log {log_entry.id} status is {locked.status} (expected SENDING). "
+                        f"Suppressing error state mutation."
+                    )
+                    return False, locked, f"invalid_state_{locked.status}"
+
+                locked.claim_token = None
+                locked.claim_expires_at = None
+                if is_timeout:
+                    locked.status = 'DELIVERY_UNKNOWN'
+                    locked.error_message = f"Ambiguous timeout: {err_msg[:400]}"
+                    locked.reconciliation_notes = (
+                        f"Marked DELIVERY_UNKNOWN due to connection timeout/reset during transmission by worker {worker_claim_token[:8]}."
+                    )
+                elif locked.attempts >= locked.max_attempts:
+                    locked.status = 'FAILED'
+                    locked.error_message = err_msg[:500]
+                else:
+                    locked.status = 'RETRY_PENDING'
+                    locked.error_message = err_msg[:500]
+                locked.save(update_fields=['status', 'claim_token', 'claim_expires_at', 'error_message', 'reconciliation_notes'])
+                return False, locked, ("timeout_ambiguous" if is_timeout else err_msg)
 
     # =========================================================================
     # High-level Workflow Helpers

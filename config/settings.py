@@ -237,6 +237,7 @@ CELERY_BEAT_SCHEDULE = {
     'sweep-and-retry-outbox-notifications': {
         'task': 'apps.notifications.tasks.retry_pending_outbox_events_task',
         'schedule': 60.0,  # Sweeps every 60 seconds
+        'options': {'expires': 55.0},
     },
 }
 
