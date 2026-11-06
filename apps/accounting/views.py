@@ -1589,23 +1589,23 @@ class VoucherDetailAPIView(APIView):
                             else:
                                 LedgerEntry.objects.create(voucher=voucher, company=company, ledger=round_off_ledger, debit_amount=Decimal('0.00'), credit_amount=abs(round_off))
 
-                    # 5. Re-post voucher to update stock & balances
-                    if was_posted or data.get('post_immediately', True):
-                        VoucherService.post_voucher(voucher)
-                    else:
-                        voucher.save()
+                # 5. Re-post voucher to update stock & balances for both SALES and PURCHASE
+                if was_posted or data.get('post_immediately', True):
+                    VoucherService.post_voucher(voucher)
+                else:
+                    voucher.save()
 
-                    # Recalculate affected ledger balances
-                    if voucher.party_ledger:
-                        VoucherService.recalculate_ledger_balance(voucher.party_ledger)
-                    if target_party and target_party != voucher.party_ledger:
-                        VoucherService.recalculate_ledger_balance(target_party)
-                    sales_ledger = Ledger.objects.filter(company=company, ledger_type='SALES').first()
-                    if sales_ledger:
-                        VoucherService.recalculate_ledger_balance(sales_ledger)
-                    purch_ledger = Ledger.objects.filter(company=company, ledger_type='PURCHASE').first()
-                    if purch_ledger:
-                        VoucherService.recalculate_ledger_balance(purch_ledger)
+                # Recalculate affected ledger balances
+                if voucher.party_ledger:
+                    VoucherService.recalculate_ledger_balance(voucher.party_ledger)
+                if target_party and target_party != voucher.party_ledger:
+                    VoucherService.recalculate_ledger_balance(target_party)
+                sales_ledger = Ledger.objects.filter(company=company, ledger_type='SALES').first()
+                if sales_ledger:
+                    VoucherService.recalculate_ledger_balance(sales_ledger)
+                purch_ledger = Ledger.objects.filter(company=company, ledger_type='PURCHASE').first()
+                if purch_ledger:
+                    VoucherService.recalculate_ledger_balance(purch_ledger)
                 elif voucher.voucher_type in ['PAYMENT', 'RECEIPT']:
                     # Update Payment or Receipt voucher
                     from apps.ledgers.models import Ledger
