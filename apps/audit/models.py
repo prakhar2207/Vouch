@@ -74,7 +74,7 @@ class AuditLog(models.Model):
         with transaction.atomic():
             # Cryptographic tamper-evident hash chaining serialized per-company
             if self.company_id:
-                Company.objects.select_for_update().filter(id=self.company_id).first()
+                Company.objects.select_for_update(no_key=True).filter(id=self.company_id).first()
 
             if not self.created_at:
                 from django.utils import timezone

@@ -214,10 +214,10 @@ class VoucherService:
                 entry.company_id = voucher.company_id
                 entry.save(update_fields=['company'])
 
-        # 4. Acquire row-level locks on all affected ledgers
-        ledger_ids = [entry.ledger_id for entry in entries]
+        # 4. Acquire row-level locks on all affected ledgers in deterministic ascending order
+        ledger_ids = sorted(list(set(entry.ledger_id for entry in entries)))
         locked_ledgers = {
-            l.id: l for l in Ledger.objects.select_for_update().filter(id__in=ledger_ids)
+            l.id: l for l in Ledger.objects.select_for_update(no_key=True).filter(id__in=ledger_ids).order_by('id')
         }
         
         for entry in entries:
