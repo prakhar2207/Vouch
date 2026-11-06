@@ -294,14 +294,15 @@ class VoucherService:
             Q(payment_voucher=voucher) | Q(invoice_voucher=voucher)
         ).delete()
             
-        # 3. Revert Accounting Ledgers with row-level locks
+        # 3. Revert Accounting Ledgers with row-level locks in deterministic ascending order
         entries = list(voucher.ledger_entries.select_related('ledger').all())
         ledger_ids = [entry.ledger_id for entry in entries]
         if voucher.party_ledger_id:
             ledger_ids.append(voucher.party_ledger_id)
 
+        sorted_ledger_ids = sorted(list(set(ledger_ids)))
         locked_ledgers = {
-            l.id: l for l in Ledger.objects.select_for_update().filter(id__in=set(ledger_ids))
+            l.id: l for l in Ledger.objects.select_for_update(no_key=True).filter(id__in=sorted_ledger_ids).order_by('id')
         }
 
         for entry in entries:
@@ -544,11 +545,11 @@ class VoucherService:
             reversal_voucher=voucher
         )
 
-        # 4. Generate inverse ledger entries (Credit what was debited, Debit what was credited)
+        # 4. Generate inverse ledger entries in deterministic ascending lock order
         entries = list(voucher.ledger_entries.select_related('ledger').all())
-        ledger_ids = [entry.ledger_id for entry in entries]
+        sorted_ledger_ids = sorted(list(set(entry.ledger_id for entry in entries)))
         locked_ledgers = {
-            l.id: l for l in Ledger.objects.select_for_update().filter(id__in=set(ledger_ids))
+            l.id: l for l in Ledger.objects.select_for_update(no_key=True).filter(id__in=sorted_ledger_ids).order_by('id')
         }
 
         for entry in entries:
