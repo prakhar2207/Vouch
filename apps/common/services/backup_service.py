@@ -270,7 +270,7 @@ class DatabaseBackupService:
                 f.write('[\n')
                 first = True
                 for model in all_models:
-                    qs = model.objects.all()
+                    qs = model.objects.all().order_by(model._meta.pk.name)
                     if company_id:
                         if model._meta.model_name == 'company':
                             qs = qs.filter(id=company_id)
@@ -447,21 +447,60 @@ class DatabaseBackupService:
                     record_count += 1
             else:
                 pending = list(deserialized_objects)
-                last_pending_count = -1
                 last_errors = []
                 for pass_num in range(4):
                     if not pending:
                         break
                     next_pending = []
                     last_errors = []
-                    for deserialized_obj in pending:
+
+                    # Group consecutive objects of same model without M2M into batches for fast atomic bulk_create
+                    idx = 0
+                    total_pending = len(pending)
+                    while idx < total_pending:
+                        d_obj = pending[idx]
+                        model_cls = d_obj.object.__class__
+                        can_bulk = not model_cls._meta.parents and not getattr(d_obj, 'm2m_data', None)
+                        if not can_bulk:
+                            try:
+                                with transaction.atomic(using=target_db_alias):
+                                    d_obj.save(using=target_db_alias)
+                                record_count += 1
+                            except Exception as e:
+                                next_pending.append(d_obj)
+                                last_errors.append((d_obj, e))
+                            idx += 1
+                            continue
+
+                        batch = [d_obj]
+                        j = idx + 1
+                        while j < total_pending and len(batch) < 250:
+                            nxt = pending[j]
+                            if nxt.object.__class__ is model_cls and not getattr(nxt, 'm2m_data', None):
+                                batch.append(nxt)
+                                j += 1
+                            else:
+                                break
+
                         try:
                             with transaction.atomic(using=target_db_alias):
-                                deserialized_obj.save(using=target_db_alias)
-                            record_count += 1
-                        except Exception as e:
-                            next_pending.append(deserialized_obj)
-                            last_errors.append((deserialized_obj, e))
+                                model_cls.objects.using(target_db_alias).bulk_create(
+                                    [item.object for item in batch],
+                                    batch_size=250,
+                                )
+                            record_count += len(batch)
+                        except Exception:
+                            # Batch failed (e.g. partial FK ordering or existing PK); fall back to row-level save
+                            for item in batch:
+                                try:
+                                    with transaction.atomic(using=target_db_alias):
+                                        item.save(using=target_db_alias)
+                                    record_count += 1
+                                except Exception as e:
+                                    next_pending.append(item)
+                                    last_errors.append((item, e))
+                        idx = j
+
                     if len(next_pending) == len(pending):
                         # No further records could be resolved
                         break

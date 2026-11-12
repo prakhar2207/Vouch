@@ -5,26 +5,31 @@ from decimal import Decimal
 
 
 def consolidate_party_ledgers(apps, schema_editor):
+    db_alias = schema_editor.connection.alias
     Ledger = apps.get_model('ledgers', 'Ledger')
     Company = apps.get_model('companies', 'Company')
     Voucher = apps.get_model('accounting', 'Voucher')
+    VoucherItem = apps.get_model('accounting', 'VoucherItem')
     LedgerEntry = apps.get_model('accounting', 'LedgerEntry')
     LedgerBalance = apps.get_model('accounting', 'LedgerBalance')
 
-    # 1. Delete Apex customer ledgers and any associated transactions
-    apex_ledgers = list(Ledger.objects.filter(name__icontains='Apex'))
+    # 1. Delete Apex customer ledgers and any associated transactions strictly on target migration alias
+    apex_ledgers = list(Ledger.objects.using(db_alias).filter(name__icontains='Apex'))
     for apex in apex_ledgers:
-        for v in Voucher.objects.filter(party_ledger=apex):
-            v.items.all().delete()
-            v.ledger_entries.all().delete()
-            v.delete()
-        LedgerEntry.objects.filter(ledger=apex).delete()
-        LedgerBalance.objects.filter(ledger=apex).delete()
-        apex.delete()
+        v_ids = list(Voucher.objects.using(db_alias).filter(party_ledger=apex).values_list('id', flat=True))
+        if v_ids:
+            VoucherItem.objects.using(db_alias).filter(voucher_id__in=v_ids).delete()
+            LedgerEntry.objects.using(db_alias).filter(voucher_id__in=v_ids).delete()
+            Voucher.objects.using(db_alias).filter(id__in=v_ids).delete()
+        LedgerEntry.objects.using(db_alias).filter(ledger=apex).delete()
+        LedgerBalance.objects.using(db_alias).filter(ledger=apex).delete()
+        Ledger.objects.using(db_alias).filter(id=apex.id).delete()
 
     # 2. Consolidate Satyam & Co. instances into 1 single canonical ledger per company
-    for company in Company.objects.all():
-        satyam_ledgers = list(Ledger.objects.filter(company=company, name__icontains='Satyam').order_by('created_at'))
+    for company in Company.objects.using(db_alias).all():
+        satyam_ledgers = list(
+            Ledger.objects.using(db_alias).filter(company=company, name__icontains='Satyam').order_by('created_at')
+        )
         if not satyam_ledgers:
             continue
 
@@ -52,12 +57,12 @@ def consolidate_party_ledgers(apps, schema_editor):
             if dup.state_code and not canonical.state_code:
                 canonical.state_code = dup.state_code
 
-            Voucher.objects.filter(party_ledger=dup).update(party_ledger=canonical)
-            LedgerEntry.objects.filter(ledger=dup).update(ledger=canonical)
-            LedgerBalance.objects.filter(ledger=dup).delete()
-            dup.delete()
+            Voucher.objects.using(db_alias).filter(party_ledger=dup).update(party_ledger=canonical)
+            LedgerEntry.objects.using(db_alias).filter(ledger=dup).update(ledger=canonical)
+            LedgerBalance.objects.using(db_alias).filter(ledger=dup).delete()
+            Ledger.objects.using(db_alias).filter(id=dup.id).delete()
 
-        entries = LedgerEntry.objects.filter(ledger=canonical)
+        entries = LedgerEntry.objects.using(db_alias).filter(ledger=canonical)
         total_dr = sum(Decimal(str(e.debit_amount or 0)) for e in entries)
         total_cr = sum(Decimal(str(e.credit_amount or 0)) for e in entries)
         op = Decimal(str(canonical.opening_balance or 0))
@@ -67,7 +72,7 @@ def consolidate_party_ledgers(apps, schema_editor):
         else:
             canonical.current_balance = op + total_cr - total_dr
 
-        canonical.save()
+        canonical.save(using=db_alias)
 
 
 class Migration(migrations.Migration):

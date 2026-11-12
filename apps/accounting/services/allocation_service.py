@@ -492,7 +492,7 @@ class PaymentAllocationService:
         if start_date:
             inv_qs = inv_qs.filter(voucher_date__gte=start_date)
 
-        invoices = list(inv_qs.select_related('party_ledger').order_by('due_date', 'voucher_date'))
+        invoices = list(inv_qs.select_related('party_ledger', 'party_ledger__group').order_by('due_date', 'voucher_date'))
 
         if not invoices:
             return {

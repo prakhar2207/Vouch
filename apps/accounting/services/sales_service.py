@@ -32,7 +32,8 @@ class SalesInvoiceService:
         discount_amount: Decimal = Decimal('0.00'),
         discount_ledger: Ledger = None,
         due_date=None,
-        is_reverse_charge: bool = False
+        is_reverse_charge: bool = False,
+        reference_number: str = None
     ):
         """
         End-to-End orchestration of a Sales Invoice.
@@ -106,6 +107,7 @@ class SalesInvoiceService:
             financial_year=fy,
             voucher_type='SALES',
             voucher_number=v_num,
+            reference_number=(str(reference_number).strip()[:100] or None) if reference_number else None,
             voucher_date=v_date,
             due_date=calculated_due_date,
             party_ledger=party_ledger,

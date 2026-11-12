@@ -92,6 +92,7 @@ class VoucherService:
         # Real-time Deduplication Gatekeeper
         if not force_duplicate and voucher.voucher_type in ('RECEIPT', 'PAYMENT', 'SALES', 'PURCHASE'):
             from apps.accounting.services.deduplication_engine import TransactionDeduplicationEngine
+            voucher_items = list(voucher.items.select_related('product').all()) if voucher.voucher_type in ('SALES', 'PURCHASE') else None
             dup_check = TransactionDeduplicationEngine.check_duplicate_candidate(
                 company=voucher.company,
                 voucher_type=voucher.voucher_type,
@@ -99,7 +100,11 @@ class VoucherService:
                 total_amount=voucher.total_amount,
                 voucher_date=voucher.voucher_date,
                 exclude_voucher_id=voucher.id,
-                lookback_minutes=15
+                lookback_minutes=15,
+                items_data=voucher_items,
+                reference_number=voucher.reference_number,
+                voucher_number=voucher.voucher_number,
+                external_invoice_number=voucher.external_invoice_number,
             )
             if dup_check.get('is_duplicate') and dup_check.get('rule') == 'RAPID_DOUBLE_SUBMISSION':
                 raise ValidationError(dup_check.get('reason'))

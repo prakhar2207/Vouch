@@ -106,6 +106,111 @@ class PeriodBalanceService:
         }
 
     @staticmethod
+    def calculate_all_ledger_period_balances(company: Company, from_date, to_date, ledgers=None) -> dict:
+        """
+        Batched single-pass equivalent of calculate_ledger_period_balance across all company ledgers.
+        Eliminates N+1 per-ledger SQL roundtrips in FinancialStatementsService while preserving exact
+        double-entry opening, period, and closing balance math.
+        """
+        d_from = PeriodBalanceService.parse_date(from_date)
+        d_to = PeriodBalanceService.parse_date(to_date) or datetime.date(2099, 12, 31)
+
+        if ledgers is None:
+            ledgers = list(Ledger.objects.filter(company=company, is_active=True).select_related('group'))
+
+        ledgers_with_opening = set(
+            LedgerEntry.objects.filter(
+                voucher__company=company,
+                voucher__status='POSTED',
+                voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL'],
+            ).values_list('ledger_id', flat=True).distinct()
+        )
+
+        if d_from is not None:
+            prior_aggs = {
+                row['ledger_id']: (row['prior_dr'] or Decimal('0.00'), row['prior_cr'] or Decimal('0.00'))
+                for row in LedgerEntry.objects.filter(
+                    voucher__company=company,
+                    voucher__voucher_date__lt=d_from,
+                    voucher__status='POSTED',
+                ).values('ledger_id').annotate(
+                    prior_dr=Sum('debit_amount'),
+                    prior_cr=Sum('credit_amount'),
+                )
+            }
+            period_qs = LedgerEntry.objects.filter(
+                voucher__company=company,
+                voucher__status='POSTED',
+                voucher__voucher_date__gte=d_from,
+                voucher__voucher_date__lte=d_to,
+            )
+        else:
+            prior_aggs = {}
+            period_qs = LedgerEntry.objects.filter(
+                voucher__company=company,
+                voucher__status='POSTED',
+                voucher__voucher_date__lte=d_to,
+            )
+
+        period_aggs = {
+            row['ledger_id']: (row['period_dr'] or Decimal('0.00'), row['period_cr'] or Decimal('0.00'))
+            for row in period_qs.values('ledger_id').annotate(
+                period_dr=Sum('debit_amount'),
+                period_cr=Sum('credit_amount'),
+            )
+        }
+
+        balances = {}
+        from_str = d_from.strftime('%Y-%m-%d') if d_from else ""
+        to_str = d_to.strftime('%Y-%m-%d') if d_to else ""
+
+        for ledger in ledgers:
+            initial_net = Decimal('0.00')
+            has_opening_entries = ledger.id in ledgers_with_opening
+            if not has_opening_entries and (d_from is None or not ledger.opening_date or ledger.opening_date <= d_from):
+                op_val = ledger.opening_balance or Decimal('0.00')
+                if ledger.opening_balance_type == 'DEBIT':
+                    initial_net = op_val
+                else:
+                    initial_net = -op_val
+
+            prior_dr, prior_cr = prior_aggs.get(ledger.id, (Decimal('0.00'), Decimal('0.00')))
+            net_opening = initial_net + (prior_dr - prior_cr)
+            if net_opening >= Decimal('0.00'):
+                opening_bal = net_opening
+                opening_type = 'DR'
+            else:
+                opening_bal = abs(net_opening)
+                opening_type = 'CR'
+
+            period_dr, period_cr = period_aggs.get(ledger.id, (Decimal('0.00'), Decimal('0.00')))
+            net_closing = net_opening + (period_dr - period_cr)
+            if net_closing >= Decimal('0.00'):
+                closing_bal = net_closing
+                closing_type = 'DR'
+            else:
+                closing_bal = abs(net_closing)
+                closing_type = 'CR'
+
+            balances[ledger.id] = {
+                "ledger_id": str(ledger.id),
+                "ledger_name": ledger.name,
+                "group_name": ledger.group.name if ledger.group else "",
+                "group_nature": ledger.group.nature if ledger.group else "ASSET",
+                "from_date": from_str,
+                "to_date": to_str,
+                "opening_balance": str(opening_bal),
+                "opening_type": opening_type,
+                "period_debit": str(period_dr),
+                "period_credit": str(period_cr),
+                "closing_balance": str(closing_bal),
+                "closing_type": closing_type,
+                "raw_net_closing": net_closing,
+            }
+
+        return balances
+
+    @staticmethod
     def get_period_trial_balance(company: Company, from_date, to_date) -> dict:
         """
         Dynamically generates full Trial Balance for any continuous period [from_date, to_date].
