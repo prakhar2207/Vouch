@@ -282,6 +282,24 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_WORKER_CANCEL_LONG_RUNNING_TASKS_ON_CONNECTION_LOSS = True
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_SOFT_TIME_LIMIT = 120
+CELERY_TASK_TIME_LIMIT = 180
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    'visibility_timeout': 1800,
+    'health_check_interval': 30,
+    'socket_keepalive': True,
+}
+if str(CELERY_BROKER_URL).startswith('rediss://'):
+    import ssl as _ssl
+    CELERY_BROKER_USE_SSL = {
+        'ssl_cert_reqs': _ssl.CERT_NONE if env.bool('REDIS_SSL_NO_VERIFY', default=False) else _ssl.CERT_REQUIRED
+    }
 
 # Automated Nightly Celery Beat Schedule (02:00 AM IST)
 from celery.schedules import crontab

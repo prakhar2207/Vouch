@@ -6,7 +6,7 @@ from django.utils import timezone
 logger = logging.getLogger(__name__)
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+@shared_task(bind=True, acks_late=True, max_retries=3, default_retry_delay=60)
 def process_outbox_event_task(self, event_id: str):
     """
     Celery background worker task for asynchronous outbox event processing.
@@ -24,7 +24,7 @@ def process_outbox_event_task(self, event_id: str):
         raise self.retry(exc=exc)
 
 
-@shared_task
+@shared_task(acks_late=True, ignore_result=True)
 def retry_pending_outbox_events_task():
     """
     Periodic maintenance task to sweep and retry pending, retry-eligible, and abandoned outbox events.

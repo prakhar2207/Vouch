@@ -145,6 +145,32 @@ def get_environment_identity_metadata(settings_module) -> Dict[str, Any]:
     except Exception:
         migration_status = "unverified"
 
+    broker_url = str(getattr(settings_module, "CELERY_BROKER_URL", "") or "")
+    eager_mode = bool(getattr(settings_module, "CELERY_TASK_ALWAYS_EAGER", False))
+    redis_status = "unconfigured"
+    workers_online = 0
+
+    if broker_url:
+        try:
+            import redis as _redis
+            client = _redis.from_url(broker_url, socket_connect_timeout=0.5, socket_timeout=0.5)
+            if client.ping():
+                redis_status = "active"
+                try:
+                    from config.celery import app as celery_app
+                    inspector = celery_app.control.inspect(timeout=0.5)
+                    ping_res = inspector.ping() or {}
+                    workers_online = len(ping_res)
+                except Exception:
+                    workers_online = 0
+            else:
+                redis_status = "unreachable"
+        except Exception:
+            redis_status = "unreachable"
+
+    beat_schedule = getattr(settings_module, "CELERY_BEAT_SCHEDULE", {}) or {}
+    beat_configured = "sweep-and-retry-outbox-notifications" in beat_schedule
+
     return {
         "status": "healthy",
         "service": "SriLekh Accounting Engine",
@@ -158,12 +184,16 @@ def get_environment_identity_metadata(settings_module) -> Dict[str, Any]:
             "is_isolated": is_isolated
         },
         "redis": {
-            "configured": bool(getattr(settings_module, "CELERY_BROKER_URL", "")),
-            "status": "active"
+            "configured": bool(broker_url),
+            "status": redis_status
         },
         "celery": {
-            "beat_schedule_active": True,
-            "outbox_sweeper_interval_seconds": 60
+            "beat_schedule_configured": beat_configured,
+            "beat_schedule_active": bool(beat_configured and (workers_online > 0 or eager_mode)),
+            "outbox_sweeper_interval_seconds": 60,
+            "workers_online": workers_online,
+            "task_always_eager": eager_mode,
+            "acks_late": bool(getattr(settings_module, "CELERY_TASK_ACKS_LATE", False)),
         },
         "migrations": {
             "status": migration_status,
