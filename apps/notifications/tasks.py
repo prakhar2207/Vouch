@@ -90,14 +90,15 @@ def retry_pending_outbox_events_task():
     if recovered > 0:
         logger.warning(f"Recovered {recovered} abandoned outbox event(s) with expired leases.")
 
-    # 2. Concurrency-Safe Dispatch for eligible PENDING and RETRY_PENDING events (skip_locked prevents competing sweepers from double-queueing)
+    # 2. Concurrency-Safe FIFO Dispatch for eligible PENDING and RETRY_PENDING events (skip_locked prevents competing sweepers from double-queueing)
     eligible_ids = []
     with transaction.atomic():
         eligible_qs = (
             TransactionalOutboxEvent.objects
             .select_for_update(skip_locked=True)
             .filter(status__in=['PENDING', 'RETRY_PENDING'])
-            .filter(models.Q(next_retry_at__isnull=True) | models.Q(next_retry_at__lte=now))[:50]
+            .filter(models.Q(next_retry_at__isnull=True) | models.Q(next_retry_at__lte=now))
+            .order_by('created_at', 'id')[:100]
         )
         eligible_ids = list(eligible_qs.values_list('id', flat=True))
         if eligible_ids:

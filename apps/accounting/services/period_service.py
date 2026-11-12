@@ -4,6 +4,7 @@ from django.db.models import Sum, Q
 from apps.companies.models import Company
 from apps.ledgers.models import Ledger
 from apps.accounting.models import LedgerEntry
+from apps.accounting.services.effective_voucher_service import EffectiveVoucherService
 
 class PeriodBalanceService:
     @staticmethod
@@ -28,7 +29,7 @@ class PeriodBalanceService:
         initial_net = Decimal('0.00')
         has_opening_entries = LedgerEntry.objects.filter(
             ledger=ledger,
-            voucher__status='POSTED',
+            voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
             voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL']
         ).exists()
 
@@ -44,7 +45,7 @@ class PeriodBalanceService:
                 ledger=ledger,
                 voucher__company=ledger.company,
                 voucher__voucher_date__lt=d_from,
-                voucher__status='POSTED'
+                voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES
             ).aggregate(
                 prior_dr=Sum('debit_amount'),
                 prior_cr=Sum('credit_amount')
@@ -67,7 +68,7 @@ class PeriodBalanceService:
         period_filter = Q(
             ledger=ledger,
             voucher__company=ledger.company,
-            voucher__status='POSTED',
+            voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
             voucher__voucher_date__lte=d_to
         )
         if d_from is not None:
@@ -121,7 +122,7 @@ class PeriodBalanceService:
         ledgers_with_opening = set(
             LedgerEntry.objects.filter(
                 voucher__company=company,
-                voucher__status='POSTED',
+                voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
                 voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL'],
             ).values_list('ledger_id', flat=True).distinct()
         )
@@ -132,7 +133,7 @@ class PeriodBalanceService:
                 for row in LedgerEntry.objects.filter(
                     voucher__company=company,
                     voucher__voucher_date__lt=d_from,
-                    voucher__status='POSTED',
+                    voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
                 ).values('ledger_id').annotate(
                     prior_dr=Sum('debit_amount'),
                     prior_cr=Sum('credit_amount'),
@@ -140,7 +141,7 @@ class PeriodBalanceService:
             }
             period_qs = LedgerEntry.objects.filter(
                 voucher__company=company,
-                voucher__status='POSTED',
+                voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
                 voucher__voucher_date__gte=d_from,
                 voucher__voucher_date__lte=d_to,
             )
@@ -148,7 +149,7 @@ class PeriodBalanceService:
             prior_aggs = {}
             period_qs = LedgerEntry.objects.filter(
                 voucher__company=company,
-                voucher__status='POSTED',
+                voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
                 voucher__voucher_date__lte=d_to,
             )
 
@@ -225,7 +226,7 @@ class PeriodBalanceService:
         ledgers_with_opening = set(
             LedgerEntry.objects.filter(
                 voucher__company=company,
-                voucher__status='POSTED',
+                voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
                 voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL']
             ).values_list('ledger_id', flat=True).distinct()
         )
@@ -236,7 +237,7 @@ class PeriodBalanceService:
             for row in LedgerEntry.objects.filter(
                 voucher__company=company,
                 voucher__voucher_date__lt=d_from,
-                voucher__status='POSTED'
+                voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES
             ).values('ledger_id').annotate(
                 prior_dr=Sum('debit_amount'),
                 prior_cr=Sum('credit_amount')
@@ -250,7 +251,7 @@ class PeriodBalanceService:
                 voucher__company=company,
                 voucher__voucher_date__gte=d_from,
                 voucher__voucher_date__lte=d_to,
-                voucher__status='POSTED'
+                voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES
             ).values('ledger_id').annotate(
                 period_dr=Sum('debit_amount'),
                 period_cr=Sum('credit_amount')

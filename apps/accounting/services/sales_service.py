@@ -669,9 +669,10 @@ class SalesInvoiceService:
                         entry.save(update_fields=['ledger'])
 
             # Recalculate closing balances for all affected ledgers
+            from apps.accounting.services.effective_voucher_service import EffectiveVoucherService
             for ldr in affected_ledgers:
                 op_balance = Decimal(str(ldr.opening_balance or '0.00'))
-                entries = LedgerEntry.objects.filter(ledger=ldr, voucher__status='POSTED')
+                entries = LedgerEntry.objects.filter(ledger=ldr, voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES)
                 total_dr = Decimal('0.00')
                 total_cr = Decimal('0.00')
                 for e in entries:
@@ -690,7 +691,7 @@ class SalesInvoiceService:
                     fy = lb.financial_year
                     fy_entries = LedgerEntry.objects.filter(
                         ledger=ldr,
-                        voucher__status='POSTED',
+                        voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
                         voucher__voucher_date__gte=fy.start_date,
                         voucher__voucher_date__lte=fy.end_date
                     )

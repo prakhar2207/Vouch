@@ -172,6 +172,11 @@ class OutboxService:
     @classmethod
     def _process_invoice_posted_event(cls, event: TransactionalOutboxEvent) -> bool:
         """Internal worker logic for INVOICE_POSTED."""
+        if not isinstance(event.payload, dict):
+            event.status = 'DEAD_LETTER'
+            event.error_log = "Invalid outbox payload format (expected dict)"
+            event.save(update_fields=['status', 'error_log'])
+            return False
         voucher_id = event.payload.get('voucher_id') or event.aggregate_id
         try:
             uuid.UUID(str(voucher_id))
@@ -359,3 +364,126 @@ class OutboxService:
                 f"Celery broker dispatch failed for outbox event {event_id_str}: {e}. "
                 f"Event remains durably recorded in database and will be retried by the periodic sweeper."
             )
+
+    @classmethod
+    def classify_pending_events(cls, company=None) -> list:
+        """
+        Read-only classification of all PENDING / RETRY_PENDING / expired PROCESSING outbox events.
+        Returns per-event classification dictionaries without mutating records.
+        """
+        now = timezone.now()
+        qs = TransactionalOutboxEvent.objects.filter(
+            status__in=['PENDING', 'RETRY_PENDING', 'PROCESSING']
+        ).select_related('company', 'email_delivery_log').order_by('created_at', 'id')
+        if company is not None:
+            qs = qs.filter(company=company)
+
+        events = list(qs)
+        v_ids = [ev.aggregate_id for ev in events if ev.aggregate_type == 'Voucher']
+        vouchers = {
+            str(v.id): v for v in Voucher.objects.filter(id__in=v_ids).select_related('party_ledger').only(
+                'id', 'status', 'voucher_number', 'buyer_email', 'party_ledger__email'
+            )
+        } if v_ids else {}
+
+        idem_keys = [ev.idempotency_key for ev in events if ev.idempotency_key]
+        emails_by_key = {
+            e.idempotency_key: e for e in EmailDeliveryLog.objects.filter(idempotency_key__in=idem_keys)
+        } if idem_keys else {}
+
+        classified = []
+        for ev in events:
+            if ev.status == 'PROCESSING' and (not ev.lease_expires_at or ev.lease_expires_at > now):
+                continue
+            email_log = ev.email_delivery_log or emails_by_key.get(ev.idempotency_key)
+            v = vouchers.get(str(ev.aggregate_id)) if ev.aggregate_type == 'Voucher' else None
+            recipient = None
+            if isinstance(ev.payload, dict):
+                recipient = ev.payload.get('recipient_email') or ev.payload.get('email')
+            if not recipient and v:
+                recipient = v.buyer_email or (v.party_ledger.email if v.party_ledger else None)
+
+            if ev.status == 'PROCESSING' and ev.lease_expires_at and ev.lease_expires_at <= now:
+                category = 'EXPIRED_LEASE'
+            elif email_log and email_log.status in ('SENT', 'DELIVERY_ACCEPTED'):
+                category = 'ALREADY_PROCESSED_UNACK'
+            elif ev.retry_count >= ev.max_retries:
+                category = 'PERMANENTLY_FAILED'
+            elif not isinstance(ev.payload, dict) or (ev.event_type == 'INVOICE_POSTED' and not ev.aggregate_id):
+                category = 'INVALID_PAYLOAD'
+            elif ev.aggregate_type == 'Voucher' and not v:
+                category = 'ORPHANED_MISSING_VOUCHER'
+            elif v and v.status != 'POSTED':
+                category = 'NON_POSTED_VOUCHER'
+            elif ev.event_type == 'INVOICE_POSTED' and not recipient:
+                category = 'VALID_NO_RECIPIENT_SKIPPABLE'
+            else:
+                category = 'VALID_READY'
+
+            classified.append({
+                'event_id': str(ev.id),
+                'company_id': str(ev.company_id),
+                'event_type': ev.event_type,
+                'status': ev.status,
+                'category': category,
+                'retry_count': ev.retry_count,
+                'voucher_status': v.status if v else None,
+            })
+        return classified
+
+    @classmethod
+    def recover_pending_outbox_events(cls, company=None, batch_limit: int = 200) -> dict:
+        """
+        Safely and idempotently reconciles eligible pending/expired-lease outbox events
+        in deterministic FIFO order without dropping events or creating duplicates.
+        """
+        now = timezone.now()
+        stats = {'processed': 0, 'skipped': 0, 'dead_letter': 0, 'recovered_unack': 0, 'deferred_or_locked': 0}
+
+        # Step 1: Recover expired PROCESSING leases safely
+        expired_qs = TransactionalOutboxEvent.objects.filter(status='PROCESSING', lease_expires_at__lte=now)
+        if company is not None:
+            expired_qs = expired_qs.filter(company=company)
+        for ev in expired_qs.order_by('created_at', 'id')[:batch_limit]:
+            cls.process_outbox_event(ev.id)
+            ev.refresh_from_db()
+            if ev.status == 'PROCESSED':
+                stats['processed'] += 1
+            elif ev.status == 'SKIPPED':
+                stats['skipped'] += 1
+            elif ev.status == 'DEAD_LETTER':
+                stats['dead_letter'] += 1
+
+        # Step 2: Reconcile already-delivered unacknowledged events without duplicate sending
+        pending_qs = TransactionalOutboxEvent.objects.filter(status__in=['PENDING', 'RETRY_PENDING'])
+        if company is not None:
+            pending_qs = pending_qs.filter(company=company)
+        for ev in pending_qs.order_by('created_at', 'id')[:batch_limit]:
+            with transaction.atomic():
+                locked = TransactionalOutboxEvent.objects.select_for_update(skip_locked=True).filter(id=ev.id, status__in=['PENDING', 'RETRY_PENDING']).first()
+                if not locked:
+                    stats['deferred_or_locked'] += 1
+                    continue
+                email_log = locked.email_delivery_log or (
+                    EmailDeliveryLog.objects.filter(idempotency_key=locked.idempotency_key).first() if locked.idempotency_key else None
+                )
+                if email_log and email_log.status in ('SENT', 'DELIVERY_ACCEPTED'):
+                    locked.status = 'PROCESSED'
+                    locked.processed_at = now
+                    locked.claim_token = None
+                    locked.lease_expires_at = None
+                    locked.save(update_fields=['status', 'processed_at', 'claim_token', 'lease_expires_at'])
+                    stats['recovered_unack'] += 1
+                    continue
+            cls.process_outbox_event(ev.id)
+            ev.refresh_from_db()
+            if ev.status == 'PROCESSED':
+                stats['processed'] += 1
+            elif ev.status == 'SKIPPED':
+                stats['skipped'] += 1
+            elif ev.status == 'DEAD_LETTER':
+                stats['dead_letter'] += 1
+            else:
+                stats['deferred_or_locked'] += 1
+
+        return stats

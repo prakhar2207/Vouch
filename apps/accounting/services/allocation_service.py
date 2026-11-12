@@ -1,6 +1,6 @@
 from decimal import Decimal
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Sum, Q, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from apps.companies.models import Company
@@ -486,13 +486,36 @@ class PaymentAllocationService:
             company=company,
             voucher_type__in=target_vtypes,
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        ).defer('attachment_data', 'attachment_mime')
-        if as_of_date or end_date:
-            inv_qs = inv_qs.filter(voucher_date__lte=as_of_date or end_date)
+        )
+        cutoff_date = as_of_date or end_date
+        if cutoff_date:
+            inv_qs = inv_qs.filter(voucher_date__lte=cutoff_date)
         if start_date:
             inv_qs = inv_qs.filter(voucher_date__gte=start_date)
 
-        invoices = list(inv_qs.select_related('party_ledger', 'party_ledger__group').order_by('due_date', 'voucher_date'))
+        alloc_filter = Q(allocations_received__payment_voucher__voucher_date__lte=cutoff_date) if cutoff_date else None
+        invoices = list(
+            inv_qs.values(
+                'id',
+                'total_amount',
+                'due_date',
+                'voucher_date',
+                'buyer_name',
+                'party_ledger_id',
+                'party_ledger__name',
+                'party_ledger__phone',
+                'party_ledger__gstin',
+                'party_ledger__ledger_type',
+                'party_ledger__group__name',
+            ).annotate(
+                total_paid=Coalesce(
+                    Sum('allocations_received__allocated_amount', filter=alloc_filter)
+                    if alloc_filter is not None
+                    else Sum('allocations_received__allocated_amount'),
+                    Value(Decimal('0.00')),
+                )
+            ).order_by('due_date', 'voucher_date')
+        )
 
         if not invoices:
             return {
@@ -510,14 +533,6 @@ class PaymentAllocationService:
                 }
             }
 
-        inv_ids = [inv.id for inv in invoices]
-        alloc_qs = PaymentAllocation.objects.filter(invoice_voucher_id__in=inv_ids)
-        if as_of_date or end_date:
-            alloc_qs = alloc_qs.filter(payment_voucher__voucher_date__lte=as_of_date or end_date)
-
-        alloc_totals = alloc_qs.values('invoice_voucher_id').annotate(total_paid=Sum('allocated_amount'))
-        allocations_map = {item['invoice_voucher_id']: item['total_paid'] for item in alloc_totals}
-
         parties_map = {}
         summary = {
             "current": 0.0,
@@ -528,21 +543,40 @@ class PaymentAllocationService:
             "msme_overdue_count": 0,
             "overdue_invoices_count": 0,
         }
+        _cash_names = (
+            'cash', 'cash sale', 'cash sales', 'cash-in-hand', 'cash a/c', 'cash account',
+            'counter cash', 'counter sale', 'counter sales', 'cash customer / walk-in',
+        )
 
         for inv in invoices:
-            # P0: Skip spot cash / counter sales. Cash sales are settled at point-of-sale and are not credit debts
-            if is_customer and cls.is_cash_voucher(inv):
-                continue
+            party_ledger_id = inv['party_ledger_id']
+            party_name = inv['party_ledger__name']
+            group_name = inv['party_ledger__group__name']
+            buyer_name = inv['buyer_name']
 
-            tot = quantize_money(inv.total_amount)
-            paid = quantize_money(allocations_map.get(inv.id, Decimal('0.00')))
+            # P0: Skip spot cash / counter sales. Cash sales are settled at point-of-sale and are not credit debts
+            if is_customer:
+                is_cash = False
+                if party_ledger_id:
+                    lt = (inv['party_ledger__ledger_type'] or '').upper()
+                    p_norm = (party_name or '').strip().lower()
+                    g_norm = (group_name or '').lower()
+                    if lt == 'CASH' or p_norm in _cash_names or 'cash' in g_norm:
+                        is_cash = True
+                elif (buyer_name or '').strip().lower() in ('cash', 'cash sale', 'cash sales', 'counter sale', 'counter sales', 'cash customer'):
+                    is_cash = True
+                if is_cash:
+                    continue
+
+            tot = quantize_money(inv['total_amount'])
+            paid = quantize_money(inv['total_paid'])
             remaining = tot - paid
             if remaining <= Decimal('0.00'):
                 continue
 
-            ref_date = inv.due_date or inv.voucher_date
+            ref_date = inv['due_date'] or inv['voucher_date']
             overdue_days = (comparison_date - ref_date).days if comparison_date > ref_date else 0
-            
+
             # MSME Section 43B(h) applies EXCLUSIVELY to Payables (Suppliers / Creditors), never to Customer Receivables
             is_msme_alert = (not is_customer) and (overdue_days > 45)
             is_delayed_collection = is_customer and (overdue_days > 45)
@@ -552,15 +586,15 @@ class PaymentAllocationService:
             if is_delayed_collection:
                 summary["overdue_invoices_count"] += 1
 
-            p_id = str(inv.party_ledger_id) if inv.party_ledger_id else "counter"
-            p_name = inv.party_ledger.name if inv.party_ledger else (inv.buyer_name or "Counter Party")
+            p_id = str(party_ledger_id) if party_ledger_id else "counter"
+            p_name = party_name if party_ledger_id else (buyer_name or "Counter Party")
 
             if p_id not in parties_map:
                 parties_map[p_id] = {
                     "party_id": p_id,
                     "party_name": p_name,
-                    "phone": inv.party_ledger.phone if inv.party_ledger else "",
-                    "gstin": inv.party_ledger.gstin if inv.party_ledger else "",
+                    "phone": inv['party_ledger__phone'] if party_ledger_id else "",
+                    "gstin": inv['party_ledger__gstin'] if party_ledger_id else "",
                     "total_outstanding": Decimal('0.00'),
                     "current": Decimal('0.00'),
                     "days_1_30": Decimal('0.00'),

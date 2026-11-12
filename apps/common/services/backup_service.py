@@ -122,8 +122,9 @@ class DatabaseBackupService:
 
         try:
             # 2. Dump Database
+            model_counts = None
             if 'postgresql' in engine:
-                cls._dump_postgresql(db_settings, raw_dump_path, company_id=company_id)
+                model_counts = cls._dump_postgresql(db_settings, raw_dump_path, company_id=company_id)
             elif 'sqlite' in engine:
                 cls._dump_sqlite(db_name, raw_dump_path)
             else:
@@ -194,6 +195,7 @@ class DatabaseBackupService:
                 "s3_uploaded": s3_uploaded,
                 "s3_uri": s3_uri,
                 "elapsed_seconds": elapsed,
+                "model_counts": model_counts,
             }
 
         except Exception as e:
@@ -212,25 +214,32 @@ class DatabaseBackupService:
 
     @classmethod
     def _dump_postgresql(cls, db_settings: dict, output_file: Path, company_id: str = None):
-        """Dumps PostgreSQL database via pg_dump, or falls back to Django serialized dump if pg_dump is not in PATH."""
+        """
+        Dumps PostgreSQL database via native `pg_dump` (--format=custom) when available,
+        or falls back to a complete, deterministically ordered Django JSON fixture stream
+        including AuditLog and SyncEvent when pg_dump is not installed on the host.
+        """
         pg_dump_bin = shutil.which('pg_dump')
         if pg_dump_bin and not company_id:
             host = db_settings.get('HOST', 'localhost')
-            port = str(db_settings.get('PORT', '5432'))
+            port = str(db_settings.get('PORT') or '5432')
             user = db_settings.get('USER', 'postgres')
             db_name = db_settings.get('NAME')
             password = db_settings.get('PASSWORD', '')
+            sslmode = (db_settings.get('OPTIONS') or {}).get('sslmode', 'require' if host not in ('localhost', '127.0.0.1') else 'prefer')
 
             env = os.environ.copy()
             if password:
                 env['PGPASSWORD'] = password
+            if sslmode:
+                env['PGSSLMODE'] = str(sslmode)
 
             cmd = [
                 pg_dump_bin,
                 '-h', host,
                 '-p', port,
                 '-U', user,
-                '--clean',
+                '--format=custom',
                 '--no-owner',
                 '--no-privileges',
                 '-f', str(output_file),
@@ -239,38 +248,50 @@ class DatabaseBackupService:
             res = subprocess.run(cmd, env=env, capture_output=True, text=True)
             if res.returncode != 0:
                 raise RuntimeError(f"pg_dump failed (code {res.returncode}): {res.stderr}")
+            return None
         else:
-            logger.info("[Backup] Using resilient chunked batch serializer.")
+            logger.info("[Backup] Using complete deterministic chunked batch serializer (pg_dump unavailable or company-scoped).")
             from django.apps import apps
             from django.core.serializers import serialize
             MODEL_DEPENDENCY_ORDER = [
-                'company', 'user', 'usercompany', 'warehouse',
-                'productcategory', 'product', 'ledgergroup', 'ledger',
-                'financialyear', 'vouchersequence', 'voucher',
-                'voucheritem', 'ledgerentry', 'paymentallocation',
-                'inventoryentry', 'protocoltransaction',
-                'protocoloperation', 'cryptographiccommitment',
-                'entitymapping'
+                'company', 'user', 'emailverificationchallenge', 'pendingregistration',
+                'usercompany', 'companysettings', 'warehouse',
+                'productcategory', 'product', 'pricelist', 'pricelistitem',
+                'ledgergroup', 'ledger', 'financialyear', 'vouchersequence',
+                'ledgerbalance', 'voucher', 'voucheritem', 'ledgerentry',
+                'paymentallocation', 'paymentallocationtask', 'offlinecommand',
+                'bankstatementimport', 'banktransaction', 'partymapping',
+                'accountingfinding', 'syncevent', 'inventoryentry',
+                'protocoltransaction', 'protocoloperation', 'cryptographiccommitment',
+                'entitymapping', 'documentsnapshot', 'auditlog',
+                'notificationpreference', 'emaildeliverylog',
+                'transactionaloutboxevent', 'secureinvoiceaccesstoken',
             ]
             all_models = [
                 m for m in apps.get_models()
                 if m._meta.app_label not in ['contenttypes', 'sessions', 'admin', 'auth', 'token_blacklist']
-                and m._meta.model_name not in ['syncevent', 'auditlog', 'permission']
+                and not m._meta.proxy
                 and hasattr(m, 'objects')
             ]
             def model_priority(m):
                 name = m._meta.model_name.lower()
                 try:
-                    return MODEL_DEPENDENCY_ORDER.index(name)
+                    return (0, MODEL_DEPENDENCY_ORDER.index(name), m._meta.label_lower)
                 except ValueError:
-                    return 999
+                    return (1, 999, m._meta.label_lower)
             all_models.sort(key=model_priority)
 
+            model_counts = {}
             with open(output_file, 'w', encoding='utf-8') as f:
                 f.write('[\n')
                 first = True
                 for model in all_models:
-                    qs = model.objects.all().order_by(model._meta.pk.name)
+                    pk_name = model._meta.pk.name
+                    if model._meta.model_name == 'auditlog':
+                        qs = model.objects.all().order_by('sequence', 'created_at', pk_name)
+                    else:
+                        qs = model.objects.all().order_by(pk_name)
+
                     if company_id:
                         if model._meta.model_name == 'company':
                             qs = qs.filter(id=company_id)
@@ -280,15 +301,18 @@ class DatabaseBackupService:
                             qs = qs.filter(source_company_id=str(company_id))
                         elif model._meta.model_name in ['protocoloperation', 'cryptographiccommitment']:
                             qs = qs.filter(transaction__source_company_id=str(company_id))
-                        elif model._meta.model_name == 'voucheritem':
+                        elif model._meta.model_name in ['voucheritem', 'secureinvoiceaccesstoken']:
                             qs = qs.filter(voucher__company_id=company_id)
+                        elif model._meta.model_name == 'ledgerbalance':
+                            qs = qs.filter(ledger__company_id=company_id)
                         elif model._meta.model_name == 'user':
-                            qs = qs.filter(companies__company_id=company_id)
+                            qs = qs.filter(companies__company_id=company_id).distinct()
                             if not qs.exists():
                                 qs = model.objects.none()
                         else:
                             continue
                     count = qs.count()
+                    model_counts[model._meta.label_lower] = count
                     for i in range(0, count, 500):
                         batch = list(qs[i:i+500])
                         if not batch:
@@ -301,6 +325,7 @@ class DatabaseBackupService:
                             f.write(inner)
                             first = False
                 f.write('\n]\n')
+            return model_counts
 
     @classmethod
     def _dump_sqlite(cls, db_name_or_path: str, output_file: Path):
@@ -361,11 +386,13 @@ class DatabaseBackupService:
         try:
             from apps.audit.models import AuditLog
             AuditLog.objects.create(
-                action=f"DISASTER_RECOVERY_BACKUP_{status}",
-                details=kwargs
+                action='RESOLVE',
+                model_name='DatabaseBackup',
+                record_id=str(kwargs.get('file_name') or status)[:255],
+                changes={"event": f"DISASTER_RECOVERY_BACKUP_{status}", **kwargs},
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(f"[Backup] Failed to record AuditLog telemetry: {exc}")
 
     @classmethod
     def unpack_backup(cls, backup_path: Path) -> bytes:
@@ -415,6 +442,7 @@ class DatabaseBackupService:
 
         # Check type
         is_sqlite_binary = raw_bytes.startswith(b'SQLite format 3\x00')
+        is_pg_custom_dump = raw_bytes.startswith(b'PGDMP')
         is_json = raw_bytes.strip().startswith(b'[')
 
         record_count = 0
@@ -446,65 +474,94 @@ class DatabaseBackupService:
                 for obj in deserialized_objects:
                     record_count += 1
             else:
+                from django.core.management.color import no_style
                 pending = list(deserialized_objects)
+                restored_models = set()
                 last_errors = []
-                for pass_num in range(4):
-                    if not pending:
-                        break
-                    next_pending = []
-                    last_errors = []
+                is_pg = 'postgresql' in connections[target_db_alias].settings_dict.get('ENGINE', '')
 
-                    # Group consecutive objects of same model without M2M into batches for fast atomic bulk_create
-                    idx = 0
-                    total_pending = len(pending)
-                    while idx < total_pending:
-                        d_obj = pending[idx]
-                        model_cls = d_obj.object.__class__
-                        can_bulk = not model_cls._meta.parents and not getattr(d_obj, 'm2m_data', None)
-                        if not can_bulk:
-                            try:
-                                with transaction.atomic(using=target_db_alias):
-                                    d_obj.save(using=target_db_alias)
-                                record_count += 1
-                            except Exception as e:
-                                next_pending.append(d_obj)
-                                last_errors.append((d_obj, e))
-                            idx += 1
-                            continue
+                def _save_item_preserving_immutability(d_item):
+                    m_cls = d_item.object.__class__
+                    if m_cls._meta.model_name == 'auditlog':
+                        # Preserve exact immutable sequence, previous_hash, and current_hash
+                        existing = m_cls.objects.using(target_db_alias).filter(pk=d_item.object.pk).values('current_hash').first()
+                        if existing is not None:
+                            if existing['current_hash'] != d_item.object.current_hash:
+                                raise ValueError(f"AuditLog hash mismatch for existing PK {d_item.object.pk}")
+                            return
+                        m_cls.objects.using(target_db_alias).bulk_create([d_item.object])
+                    else:
+                        d_item.save(using=target_db_alias)
 
-                        batch = [d_obj]
-                        j = idx + 1
-                        while j < total_pending and len(batch) < 250:
-                            nxt = pending[j]
-                            if nxt.object.__class__ is model_cls and not getattr(nxt, 'm2m_data', None):
-                                batch.append(nxt)
-                                j += 1
-                            else:
-                                break
+                with transaction.atomic(using=target_db_alias):
+                    if is_pg:
+                        with connections[target_db_alias].cursor() as cur:
+                            cur.execute("SET CONSTRAINTS ALL DEFERRED")
 
-                        try:
-                            with transaction.atomic(using=target_db_alias):
-                                model_cls.objects.using(target_db_alias).bulk_create(
-                                    [item.object for item in batch],
-                                    batch_size=250,
-                                )
-                            record_count += len(batch)
-                        except Exception:
-                            # Batch failed (e.g. partial FK ordering or existing PK); fall back to row-level save
-                            for item in batch:
+                    for pass_num in range(4):
+                        if not pending:
+                            break
+                        next_pending = []
+                        last_errors = []
+
+                        idx = 0
+                        total_pending = len(pending)
+                        while idx < total_pending:
+                            d_obj = pending[idx]
+                            model_cls = d_obj.object.__class__
+                            can_bulk = not model_cls._meta.parents and not getattr(d_obj, 'm2m_data', None)
+                            if not can_bulk:
                                 try:
-                                    with transaction.atomic(using=target_db_alias):
-                                        item.save(using=target_db_alias)
+                                    with transaction.atomic(using=target_db_alias, savepoint=True):
+                                        _save_item_preserving_immutability(d_obj)
+                                    restored_models.add(model_cls)
                                     record_count += 1
                                 except Exception as e:
-                                    next_pending.append(item)
-                                    last_errors.append((item, e))
-                        idx = j
+                                    next_pending.append(d_obj)
+                                    last_errors.append((d_obj, e))
+                                idx += 1
+                                continue
 
-                    if len(next_pending) == len(pending):
-                        # No further records could be resolved
-                        break
-                    pending = next_pending
+                            batch = [d_obj]
+                            j = idx + 1
+                            while j < total_pending and len(batch) < 250:
+                                nxt = pending[j]
+                                if nxt.object.__class__ is model_cls and not getattr(nxt, 'm2m_data', None):
+                                    batch.append(nxt)
+                                    j += 1
+                                else:
+                                    break
+
+                            try:
+                                with transaction.atomic(using=target_db_alias, savepoint=True):
+                                    model_cls.objects.using(target_db_alias).bulk_create(
+                                        [item.object for item in batch],
+                                        batch_size=250,
+                                    )
+                                restored_models.add(model_cls)
+                                record_count += len(batch)
+                            except Exception:
+                                for item in batch:
+                                    try:
+                                        with transaction.atomic(using=target_db_alias, savepoint=True):
+                                            _save_item_preserving_immutability(item)
+                                        restored_models.add(model_cls)
+                                        record_count += 1
+                                    except Exception as e:
+                                        next_pending.append(item)
+                                        last_errors.append((item, e))
+                            idx = j
+
+                        if len(next_pending) == len(pending):
+                            break
+                        pending = next_pending
+
+                    if is_pg and restored_models:
+                        seq_sql = connections[target_db_alias].ops.sequence_reset_sql(no_style(), list(restored_models))
+                        if seq_sql:
+                            with connections[target_db_alias].cursor() as cur:
+                                for stmt in seq_sql:
+                                    cur.execute(stmt)
 
                 for deserialized_obj, err in last_errors:
                     error_count += 1
@@ -528,6 +585,46 @@ class DatabaseBackupService:
                 "records_restored": record_count,
                 "errors": errors,
                 "error_count": error_count,
+                "elapsed_seconds": elapsed,
+                "dry_run": dry_run
+            }
+
+        elif is_pg_custom_dump:
+            pg_restore_bin = shutil.which('pg_restore')
+            if not pg_restore_bin:
+                raise RuntimeError("pg_restore binary is required to restore PostgreSQL custom-format (.dump) backups.")
+            if not dry_run:
+                import tempfile
+                db_settings = connections[target_db_alias].settings_dict
+                env = os.environ.copy()
+                if db_settings.get('PASSWORD'):
+                    env['PGPASSWORD'] = db_settings['PASSWORD']
+                sslmode = (db_settings.get('OPTIONS') or {}).get('sslmode')
+                if sslmode:
+                    env['PGSSLMODE'] = str(sslmode)
+                with tempfile.NamedTemporaryFile(suffix='.dump', delete=False) as tf:
+                    tf.write(raw_bytes)
+                    temp_dump = Path(tf.name)
+                try:
+                    cmd = [
+                        pg_restore_bin,
+                        '-h', str(db_settings.get('HOST', 'localhost')),
+                        '-p', str(db_settings.get('PORT') or '5432'),
+                        '-U', str(db_settings.get('USER', 'postgres')),
+                        '-d', str(db_settings.get('NAME')),
+                        '--clean', '--if-exists', '--no-owner', '--no-privileges', '--single-transaction',
+                        str(temp_dump)
+                    ]
+                    res = subprocess.run(cmd, env=env, capture_output=True, text=True)
+                    if res.returncode != 0:
+                        raise RuntimeError(f"pg_restore failed (code {res.returncode}): {res.stderr}")
+                finally:
+                    temp_dump.unlink(missing_ok=True)
+            elapsed = round(time.time() - start_time, 2)
+            return {
+                "success": True,
+                "backup_type": "PG_CUSTOM_DUMP",
+                "bytes_restored": len(raw_bytes),
                 "elapsed_seconds": elapsed,
                 "dry_run": dry_run
             }
