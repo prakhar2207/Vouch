@@ -21,16 +21,73 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
-def _get_target_company(request):
-    """Resolves company context from header, query param, or first company membership."""
-    company_id = request.headers.get('X-Company-ID') or request.query_params.get('company_id')
-    if company_id:
-        company = Company.objects.filter(id=company_id).first()
-        if company and UserCompany.objects.filter(user=request.user, company=company).exists():
-            return company
+def _resolve_authorized_company(request):
+    """
+    Strictly resolves the target company from X-Company-ID or ?company_id.
+    Never falls back to another tenant when an explicit company_id is supplied:
+    - Invalid UUID or header/query mismatch -> 400 Bad Request
+    - Unauthorized / inactive company -> 403 Forbidden
+    - Unknown company UUID -> 404 Not Found
+    When omitted, resolves the caller's default active membership.
+    """
+    import uuid as _uuid
 
-    uc = UserCompany.objects.filter(user=request.user).select_related('company').first()
-    return uc.company if uc else None
+    header_cid = (request.headers.get('X-Company-ID') or '').strip()
+    query_cid = (request.query_params.get('company_id') or '').strip()
+    if header_cid and query_cid and header_cid != query_cid:
+        return None, Response(
+            {"success": False, "error": "Conflicting company identifiers in X-Company-ID header and company_id query parameter."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    company_id = header_cid or query_cid
+    if company_id:
+        try:
+            parsed_id = _uuid.UUID(str(company_id))
+        except (ValueError, TypeError, AttributeError):
+            return None, Response(
+                {"success": False, "error": "Invalid company ID format."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        uc = (
+            UserCompany.objects
+            .filter(user=request.user, company_id=parsed_id, company__is_active=True)
+            .select_related('company')
+            .first()
+        )
+        if uc:
+            return uc.company, None
+
+        if Company.objects.filter(id=parsed_id).exists():
+            return None, Response(
+                {"success": False, "error": "Permission denied: You do not belong to the requested company."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return None, Response(
+            {"success": False, "error": "Company not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    uc = (
+        UserCompany.objects
+        .filter(user=request.user, company__is_active=True)
+        .select_related('company')
+        .order_by('id')
+        .first()
+    )
+    if not uc:
+        return None, Response(
+            {"success": False, "error": "No company associated with this account."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return uc.company, None
+
+
+def _get_target_company(request):
+    """Backward-compatible wrapper returning company or None for internal callers."""
+    company, _ = _resolve_authorized_company(request)
+    return company
 
 
 # =============================================================================
@@ -93,9 +150,9 @@ class NotificationPreferencesAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        company = _get_target_company(request)
-        if not company:
-            return Response({"success": False, "error": "No company associated with this account."}, status=400)
+        company, err_resp = _resolve_authorized_company(request)
+        if err_resp:
+            return err_resp
 
         pref, _ = NotificationPreference.objects.get_or_create(company=company)
         return Response({
@@ -114,9 +171,9 @@ class NotificationPreferencesAPIView(APIView):
         })
 
     def patch(self, request):
-        company = _get_target_company(request)
-        if not company:
-            return Response({"success": False, "error": "No company associated with this account."}, status=400)
+        company, err_resp = _resolve_authorized_company(request)
+        if err_resp:
+            return err_resp
 
         if not user_has_company_roles(request.user, company, ['ADMIN', 'OWNER']):
             return Response({
@@ -296,9 +353,9 @@ class EmailDeliveryLogListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        company = _get_target_company(request)
-        if not company:
-            return Response({"success": False, "error": "No company associated with this account."}, status=400)
+        company, err_resp = _resolve_authorized_company(request)
+        if err_resp:
+            return err_resp
 
         # Enforce strict RBAC: Only OWNER and ADMIN can inspect company email delivery logs
         if not user_has_company_roles(request.user, company, ['OWNER', 'ADMIN']):
@@ -336,9 +393,9 @@ class EmailDeliveryLogRetryAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, log_id):
-        company = _get_target_company(request)
-        if not company:
-            return Response({"success": False, "error": "No company associated with this account."}, status=400)
+        company, err_resp = _resolve_authorized_company(request)
+        if err_resp:
+            return err_resp
 
         if not user_has_company_roles(request.user, company, ['OWNER', 'ADMIN']):
             return Response(
