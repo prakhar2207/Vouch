@@ -207,8 +207,10 @@ export default function PrivacyPolicyPage() {
           `localStorage` or JavaScript-readable cookies. Native mobile sessions (Capacitor) store
           Bearer tokens in OS app-sandboxed storage (`@capacitor/preferences` with Android OS backup
           disabled); hardware Keystore/Keychain encryption is a planned native enhancement rather than
-          an active control. Local IndexedDB financial caches (`VouchOfflineDB`) remain plaintext at
-          rest on the device profile. SriLekh does not claim ISO 27001 or SOC 2 certification or
+          an active control. Sensitive offline financial payloads in IndexedDB (`VouchOfflineDB`) are
+          sealed at rest using 256-bit WebCrypto AES-GCM encryption with non-extractable keys stored
+          in `VouchSecurityVault` (minimal index metadata such as `companyId`, `userId`, `status`,
+          and dates remain unencrypted for local querying). SriLekh does not claim ISO 27001 or SOC 2 certification or
           India-only cloud residency guarantees unless separately confirmed and published by the
           business owner.
         </p>
@@ -287,7 +289,8 @@ export default function PrivacyPolicyPage() {
           </li>
           <li>
             IndexedDB browser databases: `VouchOfflineDB` (Dexie offline accounting caches, OCR
-            cache, and outbox queue) and `VouchSecurityVault` (Ed25519 device signing key).
+            cache, and outbox queue with AES-GCM-256 encrypted financial payloads) and `VouchSecurityVault`
+            (non-extractable Ed25519 signing and AES-GCM-256 offline encryption keys).
           </li>
         </ul>
       </section>
@@ -323,8 +326,8 @@ export default function PrivacyPolicyPage() {
           preserving unacknowledged outbox entries scoped by `userId` and `companyId`. On{" "}
           <strong className="text-foreground">Standard Logout</strong>, authentication sessions are
           revoked, read caches are cleared, and Service Worker session caches are purged while any
-          unsynchronized `QUEUED`/`IN_FLIGHT`/`FAILED` outbox records stay locked in plaintext
-          IndexedDB (`userId`/`companyId`) so pending entries are not silently lost. On shared or
+          unsynchronized `QUEUED`/`IN_FLIGHT`/`FAILED` outbox records stay preserved in
+          encrypted IndexedDB (`userId`/`companyId`) so pending entries are not silently lost. On shared or
           untrusted devices, select{" "}
           <strong className="text-foreground">Secure Shared-Device Logout</strong>, which explicitly
           deletes `VouchOfflineDB`, `VouchSecurityVault`, `vouch_*` storage keys, and Service

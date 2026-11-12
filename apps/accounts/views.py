@@ -18,7 +18,7 @@ from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
-from rest_framework.throttling import AnonRateThrottle
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
@@ -68,6 +68,11 @@ class OtpVerifyRateThrottle(AnonRateThrottle):
 
 class LoginRateThrottle(AnonRateThrottle):
     rate = '15/minute'
+
+
+class AccountDeletionRateThrottle(UserRateThrottle):
+    rate = '10/hour'
+    scope = 'account_deletion'
 
 
 class LoginAccountRateThrottle(AnonRateThrottle):
@@ -1003,8 +1008,9 @@ def _analyze_user_company_ownership(user: User):
     }
 
 
-class AccountDeletionView(APIView):
+class AccountDeletionView(TestBypassThrottleMixin, APIView):
     permission_classes = [IsAuthenticated]
+    throttle_classes = [AccountDeletionRateThrottle]
 
     def get(self, request):
         if getattr(request.user, 'is_superuser', False):
@@ -1026,8 +1032,7 @@ class AccountDeletionView(APIView):
         }, status=status.HTTP_200_OK)
 
     def post(self, request):
-        user = request.user
-        if getattr(user, 'is_superuser', False):
+        if getattr(request.user, 'is_superuser', False):
             return Response({
                 "success": False,
                 "error": "Platform superadmin accounts cannot be self-deleted via this endpoint.",
@@ -1038,7 +1043,7 @@ class AccountDeletionView(APIView):
         sole_company_action = (request.data.get('sole_company_action') or '').strip().upper()
         reason = str(request.data.get('reason') or '')[:500].strip()
 
-        if not current_password or not user.check_password(current_password):
+        if not current_password:
             return Response({
                 "success": False,
                 "error": "Current password verification failed. Please re-enter your valid password.",
@@ -1050,39 +1055,68 @@ class AccountDeletionView(APIView):
                 "error": "Please type 'DELETE MY ACCOUNT' exactly to confirm permanent account deletion.",
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        impact = _analyze_user_company_ownership(user)
-        if impact["sole_owned_requires_transfer"]:
-            return Response({
-                "success": False,
-                "code": "OWNERSHIP_TRANSFER_REQUIRED",
-                "error": (
-                    "You are the sole Owner/Admin of active company workspace(s) with other team members. "
-                    "Transfer ownership to another active member before deleting your account."
-                ),
-                "companies": impact["sole_owned_requires_transfer"],
-            }, status=status.HTTP_409_CONFLICT)
-
-        sole_single = impact["sole_owned_single_user"]
-        if sole_single and sole_company_action != 'ARCHIVE_SOLO_COMPANIES':
-            return Response({
-                "success": False,
-                "code": "SOLE_COMPANY_CONFIRMATION_REQUIRED",
-                "error": (
-                    "You are the sole user of one or more active company workspaces. Confirm archiving "
-                    "those workspaces (sole_company_action='ARCHIVE_SOLO_COMPANIES') or transfer ownership first."
-                ),
-                "companies": sole_single,
-            }, status=status.HTTP_409_CONFLICT)
-
-        original_email = user.email
-        email_sha256 = hashlib.sha256(original_email.strip().lower().encode('utf-8')).hexdigest()
-        masked_email = _mask_email_for_audit(original_email)
         client_ip = (request.META.get('HTTP_X_FORWARDED_FOR') or '').split(',')[0].strip() or request.META.get('REMOTE_ADDR')
         now = timezone.now()
 
         with transaction.atomic():
             from apps.audit.services.audit_service import AuditService
-            from apps.notifications.models import PushSubscription
+            from apps.notifications.models import PushSubscription, Notification
+            from apps.protocol.models import AuthorizedDevice
+
+            locked_user = User.objects.select_for_update().filter(pk=request.user.pk).first()
+            if (
+                not locked_user
+                or not locked_user.is_active
+                or locked_user.email.endswith('@anonymized.srilekh.invalid')
+            ):
+                return Response({
+                    "success": False,
+                    "code": "ACCOUNT_ALREADY_DELETED",
+                    "error": "This account has already been deleted or deactivated.",
+                }, status=status.HTTP_409_CONFLICT)
+
+            if getattr(locked_user, 'is_superuser', False):
+                return Response({
+                    "success": False,
+                    "error": "Platform superadmin accounts cannot be self-deleted via this endpoint.",
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            if not locked_user.check_password(current_password):
+                return Response({
+                    "success": False,
+                    "error": "Current password verification failed. Please re-enter your valid password.",
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            # Lock user's company memberships and companies inside the transaction before checking ownership
+            list(UserCompany.objects.select_for_update().filter(user=locked_user).values_list('id', flat=True))
+            impact = _analyze_user_company_ownership(locked_user)
+
+            if impact["sole_owned_requires_transfer"]:
+                return Response({
+                    "success": False,
+                    "code": "OWNERSHIP_TRANSFER_REQUIRED",
+                    "error": (
+                        "You are the sole Owner/Admin of active company workspace(s) with other team members. "
+                        "Transfer ownership to another active member before deleting your account."
+                    ),
+                    "companies": impact["sole_owned_requires_transfer"],
+                }, status=status.HTTP_409_CONFLICT)
+
+            sole_single = impact["sole_owned_single_user"]
+            if sole_single and sole_company_action != 'ARCHIVE_SOLO_COMPANIES':
+                return Response({
+                    "success": False,
+                    "code": "SOLE_COMPANY_CONFIRMATION_REQUIRED",
+                    "error": (
+                        "You are the sole user of one or more active company workspaces. Confirm archiving "
+                        "those workspaces (sole_company_action='ARCHIVE_SOLO_COMPANIES') or transfer ownership first."
+                    ),
+                    "companies": sole_single,
+                }, status=status.HTTP_409_CONFLICT)
+
+            original_email = locked_user.email
+            email_sha256 = hashlib.sha256(original_email.strip().lower().encode('utf-8')).hexdigest()
+            masked_email = _mask_email_for_audit(original_email)
 
             archived_company_ids = []
             if sole_single:
@@ -1095,7 +1129,7 @@ class AccountDeletionView(APIView):
                         archived_company_ids.append(str(comp.id))
                         AuditService.log_action(
                             company=comp,
-                            user=user,
+                            user=locked_user,
                             action='DELETE',
                             model_name='Company',
                             record_id=comp.id,
@@ -1112,35 +1146,41 @@ class AccountDeletionView(APIView):
                 if comp:
                     AuditService.log_action(
                         company=comp,
-                        user=user,
+                        user=locked_user,
                         action='DELETE',
                         model_name='UserCompany',
-                        record_id=user.id,
+                        record_id=locked_user.id,
                         changes={"action": "Self-service account deletion membership detachment"},
                         ip_address=client_ip,
                     )
 
-            # Remove personal memberships, OTP challenges, pending registrations, and push tokens
-            UserCompany.objects.filter(user=user).delete()
-            PushSubscription.objects.filter(user=user).delete()
+            # Remove personal memberships, notifications, OTP challenges, pending registrations, push tokens, and device links
+            UserCompany.objects.filter(user=locked_user).delete()
+            PushSubscription.objects.filter(user=locked_user).delete()
+            Notification.objects.filter(user=locked_user).delete()
+            if archived_company_ids:
+                AuthorizedDevice.objects.filter(
+                    company_id__in=archived_company_ids, status='ACTIVE'
+                ).update(status='REVOKED', registered_by=None)
+            AuthorizedDevice.objects.filter(registered_by=locked_user).update(registered_by=None)
             EmailVerificationChallenge.objects.filter(email__iexact=original_email).delete()
             PendingRegistration.objects.filter(email__iexact=original_email).delete()
 
             # Revoke all existing JWT access/refresh tokens immediately
-            revoke_user_tokens(user)
+            revoke_user_tokens(locked_user)
 
             # Anonymize recoverable personal identity while preserving statutory voucher/audit FK integrity
-            user.first_name = ''
-            user.last_name = ''
-            user.email = f"deleted-{user.id}@anonymized.srilekh.invalid"
-            user.set_unusable_password()
-            user.is_active = False
-            user.email_verified = False
-            user.save(update_fields=['first_name', 'last_name', 'email', 'password', 'is_active', 'email_verified', 'updated_at'])
+            locked_user.first_name = ''
+            locked_user.last_name = ''
+            locked_user.email = f"deleted-{locked_user.id}@anonymized.srilekh.invalid"
+            locked_user.set_unusable_password()
+            locked_user.is_active = False
+            locked_user.email_verified = False
+            locked_user.save(update_fields=['first_name', 'last_name', 'email', 'password', 'is_active', 'email_verified', 'updated_at'])
 
             deletion_req = AccountDeletionRequest.objects.create(
                 user=None,
-                user_snapshot_id=user.id,
+                user_snapshot_id=locked_user.id,
                 email_sha256=email_sha256,
                 masked_email=masked_email,
                 status='COMPLETED',

@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useRef, useEffect, useMemo } from "react";
-import * as XLSX from "xlsx";
+import { parseSpreadsheetFileToRows } from "@/lib/import/spreadsheet-parser";
 import axios from "axios";
 import api, { API_BASE_URL } from "@/utils/api";
 import { getAccessToken } from "@/utils/auth";
@@ -80,11 +80,7 @@ export default function PriceListImportModal({
 
     try {
       if (fileName.endsWith(".csv") || fileName.endsWith(".xlsx") || fileName.endsWith(".xls")) {
-        const buffer = await selectedFile.arrayBuffer();
-        const workbook = XLSX.read(buffer, { type: "array" });
-        const sheetName = workbook.SheetNames[0];
-        const sheet = workbook.Sheets[sheetName];
-        const rows: any[] = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+        const rows: any[] = await parseSpreadsheetFileToRows(selectedFile);
 
         if (rows.length < 2) {
           toast.error("File is empty or missing data rows.");
@@ -361,7 +357,7 @@ export default function PriceListImportModal({
           toast.error("Failed to parse PDF price list", res.data.error || "No items detected.");
         }
       } else {
-        toast.warning("Unsupported format. Please upload CSV, Excel (.xlsx/.xls), or PDF.");
+        toast.warning("Unsupported format. Please upload CSV, Excel (.xlsx), or PDF.");
       }
     } catch (err: any) {
       console.error(err);

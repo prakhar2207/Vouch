@@ -16,26 +16,69 @@ import {
   isTokenExpired,
 } from './auth';
 
-// In production (e.g. Vercel), fallback to Render backend if NEXT_PUBLIC_API_URL isn't set
-const getDefaultApiUrl = () => {
-  if (process.env.NEXT_PUBLIC_API_URL) {
-    return process.env.NEXT_PUBLIC_API_URL;
+const PRODUCTION_WEB_HOSTS = new Set(['srilekh.com', 'www.srilekh.com', 'app.srilekh.com']);
+const PRODUCTION_API_HOSTS = new Set(['api.srilekh.com', 'vouch-api-752s.onrender.com']);
+
+export function resolveApiBaseUrl(options?: {
+  envApiUrl?: string;
+  appEnv?: string;
+  hostname?: string;
+  native?: boolean;
+}): string {
+  const envApiUrl = (options?.envApiUrl ?? process.env.NEXT_PUBLIC_API_URL ?? '').trim();
+  const appEnv = (options?.appEnv ?? process.env.NEXT_PUBLIC_APP_ENV ?? '').trim().toLowerCase();
+  const hostname = (
+    options?.hostname ??
+    (typeof window !== 'undefined' ? window.location?.hostname : '') ??
+    ''
+  )
+    .trim()
+    .toLowerCase();
+  const native = options?.native ?? isCapacitorNative();
+
+  if (envApiUrl) {
+    try {
+      const parsedHost = new URL(envApiUrl).hostname.toLowerCase();
+      const isStagingContext =
+        appEnv === 'staging' ||
+        hostname.includes('staging') ||
+        hostname.includes('preview') ||
+        hostname.includes('vouch-u3u7');
+      if (isStagingContext && PRODUCTION_API_HOSTS.has(parsedHost)) {
+        throw new Error(
+          `[API Isolation] Refusing to connect staging/preview host (${hostname || appEnv}) to production API (${parsedHost}).`
+        );
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('[API Isolation]')) {
+        throw err;
+      }
+    }
+    return envApiUrl.replace(/\/+$/, '');
   }
-  if (isCapacitorNative()) {
+
+  if (native) {
+    return 'https://api.srilekh.com';
+  }
+  if (hostname && PRODUCTION_WEB_HOSTS.has(hostname)) {
     return 'https://api.srilekh.com';
   }
   if (
-    typeof window !== 'undefined' &&
-    window.location?.hostname &&
-    window.location.hostname !== 'localhost' &&
-    window.location.hostname !== '127.0.0.1'
+    hostname &&
+    (hostname.includes('staging') ||
+      hostname.includes('preview') ||
+      hostname.endsWith('.vercel.app') ||
+      hostname.endsWith('.onrender.com'))
   ) {
+    return 'https://vouch-u3u7.onrender.com';
+  }
+  if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
     return 'https://api.srilekh.com';
   }
   return 'http://localhost:8000';
-};
+}
 
-export const API_BASE_URL = getDefaultApiUrl().replace(/\/+$/, '');
+export const API_BASE_URL = resolveApiBaseUrl();
 
 export const api = axios.create({
   baseURL: API_BASE_URL,

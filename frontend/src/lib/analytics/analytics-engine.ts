@@ -2055,39 +2055,43 @@ export class LocalAnalyticsEngine {
       }
     }
 
+    const { encryptBatchForTable } = await import("@/lib/db/offlineCrypto");
+    const dailyEntries = Object.keys(dailyMap).map((d) => ({
+      id: `${companyId}_${d}`,
+      companyId,
+      date: d,
+      sales: Math.round(dailyMap[d].sales * 100) / 100,
+      purchases: Math.round(dailyMap[d].purchases * 100) / 100,
+      collections: Math.round(dailyMap[d].collections * 100) / 100,
+      payments: Math.round(dailyMap[d].payments * 100) / 100,
+      salesCount: dailyMap[d].salesCount,
+      purchaseCount: dailyMap[d].purchaseCount,
+    }));
+
+    const partyEntries = Object.keys(partyMap).map((pId) => ({
+      id: `${companyId}_${pId}`,
+      companyId,
+      partyId: pId,
+      partyName: partyMap[pId].name,
+      sales: Math.round(partyMap[pId].sales * 100) / 100,
+      purchases: Math.round(partyMap[pId].purchases * 100) / 100,
+      receipts: Math.round(partyMap[pId].receipts * 100) / 100,
+      payments: Math.round(partyMap[pId].payments * 100) / 100,
+      invoiceCount: partyMap[pId].invoiceCount,
+      lastTransactionDate: partyMap[pId].lastDate,
+      outstanding: Math.round(partyMap[pId].outstanding * 100) / 100,
+    }));
+
+    const sealedDaily = await encryptBatchForTable("analyticsDaily", dailyEntries);
+    const sealedParty = await encryptBatchForTable("analyticsParty", partyEntries);
+
     await offlineDb.transaction("rw", [offlineDb.analyticsDaily, offlineDb.analyticsParty], async () => {
       // Clear old aggregates for this company
       await offlineDb.analyticsDaily.where("companyId").equals(companyId).delete();
       await offlineDb.analyticsParty.where("companyId").equals(companyId).delete();
 
-      const dailyEntries = Object.keys(dailyMap).map((d) => ({
-        id: `${companyId}_${d}`,
-        companyId,
-        date: d,
-        sales: Math.round(dailyMap[d].sales * 100) / 100,
-        purchases: Math.round(dailyMap[d].purchases * 100) / 100,
-        collections: Math.round(dailyMap[d].collections * 100) / 100,
-        payments: Math.round(dailyMap[d].payments * 100) / 100,
-        salesCount: dailyMap[d].salesCount,
-        purchaseCount: dailyMap[d].purchaseCount,
-      }));
-
-      const partyEntries = Object.keys(partyMap).map((pId) => ({
-        id: `${companyId}_${pId}`,
-        companyId,
-        partyId: pId,
-        partyName: partyMap[pId].name,
-        sales: Math.round(partyMap[pId].sales * 100) / 100,
-        purchases: Math.round(partyMap[pId].purchases * 100) / 100,
-        receipts: Math.round(partyMap[pId].receipts * 100) / 100,
-        payments: Math.round(partyMap[pId].payments * 100) / 100,
-        invoiceCount: partyMap[pId].invoiceCount,
-        lastTransactionDate: partyMap[pId].lastDate,
-        outstanding: Math.round(partyMap[pId].outstanding * 100) / 100,
-      }));
-
-      await offlineDb.analyticsDaily.bulkPut(dailyEntries);
-      await offlineDb.analyticsParty.bulkPut(partyEntries);
+      await offlineDb.analyticsDaily.bulkPut(sealedDaily as any);
+      await offlineDb.analyticsParty.bulkPut(sealedParty as any);
     });
   }
 

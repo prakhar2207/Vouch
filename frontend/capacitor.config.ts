@@ -13,10 +13,7 @@ const config: CapacitorConfig = {
     allowNavigation: [
       'srilekh.com',
       '*.srilekh.com',
-      'api.srilekh.com',
-      'api.whatsapp.com',
-      'wa.me',
-      'web.whatsapp.com'
+      'api.srilekh.com'
     ],
   },
   plugins: {

@@ -356,4 +356,212 @@ describe("Stage 1.2: Browser Token Elimination, Native Compatibility & Offline P
     assert.equal(await offlineDb.operationLog.count(), 0);
     assert.equal(await offlineDb.syncedVouchers.count(), 0);
   });
+
+  it("6. AES-GCM-256 Offline Encryption at Rest: raw IndexedDB hides party names, amounts & narrations and keeps non-extractable keys out of localStorage", async () => {
+    const { OfflineCryptoManager, isEncryptedEnvelope } = await import("@/lib/db/offlineCrypto");
+    const { KeyVaultIDB } = await import("@/lib/crdt/clientKeyManager");
+
+    await offlineDb.syncedVouchers.put({
+      id: "v-secret-1",
+      companyId: "comp-enc",
+      voucherType: "SALES",
+      voucherDate: "2026-11-12",
+      voucherNumber: "INV-2026-9991",
+      partyLedgerId: "ledger-secret-1",
+      partyName: "Confidential Belting Buyer Pvt Ltd",
+      status: "POSTED",
+      totalAmount: 987654.32,
+      narration: "Top-secret defense conveyor belt order",
+      serverUpdatedAt: Date.now(),
+    });
+    await offlineDb.syncedLedgers.put({
+      id: "ledger-secret-1",
+      companyId: "comp-enc",
+      name: "Confidential Belting Buyer Pvt Ltd",
+      ledgerType: "CUSTOMER",
+      gstin: "27ABCDE1234F1Z5",
+      currentBalance: 987654.32,
+      openingBalance: 0,
+      openingBalanceType: "DEBIT",
+      serverUpdatedAt: Date.now(),
+    });
+    await offlineDb.syncedBankTransactions.put({
+      id: "bank-secret-1",
+      companyId: "comp-enc",
+      bankLedgerId: "bank-1",
+      transactionDate: "2026-11-12",
+      description: "NEFT FROM CONFIDENTIAL BUYER INV-9991",
+      normalizedNarration: "confidential buyer",
+      referenceNumber: "UTR9988776655",
+      debitAmount: 0,
+      creditAmount: 987654.32,
+      status: "UNRESOLVED",
+      serverUpdatedAt: Date.now(),
+    });
+
+    // Read raw IndexedDB directly without Dexie middleware to inspect bytes on disk
+    const readRaw = (storeName: string, key: IDBValidKey): Promise<Record<string, unknown>> =>
+      new Promise((resolve, reject) => {
+        const req = fakeIndexedDB.open("VouchOfflineDB");
+        req.onsuccess = () => {
+          const rawDb = req.result;
+          const tx = rawDb.transaction(storeName, "readonly");
+          const getReq = tx.objectStore(storeName).get(key);
+          getReq.onsuccess = () => {
+            rawDb.close();
+            resolve(getReq.result as Record<string, unknown>);
+          };
+          getReq.onerror = () => {
+            rawDb.close();
+            reject(getReq.error);
+          };
+        };
+        req.onerror = () => reject(req.error);
+      });
+
+    const rawVoucher = await readRaw("syncedVouchers", "v-secret-1");
+    const rawLedger = await readRaw("syncedLedgers", "ledger-secret-1");
+    const rawBank = await readRaw("syncedBankTransactions", "bank-secret-1");
+
+    assert.equal(isEncryptedEnvelope(rawVoucher.__enc), true);
+    assert.equal(isEncryptedEnvelope(rawLedger.__enc), true);
+    assert.equal(isEncryptedEnvelope(rawBank.__enc), true);
+
+    const serializedRaw = JSON.stringify({ rawVoucher, rawLedger, rawBank });
+    assert.equal(serializedRaw.includes("Confidential Belting Buyer"), false);
+    assert.equal(serializedRaw.includes("987654.32"), false);
+    assert.equal(serializedRaw.includes("defense conveyor belt"), false);
+    assert.equal(serializedRaw.includes("27ABCDE1234F1Z5"), false);
+    assert.equal(serializedRaw.includes("UTR9988776655"), false);
+
+    // Non-extractable key custody check
+    assert.equal(memStorage.length, 0);
+    assert.equal(memSessionStorage.length, 0);
+    const active = await OfflineCryptoManager.getOrCreateActiveKey();
+    assert.equal(active.key.extractable, false);
+    await assert.rejects(() => globalThis.crypto.subtle.exportKey("raw", active.key));
+    const storedSlot = await KeyVaultIDB.getOfflineCryptoKey("active_offline_db_key");
+    assert.equal(storedSlot?.kid, active.kid);
+
+    // Authorized read & update through Dexie seamlessly decrypts and preserves encrypted rest format
+    const decVoucher = await offlineDb.syncedVouchers.get("v-secret-1");
+    assert.equal(decVoucher?.partyName, "Confidential Belting Buyer Pvt Ltd");
+    assert.equal(decVoucher?.totalAmount, 987654.32);
+
+    await offlineDb.syncedVouchers.update("v-secret-1", { paymentStatus: "PAID", paidAmount: 987654.32 });
+    const updatedDec = await offlineDb.syncedVouchers.get("v-secret-1");
+    assert.equal(updatedDec?.paymentStatus, "PAID");
+    assert.equal(updatedDec?.narration, "Top-secret defense conveyor belt order");
+    const updatedRaw = await readRaw("syncedVouchers", "v-secret-1");
+    assert.equal(isEncryptedEnvelope(updatedRaw.__enc), true);
+    assert.equal(JSON.stringify(updatedRaw).includes("987654.32"), false);
+  });
+
+  it("7. Offline Encryption Supports Key Rotation, Plaintext Backward Compatibility & Non-Destructive Corrupt/Wiped Key Handling", async () => {
+    const { OfflineCryptoManager, isEncryptedEnvelope } = await import("@/lib/db/offlineCrypto");
+
+    // A) Legacy pre-encryption plaintext row injected directly into raw IndexedDB reads cleanly
+    await new Promise<void>((resolve, reject) => {
+      const req = fakeIndexedDB.open("VouchOfflineDB");
+      req.onsuccess = () => {
+        const rawDb = req.result;
+        const tx = rawDb.transaction("syncedLedgers", "readwrite");
+        tx.objectStore("syncedLedgers").put({
+          id: "legacy-ledger-1",
+          companyId: "comp-legacy",
+          name: "Legacy Unencrypted Supplier",
+          ledgerType: "SUPPLIER",
+          currentBalance: 1200,
+          openingBalance: 1200,
+          openingBalanceType: "CREDIT",
+          serverUpdatedAt: 1000,
+        });
+        tx.oncomplete = () => {
+          rawDb.close();
+          resolve();
+        };
+        tx.onerror = () => reject(tx.error);
+      };
+      req.onerror = () => reject(req.error);
+    });
+
+    const legacyRow = await offlineDb.syncedLedgers.get("legacy-ledger-1");
+    assert.equal(legacyRow?.name, "Legacy Unencrypted Supplier");
+    assert.equal(legacyRow?.currentBalance, 1200);
+
+    // B) Key rotation: record created before rotation still decrypts while new writes use new kid
+    await offlineDb.syncedVouchers.put({
+      id: "v-before-rot",
+      companyId: "comp-rot",
+      voucherType: "SALES",
+      voucherDate: "2026-11-12",
+      voucherNumber: "INV-ROT-1",
+      partyName: "Pre Rotation Party",
+      status: "POSTED",
+      totalAmount: 1111,
+      serverUpdatedAt: 1000,
+    });
+    const rot = await OfflineCryptoManager.rotateKey();
+    assert.ok(rot.previousKid && rot.kid !== rot.previousKid);
+
+    await offlineDb.syncedVouchers.put({
+      id: "v-after-rot",
+      companyId: "comp-rot",
+      voucherType: "SALES",
+      voucherDate: "2026-11-12",
+      voucherNumber: "INV-ROT-2",
+      partyName: "Post Rotation Party",
+      status: "POSTED",
+      totalAmount: 2222,
+      serverUpdatedAt: 2000,
+    });
+
+    assert.equal((await offlineDb.syncedVouchers.get("v-before-rot"))?.partyName, "Pre Rotation Party");
+    assert.equal((await offlineDb.syncedVouchers.get("v-after-rot"))?.partyName, "Post Rotation Party");
+
+    // C) Non-destructive failure handling if key vault is lost/tampered: pending outbox is NEVER deleted
+    await offlineDb.outboxQueue.add({
+      operationId: "op-survives-decrypt-err",
+      transactionId: "tx-survives-1",
+      companyId: "comp-rot",
+      userId: "user-1",
+      status: "QUEUED",
+      retryCount: 0,
+      lastError: "Transient timeout",
+      createdAt: Date.now(),
+    });
+    const prevErr = console.warn;
+    console.warn = () => {};
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const req = fakeIndexedDB.open("VouchSecurityVault", 2);
+        req.onsuccess = () => {
+          const vdb = req.result;
+          const tx = vdb.transaction("offline_crypto_keys", "readwrite");
+          tx.objectStore("offline_crypto_keys").clear();
+          tx.oncomplete = () => {
+            vdb.close();
+            resolve();
+          };
+          tx.onerror = () => reject(tx.error);
+        };
+        req.onerror = () => reject(req.error);
+      });
+      OfflineCryptoManager.clearInMemoryCache();
+      const decFail = (await offlineDb.syncedVouchers.get("v-after-rot")) as unknown as Record<string, unknown>;
+      assert.equal(decFail?.__decryptionError, true);
+      assert.equal(decFail?.partyName, undefined);
+      // Queued outbox row count stays intact despite key loss
+      assert.equal(await offlineDb.outboxQueue.where("operationId").equals("op-survives-decrypt-err").count(), 1);
+    } finally {
+      console.warn = prevErr;
+    }
+
+    // D) Raw encrypted check passed earlier; restore cleanly via cryptographic erase
+    await safePurgeTenantData(undefined, { forceDestroyAll: true });
+    await offlineDb.open();
+    const afterWipe = await offlineDb.syncedVouchers.get("v-after-rot");
+    assert.equal(afterWipe, undefined);
+    void isEncryptedEnvelope;
+  });
 });

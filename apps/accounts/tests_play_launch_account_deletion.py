@@ -17,7 +17,9 @@ from rest_framework.test import APIClient
 
 from apps.accounts.models import AccountDeletionRequest, User
 from apps.companies.models import Company, UserCompany
-from apps.notifications.models import EmailDeliveryLog
+from apps.audit.models import AuditLog
+from apps.notifications.models import EmailDeliveryLog, Notification
+from apps.protocol.models import AuthorizedDevice
 
 
 @override_settings(
@@ -189,3 +191,90 @@ class PlayLaunchAccountDeletionAndHardeningTests(TestCase):
         )
         self.assertEqual(res_import.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('Unsupported file format', res_import.data.get('error', ''))
+
+    def test_deletion_revokes_devices_notifications_and_blocks_replay_and_concurrent_double_delete(self):
+        dev = AuthorizedDevice.objects.create(
+            device_id='DEV-DELETE-HARDEN-1',
+            replica_id='REPL-DELETE-HARDEN-1',
+            company=self.solo_company,
+            registered_by=self.owner,
+            public_key_hex='aa' * 32,
+            key_id='KID-DELETE-1',
+            status='ACTIVE',
+        )
+        Notification.objects.create(
+            user=self.owner,
+            title='Confidential Alert',
+            message='Secret user notification payload',
+        )
+        cap_client = APIClient()
+        login_res = cap_client.post(
+            '/api/v1/auth/login/',
+            {'email': self.owner.email, 'password': self.password},
+            format='json',
+            HTTP_X_CLIENT_TYPE='capacitor',
+        )
+        access_tok = login_res.data['access']
+        refresh_tok = login_res.data['refresh']
+
+        # First deletion succeeds
+        res1 = cap_client.post(
+            '/api/v1/auth/account/delete-request/',
+            {
+                'current_password': self.password,
+                'confirmation_text': 'DELETE MY ACCOUNT',
+                'sole_company_action': 'ARCHIVE_SOLO_COMPANIES',
+            },
+            format='json',
+            HTTP_AUTHORIZATION=f'Bearer {access_tok}',
+        )
+        self.assertEqual(res1.status_code, status.HTTP_200_OK)
+
+        dev.refresh_from_db()
+        self.assertEqual(dev.status, 'REVOKED')
+        self.assertIsNone(dev.registered_by)
+        self.assertEqual(Notification.objects.filter(user=self.owner).count(), 0)
+        self.assertTrue(
+            AuditLog.objects.filter(company=self.solo_company, model_name='Company', action='DELETE').exists()
+        )
+
+        # Replay of deletion endpoint with stale JWT or refresh token must be rejected
+        res_replay = APIClient().post(
+            '/api/v1/auth/account/delete-request/',
+            {
+                'current_password': self.password,
+                'confirmation_text': 'DELETE MY ACCOUNT',
+                'sole_company_action': 'ARCHIVE_SOLO_COMPANIES',
+            },
+            format='json',
+            HTTP_AUTHORIZATION=f'Bearer {access_tok}',
+        )
+        self.assertEqual(res_replay.status_code, status.HTTP_401_UNAUTHORIZED)
+
+        res_refresh = APIClient().post(
+            '/api/v1/auth/refresh/',
+            {'refresh': refresh_tok},
+            format='json',
+        )
+        self.assertEqual(res_refresh.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(AccountDeletionRequest.objects.filter(user_snapshot_id=self.owner.id).count(), 1)
+
+    def test_account_deletion_already_anonymized_user_blocked_inside_lock(self):
+        from apps.accounts.views import AccountDeletionView
+        from rest_framework.test import APIRequestFactory, force_authenticate
+
+        User.objects.filter(pk=self.owner.pk).update(
+            email=f'deleted-{self.owner.id}@anonymized.srilekh.invalid',
+            is_active=False,
+        )
+        self.owner.refresh_from_db()
+        factory = APIRequestFactory()
+        req = factory.post(
+            '/api/v1/auth/account/delete-request/',
+            {'current_password': self.password, 'confirmation_text': 'DELETE MY ACCOUNT'},
+            format='json',
+        )
+        force_authenticate(req, user=self.owner)
+        resp = AccountDeletionView.as_view()(req)
+        self.assertEqual(resp.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(resp.data.get('code'), 'ACCOUNT_ALREADY_DELETED')
