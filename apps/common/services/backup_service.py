@@ -126,7 +126,11 @@ class DatabaseBackupService:
             if 'postgresql' in engine:
                 model_counts = cls._dump_postgresql(db_settings, raw_dump_path, company_id=company_id)
             elif 'sqlite' in engine:
-                cls._dump_sqlite(db_name, raw_dump_path)
+                db_name_str = str(db_name)
+                if company_id or db_name_str == ':memory:' or db_name_str.startswith('file:'):
+                    model_counts = cls._dump_json_fixture(raw_dump_path, company_id=company_id)
+                else:
+                    cls._dump_sqlite(db_name, raw_dump_path)
             else:
                 raise ValueError(f"Unsupported database engine for backup: {engine}")
 
@@ -245,12 +249,19 @@ class DatabaseBackupService:
                 '-f', str(output_file),
                 db_name
             ]
-            res = subprocess.run(cmd, env=env, capture_output=True, text=True)
+            subprocess_timeout = int(getattr(settings, 'DB_BACKUP_SUBPROCESS_TIMEOUT_SECONDS', 1800))
+            res = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=subprocess_timeout)
             if res.returncode != 0:
                 raise RuntimeError(f"pg_dump failed (code {res.returncode}): {res.stderr}")
             return None
         else:
-            logger.info("[Backup] Using complete deterministic chunked batch serializer (pg_dump unavailable or company-scoped).")
+            return cls._dump_json_fixture(output_file, company_id=company_id)
+
+    @classmethod
+    def _dump_json_fixture(cls, output_file: Path, company_id: str = None):
+        """Serializes models deterministically in dependency order into a Django JSON fixture."""
+        if True:
+            logger.info("[Backup] Using complete deterministic chunked batch serializer (pg_dump unavailable or company/memory-scoped).")
             from django.apps import apps
             from django.core.serializers import serialize
             MODEL_DEPENDENCY_ORDER = [
@@ -330,7 +341,7 @@ class DatabaseBackupService:
     @classmethod
     def _dump_sqlite(cls, db_name_or_path: str, output_file: Path):
         """Non-locking safe snapshot of SQLite database."""
-        src_conn = sqlite3.connect(str(db_name_or_path))
+        src_conn = sqlite3.connect(str(db_name_or_path), uri=str(db_name_or_path).startswith('file:'))
         dest_conn = sqlite3.connect(str(output_file))
         with dest_conn:
             src_conn.backup(dest_conn, pages=100)
@@ -450,17 +461,35 @@ class DatabaseBackupService:
         errors = []
 
         if is_sqlite_binary:
-            target_db_file = connections[target_db_alias].settings_dict.get('NAME')
+            target_db_file = str(connections[target_db_alias].settings_dict.get('NAME') or '')
             if not target_db_file or 'sqlite' not in connections[target_db_alias].settings_dict.get('ENGINE', ''):
                 raise ValueError("Cannot restore SQLite binary backup into non-SQLite target database.")
             if not dry_run:
-                with open(target_db_file, 'wb') as f:
-                    f.write(raw_bytes)
+                is_uri = target_db_file.startswith('file:')
+                if is_uri or target_db_file == ':memory:':
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(suffix='.sqlite3', delete=False) as tf:
+                        tf.write(raw_bytes)
+                        tmp_sqlite = Path(tf.name)
+                    try:
+                        src_conn = sqlite3.connect(str(tmp_sqlite))
+                        dest_conn = sqlite3.connect(target_db_file, uri=is_uri)
+                        with dest_conn:
+                            src_conn.backup(dest_conn, pages=100)
+                        dest_conn.close()
+                        src_conn.close()
+                    finally:
+                        tmp_sqlite.unlink(missing_ok=True)
+                else:
+                    with open(target_db_file, 'wb') as f:
+                        f.write(raw_bytes)
             elapsed = round(time.time() - start_time, 2)
             return {
                 "success": True,
                 "backup_type": "SQLITE_BINARY",
                 "bytes_restored": len(raw_bytes),
+                "error_count": 0,
+                "errors": [],
                 "elapsed_seconds": elapsed,
                 "dry_run": dry_run
             }
@@ -615,7 +644,8 @@ class DatabaseBackupService:
                         '--clean', '--if-exists', '--no-owner', '--no-privileges', '--single-transaction',
                         str(temp_dump)
                     ]
-                    res = subprocess.run(cmd, env=env, capture_output=True, text=True)
+                    subprocess_timeout = int(getattr(settings, 'DB_BACKUP_SUBPROCESS_TIMEOUT_SECONDS', 1800))
+                    res = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=subprocess_timeout)
                     if res.returncode != 0:
                         raise RuntimeError(f"pg_restore failed (code {res.returncode}): {res.stderr}")
                 finally:
@@ -625,6 +655,8 @@ class DatabaseBackupService:
                 "success": True,
                 "backup_type": "PG_CUSTOM_DUMP",
                 "bytes_restored": len(raw_bytes),
+                "error_count": 0,
+                "errors": [],
                 "elapsed_seconds": elapsed,
                 "dry_run": dry_run
             }
@@ -640,6 +672,8 @@ class DatabaseBackupService:
                 "success": True,
                 "backup_type": "SQL_SCRIPT",
                 "bytes_restored": len(raw_bytes),
+                "error_count": 0,
+                "errors": [],
                 "elapsed_seconds": elapsed,
                 "dry_run": dry_run
             }

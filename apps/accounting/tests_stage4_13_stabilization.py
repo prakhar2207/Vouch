@@ -69,8 +69,13 @@ class Stage413DisasterRecoveryAuditLogTests(TestCase):
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_backup_includes_auditlog_and_syncevent_and_preserves_hashes_on_restore(self):
+        # Scope to self.company so TestCase uncommitted AuditLog & SyncEvent rows are
+        # serialized inside the active transaction on hosts with pg_dump/pg_restore installed.
         res = DatabaseBackupService.perform_backup(
-            upload_s3=False, encrypt=True, output_dir=self.temp_dir
+            upload_s3=False,
+            encrypt=True,
+            output_dir=self.temp_dir,
+            company_id=str(self.company.id),
         )
         self.assertTrue(res["success"], res)
         backup_path = Path(res["file_path"])

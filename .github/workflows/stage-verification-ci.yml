@@ -7,10 +7,15 @@ on:
       - 'fix/**'
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   backend-security-dr-celery:
     name: Backend Audit, PG18 Binary DR & Redis/Celery Worker
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:18
@@ -125,6 +130,7 @@ jobs:
   frontend-and-android-ci-build:
     name: Frontend Audit/Tests & Unsigned Android AAB/APK Compile (JDK 21 + SDK 36)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
