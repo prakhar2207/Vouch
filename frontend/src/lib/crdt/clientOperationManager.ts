@@ -2,9 +2,8 @@ import { offlineDb, type ClientAccountingOperation, type OutboxItem, type InboxI
 import { ClientKeyManager } from "./clientKeyManager";
 import { canonicalJsonStringify, computeCanonicalSha256, getCanonicalOperationDict } from "./canonicalJson";
 import { buildCanonicalTransaction, hashCanonicalTransaction, type CanonicalTransactionEnvelope } from "./canonicalTransaction";
-import { getAccessToken, getUser } from "@/utils/auth";
-import { getValidAccessToken } from "@/utils/api";
-import { API_BASE_URL } from "@/utils/api";
+import { getAccessToken, getAuthEpoch, getUser, isAuthenticated } from "@/utils/auth";
+import { apiFetch, API_BASE_URL, ensureValidSession } from "@/utils/api";
 
 export interface VoucherMutationParams {
   companyId: string;
@@ -17,9 +16,13 @@ export interface VoucherMutationParams {
 }
 
 export class ClientOperationManager {
-  private static syncChannel = typeof window !== "undefined" && "BroadcastChannel" in window
-    ? new BroadcastChannel("vouch_local_sync")
-    : null;
+  private static syncChannel = (() => {
+    const ch = typeof window !== "undefined" && "BroadcastChannel" in window
+      ? new BroadcastChannel("vouch_local_sync")
+      : null;
+    (ch as unknown as { unref?: () => void } | null)?.unref?.();
+    return ch;
+  })();
 
   public static getReplicaId(): string {
     return ClientKeyManager.getReplicaId();
@@ -403,7 +406,18 @@ export class ClientOperationManager {
       return { syncedCount: 0, receivedCount: 0, status: "IDLE" };
     }
 
-    const token = (await getValidAccessToken()) || getAccessToken();
+    if (!isAuthenticated()) {
+      return { syncedCount: 0, receivedCount: 0, status: "UNAUTHENTICATED" };
+    }
+
+    const startEpoch = getAuthEpoch();
+    const startUserId = getUser()?.id || null;
+    const sessionOk = await ensureValidSession();
+    if (!sessionOk || !isAuthenticated() || getAuthEpoch() !== startEpoch || getUser()?.id !== startUserId) {
+      return { syncedCount: 0, receivedCount: 0, status: "UNAUTHENTICATED" };
+    }
+
+    const token = getAccessToken();
     const replicaId = this.getReplicaId();
 
     // Group outbox items by transactionId
@@ -417,6 +431,10 @@ export class ClientOperationManager {
     let totalReceived = 0;
 
     for (const [txId, items] of Object.entries(byTx)) {
+      if (getAuthEpoch() !== startEpoch || !isAuthenticated() || getUser()?.id !== startUserId) {
+        return { syncedCount: totalSynced, receivedCount: totalReceived, status: "ABORTED_ON_LOGOUT" };
+      }
+
       const opIds = items.map(i => i.operationId);
       const ops = await offlineDb.operationLog.where("operationId").anyOf(opIds).toArray();
       if (ops.length === 0) continue;
@@ -428,18 +446,18 @@ export class ClientOperationManager {
         continue;
       }
 
-      // STRICT USER & TENANT GUARD: Never push outbox mutations queued by another user or under a mismatched tenant
+      // STRICT USER & TENANT GUARD: Require active user & matching tenant before pushing queued records
       const currentUserId = getUser()?.id || null;
       const opUserId = firstOp.userId || items.find((i) => i.userId)?.userId;
-      if (opUserId && (!currentUserId || String(opUserId) !== String(currentUserId))) {
-        console.warn(`[User Guard] Refusing to push transaction ${txId}: queued by user ${opUserId}, current session user is ${currentUserId || "anonymous"}.`);
+      if (!currentUserId || (opUserId && String(opUserId) !== String(currentUserId))) {
+        console.warn(`[User Guard] Refusing to push transaction ${txId}: queued by user ${opUserId || "unknown"}, current session user is ${currentUserId || "anonymous"}.`);
         continue;
       }
       const activeCompanyId = typeof window !== "undefined" && typeof localStorage !== "undefined"
         ? (localStorage.getItem("vouch_active_company_id") || localStorage.getItem("activeCompanyId") || localStorage.getItem("vouch_active_company"))
         : null;
-      if (activeCompanyId && companyId !== activeCompanyId) {
-        console.warn(`[Tenant Guard] Refusing to push transaction ${txId} for company ${companyId} under active session ${activeCompanyId}`);
+      if (!activeCompanyId || companyId !== activeCompanyId) {
+        console.warn(`[Tenant Guard] Refusing to push transaction ${txId} for company ${companyId} under active session ${activeCompanyId || "none"}`);
         continue;
       }
       const canonicalTx = firstOp.payload?.canonical_transaction;
@@ -495,11 +513,19 @@ export class ClientOperationManager {
           headers["X-Company-ID"] = companyId;
         }
 
-        const res = await fetch(`${baseUrl}/api/v1/protocol/sync/`, {
+        const res = await apiFetch(`${baseUrl}/api/v1/protocol/sync/`, {
           method: "POST",
           headers,
           body: JSON.stringify(payload)
         });
+
+        // Do not mutate local state if logout/user switch or tenant switch occurred while request was in flight
+        const postCompanyId = typeof window !== "undefined" && typeof localStorage !== "undefined"
+          ? (localStorage.getItem("vouch_active_company_id") || localStorage.getItem("activeCompanyId") || localStorage.getItem("vouch_active_company"))
+          : null;
+        if (getAuthEpoch() !== startEpoch || !isAuthenticated() || getUser()?.id !== startUserId || postCompanyId !== companyId) {
+          return { syncedCount: totalSynced, receivedCount: totalReceived, status: "ABORTED_ON_SESSION_CHANGE" };
+        }
 
         if (res.ok) {
           const data = await res.json();

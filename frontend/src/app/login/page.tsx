@@ -3,7 +3,7 @@
 import { API_BASE_URL } from '@/utils/api';
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { setTokens, setUser } from '@/utils/auth';
+import { isCapacitorNative, setAuthenticatedSession, setUser } from '@/utils/auth';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Eye, EyeOff, LogIn, AlertCircle } from 'lucide-react';
@@ -43,9 +43,24 @@ export default function Login() {
     }, 2500);
 
     try {
-      const res = await axios.post(`${API_BASE_URL}/api/v1/auth/login/`, { email: username, password });
+      const native = isCapacitorNative();
+      const res = await axios.post(
+        `${API_BASE_URL}/api/v1/auth/login/`,
+        { email: username, password },
+        {
+          withCredentials: !native,
+          headers: { 'X-Client-Type': native ? 'capacitor' : 'web' },
+        }
+      );
       clearTimeout(slowTimer);
-      setTokens(res.data.access, res.data.refresh);
+      setAuthenticatedSession({
+        user: res.data.user,
+        csrfToken: res.data.csrf_token,
+        expiresAt: res.data.expires_at,
+        refreshExpiresAt: res.data.refresh_expires_at,
+        access: res.data.access,
+        refresh: res.data.refresh,
+      });
       if (res.data.user) {
         setUser(res.data.user);
       }

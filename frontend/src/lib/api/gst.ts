@@ -4,9 +4,10 @@ import { getAccessToken } from '@/utils/auth';
 
 function getHeaders(companyId?: string) {
   const token = getAccessToken();
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${token}`,
-  };
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
   if (companyId) {
     headers['X-Company-ID'] = companyId;
   }

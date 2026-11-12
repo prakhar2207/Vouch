@@ -1,7 +1,7 @@
 import { offlineDb, SyncedProduct } from "../db/offlineDb";
 import axios from "axios";
 import api, { API_BASE_URL } from "@/utils/api";
-import { getAccessToken } from "@/utils/auth";
+import { getAuthEpoch, isAuthenticated } from "@/utils/auth";
 
 export interface ProductQueryOptions {
   search?: string;
@@ -25,10 +25,12 @@ export class ProductsRepository {
     // Fallback if local product catalog is unpopulated or refresh is requested
     if (products.length === 0 || options.forceRefresh) {
       try {
-        const token = getAccessToken();
-        if (token) {
-          const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": companyId };
+        if (isAuthenticated()) {
+          const epochAtStart = getAuthEpoch();
           const res = await api.get(`/api/v1/inventory/products/${companyId}/`, { headers: { "X-Company-ID": companyId }, timeout: 8000 });
+          if (getAuthEpoch() !== epochAtStart || !isAuthenticated()) {
+            return { data: [], isLocal: true };
+          }
           const raw = res.data?.data || (Array.isArray(res.data) ? res.data : []);
           if (raw.length > 0) {
             const toPut: SyncedProduct[] = raw.map((p: any) => ({

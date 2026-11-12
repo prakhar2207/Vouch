@@ -1,6 +1,7 @@
 import { offlineDb } from "../db/offlineDb";
 import { executeClientOutboxSync, pullIncrementalChanges, ingestVoucherLocally, triggerFullSync } from "../sync/sync-worker";
 import type { SyncedVoucher } from "../db/offlineDb";
+import { getUser } from "@/utils/auth";
 
 export interface SyncStatusInfo {
   status: "IDLE" | "SYNCING" | "ERROR" | "OFFLINE";
@@ -62,12 +63,15 @@ export class SyncRepository {
       };
     }
 
+    const currentUserId = getUser()?.id || null;
     const meta = await offlineDb.syncMeta.get(companyId);
     const legacyPending = await offlineDb.vouchers
       .where("status")
       .anyOf(["PENDING", "SYNCING", "FAILED"])
       .filter((v) => {
         const cid = v.payload?.company_id || v.payload?.company;
+        const uid = v.payload?.user_id ? String(v.payload.user_id) : null;
+        if (uid && (!currentUserId || uid !== String(currentUserId))) return false;
         return !cid || String(cid) === String(companyId);
       })
       .count();
@@ -78,12 +82,16 @@ export class SyncRepository {
       .toArray();
     let outboxPendingCount = 0;
     for (const item of activeOutbox) {
-      if (item.companyId) {
-        if (String(item.companyId) === String(companyId)) outboxPendingCount++;
-      } else {
-        const op = await offlineDb.operationLog.get(item.operationId);
-        const opCompanyId = op?.companyId || op?.payload?.company_id || op?.payload?.company;
-        if (String(opCompanyId || "") === String(companyId)) outboxPendingCount++;
+      const op = (!item.companyId || !item.userId)
+        ? await offlineDb.operationLog.get(item.operationId)
+        : undefined;
+      const ownerUid = item.userId || op?.userId || null;
+      if (ownerUid && (!currentUserId || String(ownerUid) !== String(currentUserId))) {
+        continue;
+      }
+      const resolvedCompanyId = item.companyId || op?.companyId || op?.payload?.company_id || op?.payload?.company;
+      if (String(resolvedCompanyId || "") === String(companyId)) {
+        outboxPendingCount++;
       }
     }
     const pendingCount = legacyPending + outboxPendingCount;

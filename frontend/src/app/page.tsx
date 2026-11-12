@@ -16,7 +16,6 @@ import {
   BarChart3,
   Clock,
   Users,
-  ChevronRight,
   Layers,
   Terminal,
 } from "lucide-react";
@@ -25,6 +24,7 @@ import { API_BASE_URL } from "@/utils/api";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useShortcuts } from "@/context/ShortcutContext";
 import { VouchLogo } from "@/components/VouchLogo";
+import { PublicFooter } from "@/components/public/PublicFooter";
 
 /* ────────────────────── Feature Data ────────────────────── */
 const features = [
@@ -623,53 +623,7 @@ export default function LandingPage() {
       </section>
 
       {/* ─────────── Footer ─────────── */}
-      <footer className="border-t border-border/60 bg-slate-50 dark:bg-zinc-950 py-12 text-xs text-muted-foreground">
-        <div className="max-w-7xl mx-auto px-6 grid grid-cols-2 md:grid-cols-4 gap-8 mb-8">
-          <div className="space-y-3 col-span-2 md:col-span-1">
-            <VouchLogo size={24} showWordmark={true} />
-            <p className="text-xs text-muted-foreground leading-relaxed max-w-[220px]">
-              Simple billing, GST invoicing, and accounting software — built for Indian businesses who want to save time.
-            </p>
-          </div>
-          <div className="space-y-3">
-            <div className="text-xs font-bold uppercase tracking-wider text-foreground">Product</div>
-            <ul className="space-y-2 text-muted-foreground">
-              <li><Link href="/dashboard" className="hover:text-foreground transition-colors inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />Dashboard</Link></li>
-              <li><Link href="/sales" className="hover:text-foreground transition-colors inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />Sales Invoicing (F8)</Link></li>
-              <li><Link href="/purchases" className="hover:text-foreground transition-colors inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />AI Bill Scanner (F9)</Link></li>
-              <li><Link href="/vouchers" className="hover:text-foreground transition-colors inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />Payments & Receipts</Link></li>
-            </ul>
-          </div>
-          <div className="space-y-3">
-            <div className="text-xs font-bold uppercase tracking-wider text-foreground">Resources</div>
-            <ul className="space-y-2 text-muted-foreground">
-              <li><button onClick={() => setIsHelpOpen(true)} className="hover:text-foreground transition-colors cursor-pointer inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />Keyboard Shortcuts (F1)</button></li>
-              <li><Link href="/dashboard" className="hover:text-foreground transition-colors inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />Documentation</Link></li>
-              <li><Link href="/dashboard" className="hover:text-foreground transition-colors inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />GST Compliance Guide</Link></li>
-              <li><Link href="/~offline" className="hover:text-foreground transition-colors inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />Offline Support (PWA)</Link></li>
-            </ul>
-          </div>
-          <div className="space-y-3">
-            <div className="text-xs font-bold uppercase tracking-wider text-foreground">Legal & Trust</div>
-            <ul className="space-y-2 text-muted-foreground">
-              <li className="inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />Privacy Policy</li>
-              <li className="inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />Terms of Service</li>
-              <li className="inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />Secure & Reliable</li>
-              <li className="inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" />Your Data, Your Control</li>
-            </ul>
-          </div>
-        </div>
-
-        <div className="max-w-7xl mx-auto px-6 pt-6 border-t border-border/60 dark:border-border flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px] text-muted-foreground">
-          <div>
-            © {new Date().getFullYear()} SriLekh Platform. Built for Modern Indian Businesses.
-          </div>
-          <div className="flex items-center gap-3 font-mono text-[10px]">
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded border border-emerald-500/15">PWA Enabled</span>
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded border border-blue-500/15">Desktop & Mobile</span>
-          </div>
-        </div>
-      </footer>
+      <PublicFooter />
     </div>
   );
 }

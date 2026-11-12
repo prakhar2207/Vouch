@@ -481,11 +481,11 @@ export default function PrintInvoicePage() {
       const token = getAccessToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      if (token) {
+      if (isAuthenticated()) {
         try {
           res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/detail/${invoiceId}/`, { headers });
         } catch (authErr) {
-          // Fallback to public endpoint with auth headers so backend can evaluate user permissions
+          // Fallback to public endpoint with auth credentials so backend can evaluate user permissions
           res = await axios.get(`${API_BASE_URL}/api/v1/accounting/vouchers/public/${invoiceId}/`, { headers });
         }
       } else {
@@ -523,7 +523,7 @@ export default function PrintInvoicePage() {
           }
         }
 
-        if (token) {
+        if (isAuthenticated()) {
           try {
             const shareRes = await api.post(`/api/v1/documents/vouchers/${invoiceId}/share/`, { expires_in_days: 30 });
             if (shareRes.data?.raw_token) {
@@ -540,7 +540,7 @@ export default function PrintInvoicePage() {
 
         if (invData.eway_bill && invData.eway_bill.status !== 'CAN') {
           setEwayBill(invData.eway_bill);
-        } else if (token) {
+        } else if (isAuthenticated()) {
           try {
             const ewayRes = await gstApi.getEWayBillForVoucher(invoiceId);
             if (ewayRes.success && ewayRes.data && ewayRes.data.status !== 'CAN') {

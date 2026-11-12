@@ -154,8 +154,9 @@ function CreditDebitNoteContent() {
 
       // 2. Fetch fresh server data
       const token = getAccessToken();
-      if (token) {
-        const headers = { Authorization: `Bearer ${token}` };
+      if (isAuthenticated()) {
+        const headers: Record<string, string> = {};
+        if (token) headers.Authorization = `Bearer ${token}`;
         const res = await axios.get(
           `${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/?type=CREDIT_NOTE,DEBIT_NOTE&status=ACTIVE&limit=100`,
           { headers }

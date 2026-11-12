@@ -598,19 +598,21 @@ class InvoiceClaimRegisterAPIView(APIView):
                 }
             )
 
-        # 4. Generate JWT tokens for auto-login
-        refresh = RefreshToken.for_user(user)
-        access_token = str(refresh.access_token)
-        refresh_token = str(refresh)
+        # 4. Generate JWT tokens for auto-login & attach HttpOnly browser cookies
+        from apps.accounts.cookies import attach_auth_cookies, build_tokens_for_user
 
-        return Response({
+        tokens = build_tokens_for_user(user)
+        resp = Response({
             'message': 'Welcome to Vouch! Your company has been registered and this bill is ready in your EDI Inbox.',
-            'access': access_token,
-            'refresh': refresh_token,
+            'access': tokens['access'],
+            'refresh': tokens['refresh'],
             'user': {
                 'id': str(user.id),
                 'email': user.email,
                 'name': (user.get_full_name() if hasattr(user, 'get_full_name') else '') or user.email,
+                'role': getattr(user, 'role', 'OWNER'),
+                'is_staff': getattr(user, 'is_staff', False),
+                'is_superuser': getattr(user, 'is_superuser', False),
             },
 
             'company': {
@@ -621,6 +623,14 @@ class InvoiceClaimRegisterAPIView(APIView):
             'inward_request_id': str(inward_req.id),
             'redirect_url': f"/network/inbox"
         }, status=status.HTTP_201_CREATED)
+        attach_auth_cookies(
+            request,
+            resp,
+            access_token=tokens['access'],
+            refresh_token=tokens['refresh'],
+            user=user,
+        )
+        return resp
 
 
 class InvoiceDispatchDetailsAPIView(APIView):

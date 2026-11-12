@@ -57,6 +57,16 @@ class KeyVaultIDB {
     }
   }
 
+  public static async closeConnection(): Promise<void> {
+    if (!this.dbPromise) return;
+    try {
+      const db = await this.dbPromise;
+      db.close();
+    } catch {} finally {
+      this.dbPromise = null;
+    }
+  }
+
   public static async savePrivateKey(key: CryptoKey): Promise<void> {
     const db = await this.getDB();
     return new Promise((resolve, reject) => {
@@ -69,9 +79,17 @@ class KeyVaultIDB {
   }
 }
 
+import { apiFetch } from "@/utils/api";
+
 export class ClientKeyManager {
   private static cachedPrivateKey: CryptoKey | null = null;
   private static cachedIdentity: DeviceIdentity | null = null;
+
+  public static async closeAndResetVault(): Promise<void> {
+    this.cachedPrivateKey = null;
+    this.cachedIdentity = null;
+    await KeyVaultIDB.closeConnection();
+  }
 
   public static getDeviceId(): string {
     if (typeof window !== "undefined") {
@@ -253,7 +271,7 @@ export class ClientKeyManager {
         headers["Authorization"] = `Bearer ${params.accessToken}`;
       }
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method: "POST",
         headers,
         body: JSON.stringify({
@@ -334,7 +352,7 @@ export class ClientKeyManager {
         headers["Authorization"] = `Bearer ${params.accessToken}`;
       }
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method: "POST",
         headers,
         body: JSON.stringify({

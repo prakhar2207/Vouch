@@ -3,7 +3,7 @@
 import { API_BASE_URL } from "@/utils/api";
 import { useState, useRef, useEffect } from "react";
 import axios from "axios";
-import { setTokens } from "@/utils/auth";
+import { isCapacitorNative, setAuthenticatedSession } from "@/utils/auth";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import StateSelect from "@/components/StateSelect";
@@ -292,12 +292,24 @@ export default function Register() {
         formData.append("signature", signatureFile);
       }
 
+      const native = isCapacitorNative();
       const res = await axios.post(`${API_BASE_URL}/api/v1/auth/register/complete/`, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
+        withCredentials: !native,
+        headers: {
+          "Content-Type": "multipart/form-data",
+          "X-Client-Type": native ? "capacitor" : "web",
+        },
       });
 
       if (res.data.success) {
-        setTokens(res.data.access, res.data.refresh);
+        setAuthenticatedSession({
+          user: res.data.user,
+          csrfToken: res.data.csrf_token,
+          expiresAt: res.data.expires_at,
+          refreshExpiresAt: res.data.refresh_expires_at,
+          access: res.data.access,
+          refresh: res.data.refresh,
+        });
         setStep(5); // Move to Onboarding Setup & Migration screen
       } else {
         setError(res.data.error || "Registration failed. Please check your details.");

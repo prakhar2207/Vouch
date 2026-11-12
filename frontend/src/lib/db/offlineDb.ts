@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import Dexie, { type Table } from "dexie";
+import { shouldPurgeCacheOnLogout } from "@/lib/pwa/sw-cache-policy";
 
 export interface OfflineVoucher {
   id?: number;
@@ -358,6 +359,7 @@ let coordinationChannel: BroadcastChannel | null = null;
 if (typeof window !== "undefined" && "BroadcastChannel" in window) {
   try {
     coordinationChannel = new BroadcastChannel("vouch_offline_coordination");
+    (coordinationChannel as unknown as { unref?: () => void }).unref?.();
     coordinationChannel.onmessage = async (event) => {
       const data = event.data;
       if (data?.type === "CLOSE_DB_CONNECTION") {
@@ -392,7 +394,66 @@ export async function ensureDbOpen(): Promise<void> {
  * - If targetCompanyId is omitted (logout): performs complete purge across all tables, closes connections,
  *   coordinates with open tabs, and attempts resilient database reset without blocking if another tab is active.
  */
-export async function hasPendingOfflineTransactions(companyId?: string): Promise<boolean> {
+export interface PendingOfflineSummary {
+  currentUserCount: number;
+  totalPendingCount: number;
+  companyIds: string[];
+}
+
+export async function getPendingOfflineSummary(userId?: string | null): Promise<PendingOfflineSummary> {
+  if (typeof window === "undefined") {
+    return { currentUserCount: 0, totalPendingCount: 0, companyIds: [] };
+  }
+  try {
+    if (!offlineDb.isOpen()) {
+      await offlineDb.open().catch(() => {});
+    }
+    const pendingOutbox = await offlineDb.outboxQueue
+      .where("status")
+      .anyOf(["QUEUED", "IN_FLIGHT", "FAILED"])
+      .toArray();
+    const pendingLegacy = await offlineDb.vouchers
+      .where("status")
+      .anyOf(["PENDING", "SYNCING", "FAILED"])
+      .toArray();
+
+    let currentUserCount = 0;
+    const companyIds = new Set<string>();
+
+    for (const item of pendingOutbox) {
+      let ownerUid = item.userId || null;
+      let cid = item.companyId || "";
+      if (!ownerUid || !cid) {
+        const op = await offlineDb.operationLog.get(item.operationId).catch(() => undefined);
+        ownerUid = ownerUid || op?.userId || null;
+        cid = cid || String(op?.companyId || op?.payload?.company_id || op?.payload?.company || "");
+      }
+      if (cid) companyIds.add(String(cid));
+      if (userId && ownerUid && String(ownerUid) === String(userId)) {
+        currentUserCount += 1;
+      }
+    }
+
+    for (const v of pendingLegacy) {
+      const cid = String(v.payload?.company_id || v.payload?.company || "");
+      const ownerUid = v.payload?.user_id ? String(v.payload.user_id) : null;
+      if (cid) companyIds.add(cid);
+      if (userId && (!ownerUid || ownerUid === String(userId))) {
+        currentUserCount += 1;
+      }
+    }
+
+    return {
+      currentUserCount,
+      totalPendingCount: pendingOutbox.length + pendingLegacy.length,
+      companyIds: Array.from(companyIds),
+    };
+  } catch {
+    return { currentUserCount: 0, totalPendingCount: 0, companyIds: [] };
+  }
+}
+
+export async function hasPendingOfflineTransactions(companyId?: string, userId?: string | null): Promise<boolean> {
   if (typeof window === "undefined") return false;
   try {
     if (!offlineDb.isOpen()) {
@@ -404,21 +465,28 @@ export async function hasPendingOfflineTransactions(companyId?: string): Promise
       .toArray();
     if (companyId) {
       for (const item of pendingOutbox) {
-        if (item.companyId === companyId) return true;
-        if (!item.companyId) {
-          const op = await offlineDb.operationLog.get(item.operationId);
-          if (String(op?.companyId || op?.payload?.company_id || "") === companyId) return true;
-        }
+        const op = (!item.companyId || !item.userId)
+          ? await offlineDb.operationLog.get(item.operationId).catch(() => undefined)
+          : undefined;
+        const resolvedCompanyId = String(item.companyId || op?.companyId || op?.payload?.company_id || "");
+        const resolvedUserId = item.userId || op?.userId || null;
+        if (resolvedCompanyId !== companyId) continue;
+        if (userId && resolvedUserId && String(resolvedUserId) !== String(userId)) continue;
+        return true;
       }
       const pendingLegacy = await offlineDb.vouchers
         .where("status")
         .anyOf(["PENDING", "SYNCING", "FAILED"])
         .toArray();
-      return pendingLegacy.some((v) => String(v.payload?.company_id || v.payload?.company || "") === companyId);
+      return pendingLegacy.some((v) => {
+        const matchesCompany = String(v.payload?.company_id || v.payload?.company || "") === companyId;
+        if (!matchesCompany) return false;
+        if (userId && v.payload?.user_id && String(v.payload.user_id) !== String(userId)) return false;
+        return true;
+      });
     }
-    if (pendingOutbox.length > 0) return true;
-    const legacyCount = await offlineDb.vouchers.where("status").anyOf(["PENDING", "SYNCING", "FAILED"]).count();
-    return legacyCount > 0;
+    const summary = await getPendingOfflineSummary(userId);
+    return userId ? summary.currentUserCount > 0 : summary.totalPendingCount > 0;
   } catch {
     return false;
   }
@@ -438,8 +506,8 @@ export async function safePurgeTenantData(
       } catch {}
     }
 
-    // 2. Ensure db is open before clearing cache tables
-    if (!offlineDb.isOpen()) {
+    // 2. Ensure db is open only when selectively clearing tables (avoid reopening before full deleteDatabase)
+    if (!options?.forceDestroyAll && !offlineDb.isOpen()) {
       await offlineDb.open().catch(() => {});
     }
 
@@ -462,35 +530,44 @@ export async function safePurgeTenantData(
       // and are resumed only when an authorized session returns to this company.
     } else if (options?.forceDestroyAll) {
       // Explicit full wipe requested
-      await Promise.allSettled(offlineDb.tables.map((table) => table.clear().catch(() => {})));
+      if (offlineDb.isOpen()) {
+        await Promise.allSettled(offlineDb.tables.map((table) => table.clear().catch(() => {})));
+      }
       try {
         offlineDb.close();
       } catch {}
-      await new Promise<void>((resolve) => {
-        let finished = false;
-        const timer = setTimeout(() => {
-          if (!finished) {
-            finished = true;
-            resolve();
-          }
-        }, 2000);
-        try {
-          const req = indexedDB.deleteDatabase("VouchOfflineDB");
-          req.onsuccess = req.onerror = req.onblocked = () => {
+      const deleteIdb = (dbName: string) =>
+        new Promise<void>((resolve) => {
+          let finished = false;
+          const timer = setTimeout(() => {
+            if (!finished) {
+              finished = true;
+              resolve();
+            }
+          }, 2000);
+          (timer as unknown as { unref?: () => void }).unref?.();
+          try {
+            const req = indexedDB.deleteDatabase(dbName);
+            req.onsuccess = req.onerror = req.onblocked = () => {
+              if (!finished) {
+                finished = true;
+                clearTimeout(timer);
+                resolve();
+              }
+            };
+          } catch {
             if (!finished) {
               finished = true;
               clearTimeout(timer);
               resolve();
             }
-          };
-        } catch {
-          if (!finished) {
-            finished = true;
-            clearTimeout(timer);
-            resolve();
           }
-        }
-      });
+        });
+      try {
+        const { ClientKeyManager } = await import("@/lib/crdt/clientKeyManager");
+        await ClientKeyManager.closeAndResetVault();
+      } catch {}
+      await Promise.all([deleteIdb("VouchOfflineDB"), deleteIdb("VouchSecurityVault")]);
     } else {
       // Stage 4.12 Phase B: Safe Logout Purge
       // Purge all tenant read caches, inbox, cursors, and masters so no PII/accounting view leaks to the next user,
@@ -523,12 +600,12 @@ export async function safePurgeTenantData(
       }
     }
 
-    // 3. Purge Service Worker and CacheStorage caches
+    // 3. Purge Service Worker and CacheStorage caches (including legacy cross-origin / api caches)
     if ("caches" in window) {
       try {
         const cacheNames = await caches.keys().catch(() => []);
         for (const name of cacheNames) {
-          if (name.includes("srilekh") || name.includes("vouch") || name.includes("pages")) {
+          if (shouldPurgeCacheOnLogout(name)) {
             await caches.delete(name).catch(() => {});
           }
         }

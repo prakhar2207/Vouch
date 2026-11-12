@@ -1,7 +1,7 @@
 import { offlineDb, SyncedVoucher, OfflineVoucher } from "../db/offlineDb";
 import axios from "axios";
 import api, { API_BASE_URL } from "@/utils/api";
-import { getAccessToken } from "@/utils/auth";
+import { getAuthEpoch, getUser, isAuthenticated } from "@/utils/auth";
 
 export interface VoucherQueryOptions {
   type?: string | string[];
@@ -176,9 +176,8 @@ export class VouchersRepository {
     // If local storage is empty, or filtered list for this financial year is empty, attempt on-demand server fetch
     if (localVouchers.length === 0 || (filtered.length === 0 && (options.financialYearId || options.startDate))) {
       try {
-        const token = getAccessToken();
-        if (token) {
-          const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": companyId };
+        if (isAuthenticated()) {
+          const epochAtStart = getAuthEpoch();
           const typeParam = Array.isArray(options.type) ? options.type.join(",") : (options.type || "");
           const params = new URLSearchParams();
           params.append("limit", "500");
@@ -190,6 +189,9 @@ export class VouchersRepository {
 
           const url = `${API_BASE_URL}/api/v1/accounting/vouchers/${companyId}/?${params.toString()}`;
           const res = await api.get(url, { headers: { "X-Company-ID": companyId }, timeout: 8000 });
+          if (getAuthEpoch() !== epochAtStart || !isAuthenticated()) {
+            return { data: [], totalCount: 0, page: options.page || 1, pageSize: options.pageSize || 50, totalPages: 1, offset: 0, hasMore: false, isLocal: true };
+          }
           const serverList = res.data?.data || [];
           if (serverList.length > 0) {
             const toPut: SyncedVoucher[] = serverList.map((v: any) => ({
@@ -230,11 +232,13 @@ export class VouchersRepository {
       .anyOf(["PENDING", "SYNCING", "FAILED"])
       .toArray();
 
+    const currentUid = getUser()?.id || null;
     const offlineMerged: any[] = outboxItems
       .filter((o) => {
         const p = o.payload || {};
         const matchesCompany = !p.company_id || p.company_id === companyId;
         if (!matchesCompany) return false;
+        if (p.user_id && (!currentUid || String(p.user_id) !== String(currentUid))) return false;
         if (options.type) {
           const types = (Array.isArray(options.type) ? options.type : [options.type]).map((t) => String(t).toUpperCase());
           if (!types.includes(String(o.voucherType).toUpperCase())) return false;

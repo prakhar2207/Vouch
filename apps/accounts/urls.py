@@ -1,6 +1,8 @@
 from django.urls import path
 from .views import (
+    CsrfCookieView,
     CurrentUserView,
+    LogoutView,
     RegisterView,
     RegisterInitiateView,
     RegisterVerifyOtpView,
@@ -13,9 +15,11 @@ from .views import (
 )
 
 urlpatterns = [
-    # Login & Profile
+    # Login, Refresh, Logout, CSRF & Profile
+    path('csrf/', CsrfCookieView.as_view(), name='csrf_cookie'),
     path('login/', ThrottledTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('refresh/', ThrottledTokenRefreshView.as_view(), name='token_refresh'),
+    path('logout/', LogoutView.as_view(), name='auth_logout'),
     path('me/', CurrentUserView.as_view(), name='current_user'),
 
     # Multi-step OTP Registration

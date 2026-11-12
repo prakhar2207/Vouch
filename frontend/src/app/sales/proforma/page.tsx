@@ -75,12 +75,14 @@ export default function ProformaQuotationListPage() {
       }
 
       const token = getAccessToken();
-      if (!token) return;
+      if (!isAuthenticated()) return;
 
       if (!companyId) {
         try {
+          const compHeaders: Record<string, string> = {};
+          if (token) compHeaders.Authorization = `Bearer ${token}`;
           const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/`, {
-            headers: { Authorization: `Bearer ${token}` },
+            headers: compHeaders,
             signal: controller.signal
           });
           const list = Array.isArray(compRes.data) ? compRes.data : (compRes.data?.data || []);
@@ -98,10 +100,10 @@ export default function ProformaQuotationListPage() {
         return;
       }
 
-      const headers: Record<string, string> = { 
-        Authorization: `Bearer ${token}`,
+      const headers: Record<string, string> = {
         'X-Company-ID': companyId
       };
+      if (token) headers.Authorization = `Bearer ${token}`;
 
       const params = new URLSearchParams();
       params.append('limit', String(pageSize));

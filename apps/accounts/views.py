@@ -29,8 +29,23 @@ from apps.inventory.models import Warehouse
 from apps.ledgers.models import LedgerGroup, Ledger
 from apps.notifications.email_service import EmailService
 from apps.notifications.models import NotificationPreference
+from django.middleware.csrf import get_token
+from rest_framework_simplejwt.tokens import AccessToken
+from .cookies import (
+    attach_auth_cookies,
+    build_tokens_for_user,
+    clear_auth_cookies,
+    enforce_cookie_csrf,
+    get_access_cookie_name,
+    get_refresh_cookie_name,
+    revoke_user_tokens,
+)
 from .models import User, EmailVerificationChallenge, PendingRegistration
-from .serializers import UserSerializer, CustomTokenObtainPairSerializer
+from .serializers import (
+    UserSerializer,
+    CustomTokenObtainPairSerializer,
+    CustomTokenRefreshSerializer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -672,16 +687,23 @@ class RegisterCompleteView(TestBypassThrottleMixin, APIView):
                     company=company,
                 ))
 
-                # 9. Issue JWT Tokens
-                refresh = RefreshToken.for_user(user)
-
-                return Response({
+                # 9. Issue JWT Tokens & attach HttpOnly browser cookies
+                tokens = build_tokens_for_user(user)
+                resp = Response({
                     "success": True,
-                    "access": str(refresh.access_token),
-                    "refresh": str(refresh),
+                    "access": tokens["access"],
+                    "refresh": tokens["refresh"],
                     "company_id": str(company.id),
                     "message": "Account created and activated successfully."
                 }, status=status.HTTP_201_CREATED)
+                attach_auth_cookies(
+                    request,
+                    resp,
+                    access_token=tokens["access"],
+                    refresh_token=tokens["refresh"],
+                    user=user,
+                )
+                return resp
 
         except Exception as e:
             logger.exception(f"Business registration completion failed for '{email}': {e}")
@@ -771,13 +793,8 @@ class PasswordResetConfirmView(TestBypassThrottleMixin, APIView):
         user.set_password(new_password)
         user.save()
 
-        # Revoke existing refresh tokens
-        try:
-            from rest_framework_simplejwt.token_blacklist.models import OutstandingToken, BlacklistedToken
-            for ot in OutstandingToken.objects.filter(user=user):
-                BlacklistedToken.objects.get_or_create(token=ot)
-        except Exception as e:
-            logger.warning(f"Could not blacklist tokens for user {user.id}: {e}")
+        # Revoke all existing access & refresh tokens (increments token_version + blacklists refresh tokens)
+        revoke_user_tokens(user)
 
         # Send password changed confirmation email
         EmailService.send_password_changed_email(user.email)
@@ -792,11 +809,109 @@ class PasswordResetConfirmView(TestBypassThrottleMixin, APIView):
 # Throttled JWT Login Views
 # =============================================================================
 
+class CsrfCookieView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        token = get_token(request)
+        return Response({"success": True, "csrf_token": token}, status=status.HTTP_200_OK)
+
+
 class ThrottledTokenObtainPairView(TestBypassThrottleMixin, TokenObtainPairView):
     throttle_classes = [LoginRateThrottle, LoginAccountRateThrottle]
     serializer_class = CustomTokenObtainPairSerializer
 
+    def post(self, request, *args, **kwargs):
+        response = super().post(request, *args, **kwargs)
+        if response.status_code == status.HTTP_200_OK and isinstance(response.data, dict):
+            access_token = response.data.get("access")
+            refresh_token = response.data.get("refresh")
+            if access_token:
+                attach_auth_cookies(
+                    request,
+                    response,
+                    access_token=access_token,
+                    refresh_token=refresh_token,
+                )
+        return response
+
 
 class ThrottledTokenRefreshView(TestBypassThrottleMixin, TokenRefreshView):
     throttle_classes = [LoginRateThrottle]
-    throttle_scope = 'auth'
+    throttle_scope = "auth"
+    serializer_class = CustomTokenRefreshSerializer
+
+    def post(self, request, *args, **kwargs):
+        cookie_refresh = request.COOKIES.get(get_refresh_cookie_name())
+        has_body_refresh = isinstance(request.data, dict) and bool(request.data.get("refresh"))
+        if cookie_refresh and not has_body_refresh:
+            enforce_cookie_csrf(request)
+
+        response = super().post(request, *args, **kwargs)
+        if response.status_code == status.HTTP_200_OK and isinstance(response.data, dict):
+            access_token = response.data.get("access")
+            refresh_token = response.data.get("refresh")
+            if access_token:
+                attach_auth_cookies(
+                    request,
+                    response,
+                    access_token=access_token,
+                    refresh_token=refresh_token,
+                )
+        return response
+
+
+class LogoutView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        has_auth_cookies = bool(
+            request.COOKIES.get(get_access_cookie_name())
+            or request.COOKIES.get(get_refresh_cookie_name())
+        )
+        if has_auth_cookies:
+            enforce_cookie_csrf(request)
+
+        revoked_user = None
+        auth_header = (request.META.get("HTTP_AUTHORIZATION") or "").strip()
+        bearer_token = None
+        if auth_header.lower().startswith("bearer "):
+            cand = auth_header[7:].strip()
+            if cand and cand.lower() not in ("undefined", "null"):
+                bearer_token = cand
+
+        raw_access = bearer_token or request.COOKIES.get(get_access_cookie_name())
+        if raw_access:
+            try:
+                at = AccessToken(raw_access)
+                uid = at.get("user_id")
+                if uid:
+                    revoked_user = User.objects.filter(pk=uid).first()
+            except Exception:
+                pass
+
+        raw_refresh = None
+        if isinstance(request.data, dict):
+            raw_refresh = request.data.get("refresh")
+        if not raw_refresh:
+            raw_refresh = request.COOKIES.get(get_refresh_cookie_name())
+
+        if raw_refresh:
+            try:
+                rt = RefreshToken(raw_refresh)
+                if revoked_user is None and rt.get("user_id"):
+                    revoked_user = User.objects.filter(pk=rt.get("user_id")).first()
+                try:
+                    rt.blacklist()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+        if revoked_user is not None:
+            revoke_user_tokens(revoked_user)
+
+        resp = Response({"success": True, "message": "Logged out successfully."}, status=status.HTTP_200_OK)
+        clear_auth_cookies(request, resp)
+        return resp

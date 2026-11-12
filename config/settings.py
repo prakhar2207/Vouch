@@ -98,7 +98,7 @@ AUTH_USER_MODEL = 'accounts.User'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'apps.accounts.authentication.CookieJWTAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
@@ -340,6 +340,13 @@ SIMPLE_JWT = {
     'BLACKLIST_AFTER_ROTATION': True,
 }
 
+# HttpOnly Auth Cookies & SPA CSRF Policy (Stage 1.2)
+AUTH_ACCESS_COOKIE_NAME = 'srilekh_access'
+AUTH_REFRESH_COOKIE_NAME = 'srilekh_refresh'
+AUTH_COOKIE_HTTPONLY = True
+AUTH_COOKIE_SECURE = env.bool('AUTH_COOKIE_SECURE', default=(not DEBUG))
+AUTH_COOKIE_SAMESITE = env('AUTH_COOKIE_SAMESITE', default='')
+
 from corsheaders.defaults import default_headers, default_methods
 
 # Cross-Origin Resource Sharing (CORS) & CSRF
@@ -435,7 +442,8 @@ if not DEBUG:
     # Secure Cookies over HTTPS
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
-    CSRF_COOKIE_HTTPONLY = True
+    CSRF_COOKIE_HTTPONLY = False  # Cross-domain/same-site SPA submits X-CSRFToken header paired with csrftoken cookie
+    CSRF_COOKIE_SAMESITE = env('CSRF_COOKIE_SAMESITE', default='None')
     
     # Enforce SSL Redirect in production
     SECURE_SSL_REDIRECT = env.bool('SECURE_SSL_REDIRECT', default=True)
