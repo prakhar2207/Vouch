@@ -1,0 +1,167 @@
+name: Stage Verification CI (Security, PG18 DR, Redis/Celery & Android AAB)
+
+on:
+  push:
+    branches:
+      - 'feat/**'
+      - 'fix/**'
+  workflow_dispatch:
+
+jobs:
+  backend-security-dr-celery:
+    name: Backend Audit, PG18 Binary DR & Redis/Celery Worker
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: srilekh_ci
+          POSTGRES_PASSWORD: srilekh_ci_password
+          POSTGRES_DB: neondb_ci_staging
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Dependencies & Audit Tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pip-audit
+          sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Run Automated Python Vulnerability Audit (pip-audit)
+        run: |
+          pip-audit -r requirements.txt --strict --progress-spinner off
+
+      - name: Run Core Security, Auth, Deletion & Upload Tests (PG 18)
+        env:
+          ENVIRONMENT: staging
+          DEBUG: 'False'
+          SECRET_KEY: 'ci-verification-ephemeral-secret-key-not-production'
+          DATABASE_URL: 'postgresql://srilekh_ci:srilekh_ci_password@127.0.0.1:5432/neondb_ci_staging'
+          TESTING_DATABASE_URL: 'postgresql://srilekh_ci:srilekh_ci_password@127.0.0.1:5432/neondb_ci_staging'
+          REDIS_URL: 'redis://127.0.0.1:6379/0'
+          CELERY_TASK_ALWAYS_EAGER: 'True'
+        run: |
+          python manage.py check
+          python manage.py makemigrations --check --dry-run
+          python manage.py migrate --noinput
+          python manage.py test \
+            apps.accounts.tests_stage1_2_auth_cookies \
+            apps.accounts.tests_play_launch_account_deletion \
+            apps.accounting.tests_upload_security \
+            apps.audit.tests \
+            apps.common.tests_disaster_recovery \
+            --verbosity=2
+
+      - name: Exercise Native PostgreSQL 18 Binary Backup & Restore (pg_dump / pg_restore)
+        env:
+          ENVIRONMENT: staging
+          DEBUG: 'False'
+          SECRET_KEY: 'ci-verification-ephemeral-secret-key-not-production'
+          DATABASE_URL: 'postgresql://srilekh_ci:srilekh_ci_password@127.0.0.1:5432/neondb_ci_staging'
+          REDIS_URL: 'redis://127.0.0.1:6379/0'
+          PGPASSWORD: srilekh_ci_password
+        run: |
+          START_TS=$(date +%s)
+          pg_dump -Fc --no-owner -h 127.0.0.1 -U srilekh_ci -d neondb_ci_staging -f /tmp/ci_staging.dump
+          createdb -h 127.0.0.1 -U srilekh_ci neondb_ci_restore_scratch
+          pg_restore --no-owner --single-transaction -h 127.0.0.1 -U srilekh_ci -d neondb_ci_restore_scratch /tmp/ci_staging.dump
+          END_TS=$(date +%s)
+          echo "CI_NATIVE_DR_RTO_SECONDS=$((END_TS - START_TS))"
+          MIG_SRC=$(psql -h 127.0.0.1 -U srilekh_ci -d neondb_ci_staging -tAc "SELECT count(*) FROM django_migrations;")
+          MIG_DST=$(psql -h 127.0.0.1 -U srilekh_ci -d neondb_ci_restore_scratch -tAc "SELECT count(*) FROM django_migrations;")
+          echo "MIGRATIONS src=$MIG_SRC dst=$MIG_DST"
+          test "$MIG_SRC" = "$MIG_DST" && test "$MIG_SRC" -gt 0
+
+      - name: Verify Live Redis 7 & Celery Worker Roundtrip
+        env:
+          ENVIRONMENT: staging
+          DEBUG: 'False'
+          SECRET_KEY: 'ci-verification-ephemeral-secret-key-not-production'
+          DATABASE_URL: 'postgresql://srilekh_ci:srilekh_ci_password@127.0.0.1:5432/neondb_ci_staging'
+          REDIS_URL: 'redis://127.0.0.1:6379/0'
+          CELERY_TASK_ALWAYS_EAGER: 'False'
+        run: |
+          celery -A config worker --loglevel=info --concurrency=1 --detach --pidfile=/tmp/ci_celery.pid --logfile=/tmp/ci_celery.log
+          sleep 4
+          python - << 'PY'
+          import os, django, redis
+          os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+          django.setup()
+          from config.celery import app as celery_app
+          r = redis.from_url(os.environ["REDIS_URL"])
+          assert r.ping() is True
+          inspect = celery_app.control.inspect(timeout=5)
+          stats = inspect.stats() or {}
+          print("CI_CELERY_WORKERS:", list(stats.keys()))
+          assert len(stats) >= 1
+          from apps.notifications.tasks import retry_pending_outbox_events_task
+          res = retry_pending_outbox_events_task.delay()
+          out = res.get(timeout=15)
+          print("CI_OUTBOX_TASK_RESULT:", out)
+          PY
+
+  frontend-and-android-ci-build:
+    name: Frontend Audit/Tests & Unsigned Android AAB/APK Compile (JDK 21 + SDK 36)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: 'frontend/package-lock.json'
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Install, Audit, Test & Build Frontend
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: https://vouch-u3u7.onrender.com
+        run: |
+          npm ci
+          npm audit --omit=dev
+          npx tsc --noEmit
+          npm test
+          npm run build
+
+      - name: Sync Capacitor & Compile Android Debug APK + Release AAB
+        working-directory: frontend
+        run: |
+          npx cap sync android
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug bundleRelease --no-daemon
+
+      - name: Upload CI Verification Android Artifacts (Unsigned Release AAB & Debug APK)
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-ci-android-artifacts
+          path: |
+            frontend/android/app/build/outputs/apk/debug/*.apk
+            frontend/android/app/build/outputs/bundle/release/*.aab
