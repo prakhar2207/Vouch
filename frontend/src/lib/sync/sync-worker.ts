@@ -2,7 +2,7 @@ import axios from "axios";
 import { offlineDb, SyncedVoucher, SyncedLedger, SyncedProduct } from "../db/offlineDb";
 import { LocalAnalyticsEngine } from "../analytics/analytics-engine";
 import { api, API_BASE_URL, getValidAccessToken } from "@/utils/api";
-import { getAccessToken } from "@/utils/auth";
+import { getAccessToken, getUser } from "@/utils/auth";
 import { ClientOperationManager } from "../crdt/clientOperationManager";
 
 interface RawLedgerDto {
@@ -54,6 +54,7 @@ interface RawVoucherDto {
   party_ledger_id?: string | null;
   party_name?: string;
   status: "DRAFT" | "POSTED" | "CANCELLED" | "REVERSED" | "SUPERSEDED" | "CORRECTED";
+  version?: number;
   total_amount?: number | string;
   round_off?: number | string;
   roundOff?: number | string;
@@ -118,6 +119,7 @@ export interface VoucherIngestInput {
   referenceNumber?: string;
   reference_number?: string;
   status?: "DRAFT" | "POSTED" | "CANCELLED" | "REVERSED" | "SUPERSEDED" | "CORRECTED" | "PENDING_SYNC";
+  version?: number;
   paymentStatus?: "PAID" | "PARTIAL" | "UNPAID" | "ALLOCATED" | "UNALLOCATED";
   payment_status?: "PAID" | "PARTIAL" | "UNPAID" | "ALLOCATED" | "UNALLOCATED";
   paidAmount?: number | string;
@@ -224,7 +226,7 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
     let failedCount = 0;
 
   try {
-    // Reset any orphaned SYNCING items back to PENDING if previous sync was interrupted
+    // Reset orphaned SYNCING vouchers and orphaned IN_FLIGHT outbox rows after crash/reload
     try {
       const orphaned = await offlineDb.vouchers
         .where("status")
@@ -235,8 +237,17 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
           await offlineDb.vouchers.update(orphan.id, { status: "PENDING" });
         }
       }
+      const orphanedOutbox = await offlineDb.outboxQueue
+        .where("status")
+        .equals("IN_FLIGHT")
+        .toArray();
+      for (const orphan of orphanedOutbox) {
+        if (orphan.id) {
+          await offlineDb.outboxQueue.update(orphan.id, { status: "QUEUED" });
+        }
+      }
     } catch (_e) {
-      console.warn("Failed to reset orphaned syncing vouchers:", _e);
+      console.warn("Failed to reset orphaned syncing items:", _e);
     }
 
     const now = Date.now();
@@ -247,7 +258,7 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
       .filter((item) => !item.nextRetryAt || item.nextRetryAt <= now)
       .toArray();
 
-    const token = getAccessToken();
+    const token = (await getValidAccessToken()) || getAccessToken();
     if (!token) return { processed: 0, failed: 0 };
 
     // 1. Drain legacy OfflineVoucher records into authoritative CRDT operation log
@@ -319,10 +330,11 @@ export async function pushPendingSalesInvoices(): Promise<number> {
 
   if (queued.length === 0) return 0;
 
-  // Resolve current active authenticated company context
+  // Resolve current active authenticated company & user context
   const activeCompanyId = typeof localStorage !== "undefined"
     ? (localStorage.getItem("vouch_active_company_id") || localStorage.getItem("activeCompanyId") || localStorage.getItem("vouch_active_company"))
     : null;
+  const currentUserId = getUser()?.id || null;
 
   let uploadedCount = 0;
 
@@ -333,6 +345,13 @@ export async function pushPendingSalesInvoices(): Promise<number> {
     const op = await offlineDb.operationLog.get(item.operationId);
     if (!op || !op.payload) {
       if (item.id) await offlineDb.outboxQueue.delete(item.id);
+      continue;
+    }
+
+    // STRICT USER GUARD: Never sync outbox mutations queued by a different user session
+    const ownerUserId = item.userId || op.userId;
+    if (ownerUserId && (!currentUserId || String(ownerUserId) !== String(currentUserId))) {
+      console.warn(`[User Guard] Skipping outbox item ${item.operationId}: queued by user ${ownerUserId}, current session user is ${currentUserId || "anonymous"}.`);
       continue;
     }
 
@@ -424,6 +443,7 @@ export async function pushPendingSalesInvoices(): Promise<number> {
               partyLedgerId: p.party_ledger_id,
               partyName: p.party_name || p.buyer_name || "Customer",
               status: "POSTED",
+              version: Number(res.data.version ?? vData.version ?? 1),
               totalAmount: Number(res.data.total_amount || vData.total_amount || p.total_amount || 0),
               serverUpdatedAt: Date.now(),
               isOffline: false,
@@ -437,14 +457,16 @@ export async function pushPendingSalesInvoices(): Promise<number> {
         }
       } catch (err: any) {
         console.warn(`[Auto-Sync] Failed to post sales invoice ${item.operationId}:`, err);
-        const retryCount = (item.retryCount || 0) + 1;
+        const httpStatus = err?.response?.status;
+        const isTerminalClientReject = httpStatus === 403 || httpStatus === 409 || httpStatus === 422;
+        const retryCount = isTerminalClientReject ? 10 : (item.retryCount || 0) + 1;
         const delay = BACKOFF_DELAYS[Math.min(retryCount, BACKOFF_DELAYS.length - 1)];
         if (item.id) {
           await offlineDb.outboxQueue.update(item.id, {
             status: "FAILED",
             retryCount,
-            nextRetryAt: Date.now() + delay,
-            lastError: err.response?.data?.error || err.message,
+            nextRetryAt: isTerminalClientReject ? undefined : Date.now() + delay,
+            lastError: err?.response?.data?.error || err?.message || "Sync failed",
           });
         }
       }
@@ -508,7 +530,12 @@ export async function triggerOutboxSync() {
 
   const outboxPending = await offlineDb.outboxQueue
     .where("status")
-    .equals("QUEUED")
+    .anyOf(["QUEUED", "IN_FLIGHT", "FAILED"])
+    .filter((item) =>
+      item.status !== "FAILED"
+        ? true
+        : (item.retryCount || 0) < 10 && (!item.nextRetryAt || item.nextRetryAt <= now)
+    )
     .count()
     .catch(() => 0);
 
@@ -716,6 +743,7 @@ export async function pullIncrementalChanges(
           partyLedgerId: v.party_ledger_id,
           partyName: v.party_name,
           status: v.status,
+          version: v.version ?? 1,
           totalAmount: Number(v.total_amount) || 0,
           roundOff: Number(v.round_off ?? v.roundOff ?? 0),
           paymentStatus: v.payment_status || v.paymentStatus || "UNPAID",
@@ -925,6 +953,7 @@ export async function ingestVoucherLocally(
     partyLedgerId: pLedgerId,
     partyName: pName,
     status: finalStatus,
+    version: Number(voucher.version ?? 1),
     totalAmount: totAmt,
     paymentStatus: (pStatus as SyncedVoucher["paymentStatus"]) || "UNPAID",
     paidAmount: pAmt,

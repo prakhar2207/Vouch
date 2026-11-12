@@ -107,7 +107,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { setIsHelpOpen, setIsDateOpen, workingDate, startTour, isCalculatorOpen, setIsCalculatorOpen } = useShortcuts();
   const { activeFY, availableFYs, setActiveFY, isReadOnly, setIsClosingModalOpen } = useFinancialYear();
   const { displayPeriod, shortDisplayPeriod, isCustomPeriod, resetToCurrentFY, setIsPeriodModalOpen, setIsSplitModalOpen } = useAccountingPeriod();
-  const { activeCompany, availableCompanies, setActiveCompany } = useCompany();
+  const { activeCompany, availableCompanies, switchCompany } = useCompany();
   const { user, role, isAdmin, isOwner, isCA, isEmployee, isViewer, canManageSettings } = useRole();
 
   // Superadmin isolation: platform superadmin only sees the Superadmin Command Center, never company dashboards
@@ -828,8 +828,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       {availableCompanies.map((comp) => (
                         <button
                           key={comp.id}
-                          onClick={() => {
-                            setActiveCompany(comp);
+                          onClick={async () => {
+                            await switchCompany(comp);
                             setIsCompanyDropdownOpen(false);
                             window.location.reload();
                           }}
@@ -1155,10 +1155,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </label>
                 <select
                   value={activeCompany?.id || ""}
-                  onChange={(e) => {
+                  onChange={async (e) => {
                     const found = availableCompanies.find(c => c.id === e.target.value);
                     if (found) {
-                      setActiveCompany(found);
+                      await switchCompany(found);
                       window.location.reload();
                     }
                   }}

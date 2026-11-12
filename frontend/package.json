@@ -7,7 +7,7 @@
     "build": "node scripts/patch-html2canvas.js && next build --webpack",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test \"src/**/*.test.ts\"",
+    "test": "node --import ./test-loader.mjs --test \"src/**/*.test.ts\"",
     "postinstall": "node scripts/patch-html2canvas.js",
     "cap:sync": "npx cap sync",
     "cap:build:android": "npm run build && npx cap sync android",

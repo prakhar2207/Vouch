@@ -63,10 +63,30 @@ export class SyncRepository {
     }
 
     const meta = await offlineDb.syncMeta.get(companyId);
-    const pendingCount = await offlineDb.vouchers
+    const legacyPending = await offlineDb.vouchers
       .where("status")
       .anyOf(["PENDING", "SYNCING", "FAILED"])
+      .filter((v) => {
+        const cid = v.payload?.company_id || v.payload?.company;
+        return !cid || String(cid) === String(companyId);
+      })
       .count();
+
+    const activeOutbox = await offlineDb.outboxQueue
+      .where("status")
+      .anyOf(["QUEUED", "IN_FLIGHT", "FAILED"])
+      .toArray();
+    let outboxPendingCount = 0;
+    for (const item of activeOutbox) {
+      if (item.companyId) {
+        if (String(item.companyId) === String(companyId)) outboxPendingCount++;
+      } else {
+        const op = await offlineDb.operationLog.get(item.operationId);
+        const opCompanyId = op?.companyId || op?.payload?.company_id || op?.payload?.company;
+        if (String(opCompanyId || "") === String(companyId)) outboxPendingCount++;
+      }
+    }
+    const pendingCount = legacyPending + outboxPendingCount;
 
     const isOnline = typeof navigator !== "undefined" ? navigator.onLine : true;
 

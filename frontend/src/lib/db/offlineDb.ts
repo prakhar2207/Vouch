@@ -181,6 +181,8 @@ export interface SyncedPaymentAllocation {
 export interface ClientAccountingOperation {
   operationId: string;
   transactionId: string;
+  companyId?: string | null;
+  userId?: string | null;
   replicaId: string;
   operationType: string;
   operationClass?: string;
@@ -197,6 +199,8 @@ export interface OutboxItem {
   id?: number;
   operationId: string;
   transactionId: string;
+  companyId?: string | null;
+  userId?: string | null;
   status: "QUEUED" | "IN_FLIGHT" | "FAILED" | "COMPLETED";
   retryCount: number;
   lastError?: string;
@@ -324,6 +328,23 @@ export class VouchOfflineDB extends Dexie {
       inboxQueue: "++id, operationId, transactionId, status, receivedAt",
       syncCursors: "transactionId, lastSyncedAt"
     });
+    this.version(9).stores({
+      vouchers: "++id, localId, voucherType, status, createdAt",
+      masters: "key, updatedAt",
+      ocrCache: "fileHash, cachedAt",
+      syncedVouchers: "id, companyId, voucherType, voucherDate, dueDate, status, partyLedgerId, serverUpdatedAt, [companyId+voucherDate], [companyId+status], [companyId+voucherType]",
+      syncedLedgers: "id, companyId, ledgerType, name, [companyId+ledgerType]",
+      syncedProducts: "id, companyId, sku, [companyId+currentStock]",
+      syncMeta: "companyId, lastSyncAt, syncStatus",
+      analyticsDaily: "id, companyId, date, [companyId+date]",
+      analyticsParty: "id, companyId, partyId, [companyId+partyId]",
+      syncedBankTransactions: "id, companyId, bankLedgerId, status, transactionDate, serverUpdatedAt, [companyId+status], [companyId+bankLedgerId]",
+      syncedPaymentAllocations: "id, companyId, paymentVoucherId, invoiceVoucherId, [companyId+paymentVoucherId], [companyId+invoiceVoucherId]",
+      operationLog: "operationId, transactionId, companyId, userId, replicaId, operationType, logicalTimestamp, status, [transactionId+logicalTimestamp]",
+      outboxQueue: "++id, operationId, transactionId, companyId, userId, status, retryCount, nextRetryAt",
+      inboxQueue: "++id, operationId, transactionId, status, receivedAt",
+      syncCursors: "transactionId, lastSyncedAt"
+    });
   }
 }
 
@@ -371,18 +392,53 @@ export async function ensureDbOpen(): Promise<void> {
  * - If targetCompanyId is omitted (logout): performs complete purge across all tables, closes connections,
  *   coordinates with open tabs, and attempts resilient database reset without blocking if another tab is active.
  */
-export async function safePurgeTenantData(targetCompanyId?: string | null): Promise<void> {
+export async function hasPendingOfflineTransactions(companyId?: string): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  try {
+    if (!offlineDb.isOpen()) {
+      await offlineDb.open().catch(() => {});
+    }
+    const pendingOutbox = await offlineDb.outboxQueue
+      .where("status")
+      .anyOf(["QUEUED", "IN_FLIGHT", "FAILED"])
+      .toArray();
+    if (companyId) {
+      for (const item of pendingOutbox) {
+        if (item.companyId === companyId) return true;
+        if (!item.companyId) {
+          const op = await offlineDb.operationLog.get(item.operationId);
+          if (String(op?.companyId || op?.payload?.company_id || "") === companyId) return true;
+        }
+      }
+      const pendingLegacy = await offlineDb.vouchers
+        .where("status")
+        .anyOf(["PENDING", "SYNCING", "FAILED"])
+        .toArray();
+      return pendingLegacy.some((v) => String(v.payload?.company_id || v.payload?.company || "") === companyId);
+    }
+    if (pendingOutbox.length > 0) return true;
+    const legacyCount = await offlineDb.vouchers.where("status").anyOf(["PENDING", "SYNCING", "FAILED"]).count();
+    return legacyCount > 0;
+  } catch {
+    return false;
+  }
+}
+
+export async function safePurgeTenantData(
+  targetCompanyId?: string | null,
+  options?: { forceDestroyAll?: boolean }
+): Promise<void> {
   if (typeof window === "undefined") return;
 
   try {
-    // 1. Notify other open tabs to close their Dexie connections
-    if (coordinationChannel) {
+    // 1. Notify other open tabs to close their Dexie connections cleanly on full destroy
+    if (!targetCompanyId && options?.forceDestroyAll && coordinationChannel) {
       try {
         coordinationChannel.postMessage({ type: "CLOSE_DB_CONNECTION", targetCompanyId });
       } catch {}
     }
 
-    // 2. Ensure db is open before clearing tables
+    // 2. Ensure db is open before clearing cache tables
     if (!offlineDb.isOpen()) {
       await offlineDb.open().catch(() => {});
     }
@@ -401,20 +457,15 @@ export async function safePurgeTenantData(targetCompanyId?: string | null): Prom
         offlineDb.masters.where("key").startsWith(`company_${targetCompanyId}`).delete(),
       ]);
 
-      // DEF-DATA-01 Architectural Fix: PRESERVE offline outboxQueue and operationLog across tenant switches!
-      // Unsynced financial transactions (QUEUED, IN_PROGRESS, RETRY, FAILED) MUST NOT be deleted when switching companies.
-      // They remain isolated by company_id and are resumed only when the user returns to this authorized company.
-      // Cache tables (vouchers, ledgers, products, analytics) were purged above to prevent cross-tenant UI leakage.
-    } else {
-      // Complete global purge on logout: clear all tables immediately
-      // This is 100% resilient and NEVER hangs even if other tabs are holding db locks
+      // PRESERVE offline outboxQueue and operationLog across tenant switches!
+      // Unsynced financial transactions (QUEUED, IN_FLIGHT, FAILED) remain isolated by companyId & userId
+      // and are resumed only when an authorized session returns to this company.
+    } else if (options?.forceDestroyAll) {
+      // Explicit full wipe requested
       await Promise.allSettled(offlineDb.tables.map((table) => table.clear().catch(() => {})));
-
-      // Close Dexie and attempt clean deleteDatabase with a strict 2-second fallback timeout
       try {
         offlineDb.close();
       } catch {}
-
       await new Promise<void>((resolve) => {
         let finished = false;
         const timer = setTimeout(() => {
@@ -423,26 +474,9 @@ export async function safePurgeTenantData(targetCompanyId?: string | null): Prom
             resolve();
           }
         }, 2000);
-
         try {
           const req = indexedDB.deleteDatabase("VouchOfflineDB");
-          req.onsuccess = () => {
-            if (!finished) {
-              finished = true;
-              clearTimeout(timer);
-              resolve();
-            }
-          };
-          req.onerror = () => {
-            if (!finished) {
-              finished = true;
-              clearTimeout(timer);
-              resolve();
-            }
-          };
-          req.onblocked = () => {
-            // Another tab has not closed yet; fallback to resolve without blocking UI
-            console.warn("[IndexedDB] Database deletion blocked by another tab; tables were already cleared.");
+          req.onsuccess = req.onerror = req.onblocked = () => {
             if (!finished) {
               finished = true;
               clearTimeout(timer);
@@ -457,6 +491,36 @@ export async function safePurgeTenantData(targetCompanyId?: string | null): Prom
           }
         }
       });
+    } else {
+      // Stage 4.12 Phase B: Safe Logout Purge
+      // Purge all tenant read caches, inbox, cursors, and masters so no PII/accounting view leaks to the next user,
+      // while PRESERVING unacknowledged financial mutations (QUEUED, IN_FLIGHT, FAILED) tagged by userId & companyId.
+      await Promise.allSettled([
+        offlineDb.syncedVouchers.clear().catch(() => {}),
+        offlineDb.syncedLedgers.clear().catch(() => {}),
+        offlineDb.syncedProducts.clear().catch(() => {}),
+        offlineDb.syncedBankTransactions.clear().catch(() => {}),
+        offlineDb.syncedPaymentAllocations.clear().catch(() => {}),
+        offlineDb.analyticsDaily.clear().catch(() => {}),
+        offlineDb.analyticsParty.clear().catch(() => {}),
+        offlineDb.syncMeta.clear().catch(() => {}),
+        offlineDb.masters.clear().catch(() => {}),
+        offlineDb.ocrCache.clear().catch(() => {}),
+        offlineDb.inboxQueue.clear().catch(() => {}),
+        offlineDb.syncCursors.clear().catch(() => {}),
+        offlineDb.vouchers.where("status").equals("SYNCED").delete().catch(() => {}),
+        offlineDb.outboxQueue.where("status").equals("COMPLETED").delete().catch(() => {}),
+      ]);
+
+      const remainingOutbox = await offlineDb.outboxQueue.toArray().catch(() => []);
+      const activeOpIds = new Set(remainingOutbox.map((item) => item.operationId));
+      const allOps = await offlineDb.operationLog.toArray().catch(() => []);
+      const opsToDelete = allOps
+        .filter((op) => !activeOpIds.has(op.operationId) && op.status !== "PENDING")
+        .map((op) => op.operationId);
+      if (opsToDelete.length > 0) {
+        await offlineDb.operationLog.bulkDelete(opsToDelete).catch(() => {});
+      }
     }
 
     // 3. Purge Service Worker and CacheStorage caches

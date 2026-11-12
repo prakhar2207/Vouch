@@ -2,7 +2,7 @@ import { offlineDb, type ClientAccountingOperation, type OutboxItem, type InboxI
 import { ClientKeyManager } from "./clientKeyManager";
 import { canonicalJsonStringify, computeCanonicalSha256, getCanonicalOperationDict } from "./canonicalJson";
 import { buildCanonicalTransaction, hashCanonicalTransaction, type CanonicalTransactionEnvelope } from "./canonicalTransaction";
-import { getAccessToken } from "@/utils/auth";
+import { getAccessToken, getUser } from "@/utils/auth";
 import { getValidAccessToken } from "@/utils/api";
 import { API_BASE_URL } from "@/utils/api";
 
@@ -161,9 +161,12 @@ export class ClientOperationManager {
       throw new Error("Cryptographic Signing Failed: Generated invalid signature length.");
     }
 
+    const currentUserId = getUser()?.id || null;
     const op: ClientAccountingOperation = {
       operationId,
       transactionId,
+      companyId: params.companyId,
+      userId: currentUserId,
       replicaId,
       operationType,
       operationClass,
@@ -181,6 +184,8 @@ export class ClientOperationManager {
     await offlineDb.outboxQueue.add({
       operationId,
       transactionId,
+      companyId: params.companyId,
+      userId: currentUserId,
       status: "QUEUED",
       retryCount: 0,
       createdAt: timestamp,
@@ -320,6 +325,8 @@ export class ClientOperationManager {
   /**
    * Flushes queued outbox operations to the SriLekh backend protocol endpoint.
    */
+  private static activeSyncPromise: Promise<{ syncedCount: number; receivedCount: number; status: string }> | null = null;
+
   public static async syncOutboxWithServer(apiBaseUrl?: string): Promise<{
     syncedCount: number;
     receivedCount: number;
@@ -328,18 +335,29 @@ export class ClientOperationManager {
     if (typeof navigator !== "undefined" && !navigator.onLine) {
       return { syncedCount: 0, receivedCount: 0, status: "OFFLINE" };
     }
-
-    // Cross-tab synchronization lock: Prevents duplicate sync loops in separate browser tabs
-    if (typeof navigator !== "undefined" && "locks" in navigator) {
-      return await (navigator as any).locks.request("vouch_outbox_sync_mutex", { ifAvailable: true }, async (lock: any) => {
-        if (!lock) {
-          return { syncedCount: 0, receivedCount: 0, status: "LOCKED_BY_OTHER_TAB" };
-        }
-        return await this._doSyncOutboxWithServer(apiBaseUrl);
-      });
+    if (this.activeSyncPromise) {
+      return await this.activeSyncPromise;
     }
 
-    return await this._doSyncOutboxWithServer(apiBaseUrl);
+    const runner = async () => {
+      // Cross-tab synchronization lock: Prevents duplicate sync loops in separate browser tabs
+      if (typeof navigator !== "undefined" && "locks" in navigator && typeof (navigator as any).locks?.request === "function") {
+        return await (navigator as any).locks.request("vouch_outbox_sync_mutex", { ifAvailable: true }, async (lock: any) => {
+          if (!lock) {
+            return { syncedCount: 0, receivedCount: 0, status: "LOCKED_BY_OTHER_TAB" };
+          }
+          return await this._doSyncOutboxWithServer(apiBaseUrl);
+        });
+      }
+      return await this._doSyncOutboxWithServer(apiBaseUrl);
+    };
+
+    this.activeSyncPromise = runner();
+    try {
+      return await this.activeSyncPromise;
+    } finally {
+      this.activeSyncPromise = null;
+    }
   }
 
   private static async _doSyncOutboxWithServer(apiBaseUrl?: string): Promise<{
@@ -349,6 +367,19 @@ export class ClientOperationManager {
   }> {
 
     const baseUrl = apiBaseUrl || API_BASE_URL || "";
+
+    // Crash/reload recovery: reset any orphaned IN_FLIGHT outbox rows back to QUEUED under mutex
+    try {
+      const orphanedInFlight = await offlineDb.outboxQueue.where("status").equals("IN_FLIGHT").toArray();
+      for (const orphan of orphanedInFlight) {
+        if (orphan.id) {
+          await offlineDb.outboxQueue.update(orphan.id, { status: "QUEUED" });
+        }
+      }
+    } catch (err) {
+      console.warn("[ClientOperationManager] Failed recovering IN_FLIGHT outbox items:", err);
+    }
+
     const queuedOps = await offlineDb.outboxQueue
       .where("status")
       .equals("QUEUED")
@@ -397,8 +428,14 @@ export class ClientOperationManager {
         continue;
       }
 
-      // STRICT TENANT GUARD: Never sync outbox mutations belonging to a different tenant under current credentials
-      const activeCompanyId = typeof window !== "undefined"
+      // STRICT USER & TENANT GUARD: Never push outbox mutations queued by another user or under a mismatched tenant
+      const currentUserId = getUser()?.id || null;
+      const opUserId = firstOp.userId || items.find((i) => i.userId)?.userId;
+      if (opUserId && (!currentUserId || String(opUserId) !== String(currentUserId))) {
+        console.warn(`[User Guard] Refusing to push transaction ${txId}: queued by user ${opUserId}, current session user is ${currentUserId || "anonymous"}.`);
+        continue;
+      }
+      const activeCompanyId = typeof window !== "undefined" && typeof localStorage !== "undefined"
         ? (localStorage.getItem("vouch_active_company_id") || localStorage.getItem("activeCompanyId") || localStorage.getItem("vouch_active_company"))
         : null;
       if (activeCompanyId && companyId !== activeCompanyId) {
@@ -441,7 +478,16 @@ export class ClientOperationManager {
           }))
         };
 
-        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        for (const item of items) {
+          if (item.id) {
+            await offlineDb.outboxQueue.update(item.id, { status: "IN_FLIGHT" });
+          }
+        }
+
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          "X-Idempotency-Key": opIds[0] || txId,
+        };
         if (token) {
           headers["Authorization"] = `Bearer ${token}`;
         }

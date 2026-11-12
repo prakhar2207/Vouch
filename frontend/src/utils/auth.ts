@@ -78,13 +78,20 @@ export const removeTokens = () => {
     try {
       localStorage.removeItem('vouch_access_token');
       localStorage.removeItem('vouch_refresh_token');
-
       localStorage.removeItem('vouch_user');
+      localStorage.removeItem('vouch_active_company_id');
+      localStorage.removeItem('activeCompanyId');
+      localStorage.removeItem('vouch_active_company');
+      localStorage.removeItem('vouch_active_company_name');
+      localStorage.removeItem('vouch_cached_companies_list');
     } catch {}
     syncCapacitorPreference('vouch_access_token', null);
     syncCapacitorPreference('vouch_refresh_token', null);
-
     syncCapacitorPreference('vouch_user', null);
+    syncCapacitorPreference('vouch_active_company_id', null);
+    syncCapacitorPreference('vouch_active_company_name', null);
+    syncCapacitorPreference('vouch_active_company_state_code', null);
+    syncCapacitorPreference('vouch_active_company_gstin', null);
   }
 };
 
