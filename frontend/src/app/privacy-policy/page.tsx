@@ -200,11 +200,17 @@ export default function PrivacyPolicyPage() {
           </li>
         </ul>
         <p className="text-muted-foreground">
-          No online system can guarantee absolute security. Note that frontend JWT session tokens
-          are currently accessible to application JavaScript (via cookies and `localStorage`) to
-          support offline/API continuity rather than `HttpOnly` server-only cookies. SriLekh does
-          not claim independent certifications (such as ISO 27001 or SOC 2) or India-only data
-          residency guarantees unless separately confirmed and published by the business owner.
+          Web browser sessions use server-set <strong className="text-foreground">HttpOnly, Secure</strong> cookies
+          (`srilekh_access` and `srilekh_refresh`) with origin-aware `SameSite` policy, paired with
+          CSRF validation (`X-CSRFToken`) and immediate server-side `token_version` + refresh-token
+          revocation on logout or password reset—without persisting raw JWT strings in browser
+          `localStorage` or JavaScript-readable cookies. Native mobile sessions (Capacitor) store
+          Bearer tokens in OS app-sandboxed storage (`@capacitor/preferences` with Android OS backup
+          disabled); hardware Keystore/Keychain encryption is a planned native enhancement rather than
+          an active control. Local IndexedDB financial caches (`VouchOfflineDB`) remain plaintext at
+          rest on the device profile. SriLekh does not claim ISO 27001 or SOC 2 certification or
+          India-only cloud residency guarantees unless separately confirmed and published by the
+          business owner.
         </p>
       </section>
 
@@ -267,9 +273,11 @@ export default function PrivacyPolicyPage() {
         </p>
         <ul className="list-disc pl-5 space-y-1.5 text-muted-foreground">
           <li>
-            Authentication tokens (`access_token`, `refresh_token`) stored in browser cookies
-            (`SameSite=Lax`, marked `Secure` on HTTPS, non-`HttpOnly`) and mirrored in
-            `localStorage` (`vouch_access_token`, `vouch_refresh_token`) and Capacitor `Preferences`.
+            Browser authentication cookies (`srilekh_access`, `srilekh_refresh` — `HttpOnly`, marked
+            `Secure` on HTTPS, origin-aware `SameSite=Lax` or `SameSite=None`) plus CSRF protection
+            cookie (`csrftoken`) and lightweight non-secret session metadata (`vouch_session_meta`
+            timestamps/mode without JWT tokens). Installed Capacitor mobile apps store native Bearer
+            tokens in app-sandboxed Capacitor `Preferences` instead of browser cookies.
           </li>
           <li>
             Session &amp; tenant context in `localStorage`: cached user profile (`vouch_user`),
@@ -310,20 +318,17 @@ export default function PrivacyPolicyPage() {
           </div>
         </div>
         <p className="text-muted-foreground">
-          <strong className="text-foreground">Logout &amp; Tenant-Switch Behavior:</strong> Signing
-          out deletes authentication tokens, clears cached tenant read tables (`syncedVouchers`,
-          `syncedLedgers`, `syncedProducts`, bank caches, `ocrCache`, `masters`), and sends a
-          cache-clear signal to the Service Worker. However, any{" "}
-          <strong className="text-foreground">
-            unsynchronized pending offline transactions
-          </strong>{" "}
-          (`QUEUED`, `IN_FLIGHT`, or `FAILED` outbox entries) remain stored in browser IndexedDB
-          tagged with the originating `userId` and `companyId` so legitimate offline work is not
-          silently lost before reconnection. Strict user and tenant guards prevent another user or
-          company from viewing or syncing them, though the queued payload remains on that device&apos;s
-          browser storage until synced or manually cleared via browser site data settings. On
-          shared computers, avoid creating offline entries or clear browser site data after signing
-          out.
+          <strong className="text-foreground">Standard vs. Shared-Device Logout &amp; Tenant Switch:</strong>{" "}
+          Switching companies aborts in-flight syncs and clears cached tenant read tables while
+          preserving unacknowledged outbox entries scoped by `userId` and `companyId`. On{" "}
+          <strong className="text-foreground">Standard Logout</strong>, authentication sessions are
+          revoked, read caches are cleared, and Service Worker session caches are purged while any
+          unsynchronized `QUEUED`/`IN_FLIGHT`/`FAILED` outbox records stay locked in plaintext
+          IndexedDB (`userId`/`companyId`) so pending entries are not silently lost. On shared or
+          untrusted devices, select{" "}
+          <strong className="text-foreground">Secure Shared-Device Logout</strong>, which explicitly
+          deletes `VouchOfflineDB`, `VouchSecurityVault`, `vouch_*` storage keys, and Service
+          Worker caches.
         </p>
       </section>
 
@@ -363,20 +368,21 @@ export default function PrivacyPolicyPage() {
       <section className="space-y-3">
         <SectionHeading id="account-closure">13. Account Closure and Data Deletion</SectionHeading>
         <p>
-          Company owners can archive a company workspace (`is_active = false`), which preserves
-          records and hides the workspace from active lists. Self-serve permanent user account
-          deletion is <strong className="text-foreground">not currently available</strong> in the
-          user interface; permanent account or company erasure requires contacting{" "}
-          <a
-            href={`mailto:${SRILEKH_PUBLIC.supportEmail}`}
-            className="text-primary font-medium hover:underline"
-          >
-            {SRILEKH_PUBLIC.supportEmail}
-          </a>{" "}
-          for platform administrative processing. Even after permanent deletion from the live
-          database, historical records may persist inside previously generated encrypted backup
-          archives until backup rotation expires. Formal deletion SLAs and statutory retention
-          exceptions remain{" "}
+          You can permanently delete your SriLekh user account either in-app (
+          <strong className="text-foreground">Settings → Account Profile → Delete Account</strong>)
+          or via our public web portal at{" "}
+          <Link href="/delete-account" className="text-primary font-medium hover:underline">
+            /delete-account
+          </Link>{" "}
+          even after uninstalling any mobile app. After password re-authentication and explicit
+          confirmation, SriLekh immediately revokes active sessions (`token_version`), deletes OTP
+          challenges and push subscriptions, detaches or archives eligible single-user workspaces,
+          and permanently anonymizes personal user identity (`first_name`, `last_name`, `email`,
+          credentials). Multi-user workspaces where you are the sole Owner/Admin require ownership
+          transfer to another team member first. Double-entry vouchers, tax ledgers, and hash-chained
+          audit records are retained in anonymized form as required for statutory accounting/tax
+          integrity, and encrypted backups rotate per `BACKUP_RETENTION_DAYS` (`7` days local
+          default); formal statutory retention durations remain{" "}
           <strong className="text-foreground">
             [Pending Owner &amp; Legal Counsel Confirmation]
           </strong>

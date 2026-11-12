@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { LegalDocumentShell, type LegalSectionLink } from "@/components/public/LegalDocumentShell";
+import { NativeCommercialGuard } from "@/components/public/NativeCommercialGuard";
 import { SRILEKH_PUBLIC } from "@/components/public/public-constants";
 
 export const metadata: Metadata = {
@@ -36,6 +37,7 @@ function SectionHeading({ id, children }: { id: string; children: React.ReactNod
 
 export default function RefundPolicyPage() {
   return (
+    <NativeCommercialGuard>
     <LegalDocumentShell
       activePath="/refund-policy"
       badge="Billing & Cancellations"
@@ -199,5 +201,6 @@ export default function RefundPolicyPage() {
         </p>
       </section>
     </LegalDocumentShell>
+    </NativeCommercialGuard>
   );
 }

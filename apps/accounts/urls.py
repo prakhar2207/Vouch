@@ -12,6 +12,8 @@ from .views import (
     PasswordResetConfirmView,
     ThrottledTokenObtainPairView,
     ThrottledTokenRefreshView,
+    AccountDeletionView,
+    AccountDeletionStatusView,
 )
 
 urlpatterns = [
@@ -32,4 +34,8 @@ urlpatterns = [
     # Password Recovery
     path('password/reset/request/', PasswordResetRequestView.as_view(), name='password_reset_request'),
     path('password/reset/confirm/', PasswordResetConfirmView.as_view(), name='password_reset_confirm'),
+
+    # Self-Service Account Deletion & Status Receipt
+    path('account/delete-request/', AccountDeletionView.as_view(), name='account_delete_request'),
+    path('account/delete-status/', AccountDeletionStatusView.as_view(), name='account_delete_status'),
 ]

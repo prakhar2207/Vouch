@@ -3,6 +3,7 @@ import Link from "next/link";
 import { AlertCircle, Building2, Clock, Mail, MapPin, Phone } from "lucide-react";
 import { PublicHeader } from "@/components/public/PublicHeader";
 import { PublicFooter } from "@/components/public/PublicFooter";
+import { NativeCommercialHide } from "@/components/public/NativeCommercialHide";
 import { ContactForm } from "@/components/public/ContactForm";
 import { SRILEKH_PUBLIC } from "@/components/public/public-constants";
 
@@ -127,18 +128,25 @@ export default function ContactPage() {
                   Quick Links
                 </div>
                 <div className="flex flex-col gap-2">
-                  <Link href="/pricing" className="hover:text-foreground transition-colors">
-                    → Pricing &amp; Platform Capabilities
-                  </Link>
+                  <NativeCommercialHide>
+                    <Link href="/pricing" className="hover:text-foreground transition-colors">
+                      → Pricing &amp; Platform Capabilities
+                    </Link>
+                  </NativeCommercialHide>
                   <Link href="/privacy-policy" className="hover:text-foreground transition-colors">
                     → Privacy Policy
                   </Link>
                   <Link href="/terms" className="hover:text-foreground transition-colors">
                     → Terms &amp; Conditions
                   </Link>
-                  <Link href="/refund-policy" className="hover:text-foreground transition-colors">
-                    → Refund Policy
+                  <Link href="/delete-account" className="hover:text-foreground transition-colors">
+                    → Delete Account
                   </Link>
+                  <NativeCommercialHide>
+                    <Link href="/refund-policy" className="hover:text-foreground transition-colors">
+                      → Refund Policy
+                    </Link>
+                  </NativeCommercialHide>
                 </div>
               </div>
             </div>

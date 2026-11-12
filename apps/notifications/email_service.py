@@ -337,6 +337,7 @@ class EmailService:
         cls,
         to_email: str,
         reset_url: str,
+        idempotency_key: Optional[str] = None,
     ) -> Tuple[bool, Optional[EmailDeliveryLog], Optional[str]]:
         """Sends time-limited password reset link."""
         subject = "Reset Your Password — SriLekh"
@@ -351,6 +352,7 @@ class EmailService:
             template_name="password_reset",
             context=context,
             email_type='PASSWORD_RESET',
+            idempotency_key=idempotency_key,
         )
 
     @classmethod

@@ -617,7 +617,7 @@ export default function LandingPage() {
             transition={{ delay: 0.3 }}
             className="text-[11px] text-muted-foreground"
           >
-            No credit card required · Free tier available · Setup in under 2 minutes
+            Quick workspace setup in under 2 minutes · Multi-tenant accounting &amp; GST
           </motion.p>
         </div>
       </section>

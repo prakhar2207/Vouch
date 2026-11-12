@@ -65,11 +65,21 @@ export default function Login() {
         setUser(res.data.user);
       }
       const user = res.data.user;
+      const nextParam =
+        typeof window !== 'undefined'
+          ? new URLSearchParams(window.location.search).get('next')
+          : null;
+      const safeNext =
+        nextParam && nextParam.startsWith('/') && !nextParam.startsWith('//')
+          ? nextParam
+          : null;
       if (user?.is_superuser) {
         if (typeof window !== 'undefined') {
           localStorage.removeItem('vouch_active_company_id');
         }
         router.push('/admin');
+      } else if (safeNext) {
+        router.push(safeNext);
       } else {
         router.push('/dashboard');
       }

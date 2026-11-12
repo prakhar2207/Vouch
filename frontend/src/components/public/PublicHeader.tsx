@@ -1,4 +1,7 @@
+"use client";
+
 import React from "react";
+import { useIsNativeApp } from "@/hooks/useIsNativeApp";
 import Link from "next/link";
 import { VouchLogo } from "@/components/VouchLogo";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -9,11 +12,17 @@ interface PublicHeaderProps {
 }
 
 export function PublicHeader({ activePath }: PublicHeaderProps) {
-  const navItems = [
-    { href: "/", label: "Home" },
-    { href: "/pricing", label: "Pricing" },
-    { href: "/contact", label: "Contact" },
-  ] as const;
+  const isNative = useIsNativeApp();
+  const navItems = isNative
+    ? ([
+        { href: "/", label: "Home" },
+        { href: "/contact", label: "Contact" },
+      ] as const)
+    : ([
+        { href: "/", label: "Home" },
+        { href: "/pricing", label: "Pricing" },
+        { href: "/contact", label: "Contact" },
+      ] as const);
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border/50 bg-background/80 backdrop-blur-xl">
@@ -51,16 +60,18 @@ export function PublicHeader({ activePath }: PublicHeaderProps) {
 
         <div className="flex items-center gap-2 sm:gap-3">
           <nav aria-label="Mobile quick links" className="flex md:hidden items-center gap-1 text-xs font-medium">
-            <Link
-              href="/pricing"
-              className={`px-2 py-1 rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                activePath === "/pricing"
-                  ? "bg-muted text-foreground font-semibold"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Pricing
-            </Link>
+            {!isNative && (
+              <Link
+                href="/pricing"
+                className={`px-2 py-1 rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                  activePath === "/pricing"
+                    ? "bg-muted text-foreground font-semibold"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Pricing
+              </Link>
+            )}
             <Link
               href="/contact"
               className={`px-2 py-1 rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${

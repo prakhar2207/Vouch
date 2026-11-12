@@ -1,4 +1,7 @@
+"use client";
+
 import React from "react";
+import { useIsNativeApp } from "@/hooks/useIsNativeApp";
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { VouchLogo } from "@/components/VouchLogo";
@@ -10,6 +13,7 @@ const footerLinkClass =
 
 export function PublicFooter() {
   const currentYear = new Date().getFullYear();
+  const isNative = useIsNativeApp();
 
   return (
     <footer className="border-t border-border/60 bg-slate-50 dark:bg-zinc-950 py-12 text-xs text-muted-foreground">
@@ -55,12 +59,14 @@ export function PublicFooter() {
                 <span>Payments &amp; Receipts</span>
               </Link>
             </li>
-            <li>
-              <Link href="/pricing" className={footerLinkClass}>
-                <ChevronRight className="w-3 h-3 shrink-0" />
-                <span>Pricing</span>
-              </Link>
-            </li>
+            {!isNative && (
+              <li>
+                <Link href="/pricing" className={footerLinkClass}>
+                  <ChevronRight className="w-3 h-3 shrink-0" />
+                  <span>Pricing</span>
+                </Link>
+              </li>
+            )}
           </ul>
         </div>
 
@@ -133,10 +139,18 @@ export function PublicFooter() {
                 <span>Terms &amp; Conditions</span>
               </Link>
             </li>
+            {!isNative && (
+              <li>
+                <Link href="/refund-policy" className={footerLinkClass}>
+                  <ChevronRight className="w-3 h-3 shrink-0" />
+                  <span>Refund Policy</span>
+                </Link>
+              </li>
+            )}
             <li>
-              <Link href="/refund-policy" className={footerLinkClass}>
+              <Link href="/delete-account" className={footerLinkClass}>
                 <ChevronRight className="w-3 h-3 shrink-0" />
-                <span>Refund Policy</span>
+                <span>Delete Account</span>
               </Link>
             </li>
           </ul>

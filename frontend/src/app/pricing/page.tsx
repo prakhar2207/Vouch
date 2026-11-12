@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { PublicHeader } from "@/components/public/PublicHeader";
 import { PublicFooter } from "@/components/public/PublicFooter";
+import { NativeCommercialGuard } from "@/components/public/NativeCommercialGuard";
 import { SRILEKH_PUBLIC } from "@/components/public/public-constants";
 
 export const metadata: Metadata = {
@@ -131,6 +132,7 @@ const faqs = [
 
 export default function PricingPage() {
   return (
+    <NativeCommercialGuard>
     <div className="min-h-screen bg-background text-foreground flex flex-col selection:bg-[#162C5B]/15 selection:text-[#162C5B]">
       <PublicHeader activePath="/pricing" />
 
@@ -341,5 +343,6 @@ export default function PricingPage() {
 
       <PublicFooter />
     </div>
+    </NativeCommercialGuard>
   );
 }

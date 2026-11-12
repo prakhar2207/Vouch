@@ -1163,6 +1163,28 @@ export default function SettingsPage() {
                     </div>
                   </form>
                 </div>
+
+                {/* Permanent User Account Deletion (In-App + Web Link) */}
+                <div className="bg-card border border-rose-500/30 rounded-2xl p-6 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <h3 className="text-sm font-bold text-rose-600 dark:text-rose-400 flex items-center gap-2">
+                      <Trash2 className="w-4 h-4 shrink-0" />
+                      <span>Permanent Account Deletion</span>
+                    </h3>
+                    <p className="text-xs text-muted-foreground leading-relaxed max-w-xl">
+                      Permanently anonymize your user profile, revoke all active sessions, and detach
+                      or archive eligible single-user workspaces in accordance with privacy and
+                      accounting retention rules.
+                    </p>
+                  </div>
+                  <Link
+                    href="/delete-account"
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-colors shrink-0"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete My Account</span>
+                  </Link>
+                </div>
               </div>
             )}
 

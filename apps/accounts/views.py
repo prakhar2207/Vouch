@@ -40,7 +40,7 @@ from .cookies import (
     get_refresh_cookie_name,
     revoke_user_tokens,
 )
-from .models import User, EmailVerificationChallenge, PendingRegistration
+from .models import User, EmailVerificationChallenge, PendingRegistration, AccountDeletionRequest
 from .serializers import (
     UserSerializer,
     CustomTokenObtainPairSerializer,
@@ -739,22 +739,40 @@ class RegisterView(TestBypassThrottleMixin, APIView):
 # Password Reset Views
 # =============================================================================
 
+class PasswordResetEmailRateThrottle(AnonRateThrottle):
+    """Per-email throttle for password reset initiation to prevent email flooding."""
+    rate = '5/hour'
+    scope = 'password_reset_email'
+
+    def get_cache_key(self, request, view):
+        email = str(request.data.get('email') or '').strip().lower()
+        if not email:
+            return None
+        digest = hashlib.sha256(email.encode('utf-8')).hexdigest()[:24]
+        return self.cache_format % {'scope': self.scope, 'ident': digest}
+
+
 class PasswordResetRequestView(TestBypassThrottleMixin, APIView):
     permission_classes = [AllowAny]
-    throttle_classes = [OtpInitiateRateThrottle]
+    throttle_classes = [OtpInitiateRateThrottle, PasswordResetEmailRateThrottle]
 
     def post(self, request):
         email = (request.data.get('email') or '').strip().lower()
-        if not email:
-            return Response({"success": False, "error": "Email address is required."}, status=400)
+        if not email or '@' not in email:
+            return Response({"success": False, "error": "A valid email address is required."}, status=400)
 
         user = User.objects.filter(email__iexact=email).first()
         if user and user.is_active:
-            token = default_token_generator.make_token(user)
-            uid = urlsafe_base64_encode(force_bytes(user.pk))
-            frontend_url = getattr(settings, 'FRONTEND_URL', 'https://srilekh.com' if not settings.DEBUG else 'http://localhost:3000').rstrip('/')
-            reset_url = f"{frontend_url}/reset-password?uid={uid}&token={token}"
-            EmailService.send_password_reset_email(user.email, reset_url)
+            try:
+                token = default_token_generator.make_token(user)
+                uid = urlsafe_base64_encode(force_bytes(user.pk))
+                frontend_url = getattr(settings, 'FRONTEND_URL', 'https://srilekh.com' if not settings.DEBUG else 'http://localhost:3000').rstrip('/')
+                reset_url = f"{frontend_url}/reset-password?uid={uid}&token={token}"
+                window_bucket = int(timezone.now().timestamp() // 60)
+                idem_key = hashlib.sha256(f"pwd-reset:{user.pk}:{window_bucket}".encode('utf-8')).hexdigest()[:32]
+                EmailService.send_password_reset_email(user.email, reset_url, idempotency_key=idem_key)
+            except Exception as exc:
+                logger.warning("Password reset dispatch failed or timed out: %s", exc)
 
         # Always return generic success message to prevent user enumeration
         return Response({
@@ -915,3 +933,265 @@ class LogoutView(APIView):
         resp = Response({"success": True, "message": "Logged out successfully."}, status=status.HTTP_200_OK)
         clear_auth_cookies(request, resp)
         return resp
+
+
+# =============================================================================
+# Permanent Account Deletion & Data Erasure Workflow (Play Policy / DPDP)
+# =============================================================================
+
+ACCOUNT_RETENTION_NOTICE = (
+    "Your personal user profile, credentials, active sessions, and push tokens are permanently "
+    "anonymized/revoked immediately. Double-entry vouchers, invoices, tax ledgers, and hash-chained "
+    "audit logs linked to business workspaces remain preserved in anonymized form to satisfy "
+    "statutory accounting/tax integrity requirements and automated backup rotation schedules."
+)
+
+
+def _mask_email_for_audit(email: str) -> str:
+    local, _, domain = (email or "").partition("@")
+    prefix = local[:2] if len(local) >= 2 else (local[:1] or "*")
+    return f"{prefix}***@{domain or 'anonymized'}"
+
+
+def _analyze_user_company_ownership(user: User):
+    """
+    Inspects active company memberships to distinguish shared companies from
+    companies where `user` is the sole active OWNER/ADMIN.
+    """
+    memberships = list(
+        UserCompany.objects
+        .filter(user=user, company__is_active=True)
+        .select_related('company')
+        .order_by('company__name')
+    )
+    sole_owned_blocking = []
+    sole_owned_archivable = []
+    detachable = []
+
+    for uc in memberships:
+        comp = uc.company
+        is_privileged = uc.role in ('OWNER', 'ADMIN')
+        if is_privileged:
+            other_admins = UserCompany.objects.filter(
+                company=comp, role__in=['OWNER', 'ADMIN'], user__is_active=True
+            ).exclude(user=user).count()
+            if other_admins == 0:
+                other_members = UserCompany.objects.filter(
+                    company=comp, user__is_active=True
+                ).exclude(user=user).count()
+                info = {
+                    "id": str(comp.id),
+                    "name": comp.name,
+                    "role": uc.role,
+                    "other_active_members": other_members,
+                }
+                if other_members > 0:
+                    sole_owned_blocking.append(info)
+                else:
+                    sole_owned_archivable.append(info)
+                continue
+        detachable.append({
+            "id": str(comp.id),
+            "name": comp.name,
+            "role": uc.role,
+        })
+
+    return {
+        "sole_owned_requires_transfer": sole_owned_blocking,
+        "sole_owned_single_user": sole_owned_archivable,
+        "detachable_memberships": detachable,
+    }
+
+
+class AccountDeletionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if getattr(request.user, 'is_superuser', False):
+            return Response({
+                "success": False,
+                "error": "Platform superadmin accounts cannot be self-deleted via this endpoint.",
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        impact = _analyze_user_company_ownership(request.user)
+        return Response({
+            "success": True,
+            "data": {
+                "email": request.user.email,
+                "can_delete_immediately": len(impact["sole_owned_requires_transfer"]) == 0,
+                **impact,
+                "retention_summary": ACCOUNT_RETENTION_NOTICE,
+                "confirmation_phrase": "DELETE MY ACCOUNT",
+            }
+        }, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        user = request.user
+        if getattr(user, 'is_superuser', False):
+            return Response({
+                "success": False,
+                "error": "Platform superadmin accounts cannot be self-deleted via this endpoint.",
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        current_password = (request.data.get('current_password') or request.data.get('password') or '').strip()
+        confirmation_text = (request.data.get('confirmation_text') or '').strip()
+        sole_company_action = (request.data.get('sole_company_action') or '').strip().upper()
+        reason = str(request.data.get('reason') or '')[:500].strip()
+
+        if not current_password or not user.check_password(current_password):
+            return Response({
+                "success": False,
+                "error": "Current password verification failed. Please re-enter your valid password.",
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        if confirmation_text != 'DELETE MY ACCOUNT':
+            return Response({
+                "success": False,
+                "error": "Please type 'DELETE MY ACCOUNT' exactly to confirm permanent account deletion.",
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        impact = _analyze_user_company_ownership(user)
+        if impact["sole_owned_requires_transfer"]:
+            return Response({
+                "success": False,
+                "code": "OWNERSHIP_TRANSFER_REQUIRED",
+                "error": (
+                    "You are the sole Owner/Admin of active company workspace(s) with other team members. "
+                    "Transfer ownership to another active member before deleting your account."
+                ),
+                "companies": impact["sole_owned_requires_transfer"],
+            }, status=status.HTTP_409_CONFLICT)
+
+        sole_single = impact["sole_owned_single_user"]
+        if sole_single and sole_company_action != 'ARCHIVE_SOLO_COMPANIES':
+            return Response({
+                "success": False,
+                "code": "SOLE_COMPANY_CONFIRMATION_REQUIRED",
+                "error": (
+                    "You are the sole user of one or more active company workspaces. Confirm archiving "
+                    "those workspaces (sole_company_action='ARCHIVE_SOLO_COMPANIES') or transfer ownership first."
+                ),
+                "companies": sole_single,
+            }, status=status.HTTP_409_CONFLICT)
+
+        original_email = user.email
+        email_sha256 = hashlib.sha256(original_email.strip().lower().encode('utf-8')).hexdigest()
+        masked_email = _mask_email_for_audit(original_email)
+        client_ip = (request.META.get('HTTP_X_FORWARDED_FOR') or '').split(',')[0].strip() or request.META.get('REMOTE_ADDR')
+        now = timezone.now()
+
+        with transaction.atomic():
+            from apps.audit.services.audit_service import AuditService
+            from apps.notifications.models import PushSubscription
+
+            archived_company_ids = []
+            if sole_single:
+                for entry in sole_single:
+                    comp = Company.objects.select_for_update().filter(id=entry["id"], is_active=True).first()
+                    if comp:
+                        comp.is_active = False
+                        comp.deleted_at = now
+                        comp.save(update_fields=['is_active', 'deleted_at'])
+                        archived_company_ids.append(str(comp.id))
+                        AuditService.log_action(
+                            company=comp,
+                            user=user,
+                            action='DELETE',
+                            model_name='Company',
+                            record_id=comp.id,
+                            changes={
+                                "reason": "Sole-owner account deletion archival",
+                                "is_active": False,
+                                "deleted_at": str(now),
+                            },
+                            ip_address=client_ip,
+                        )
+
+            for detached in impact["detachable_memberships"]:
+                comp = Company.objects.filter(id=detached["id"]).first()
+                if comp:
+                    AuditService.log_action(
+                        company=comp,
+                        user=user,
+                        action='DELETE',
+                        model_name='UserCompany',
+                        record_id=user.id,
+                        changes={"action": "Self-service account deletion membership detachment"},
+                        ip_address=client_ip,
+                    )
+
+            # Remove personal memberships, OTP challenges, pending registrations, and push tokens
+            UserCompany.objects.filter(user=user).delete()
+            PushSubscription.objects.filter(user=user).delete()
+            EmailVerificationChallenge.objects.filter(email__iexact=original_email).delete()
+            PendingRegistration.objects.filter(email__iexact=original_email).delete()
+
+            # Revoke all existing JWT access/refresh tokens immediately
+            revoke_user_tokens(user)
+
+            # Anonymize recoverable personal identity while preserving statutory voucher/audit FK integrity
+            user.first_name = ''
+            user.last_name = ''
+            user.email = f"deleted-{user.id}@anonymized.srilekh.invalid"
+            user.set_unusable_password()
+            user.is_active = False
+            user.email_verified = False
+            user.save(update_fields=['first_name', 'last_name', 'email', 'password', 'is_active', 'email_verified', 'updated_at'])
+
+            deletion_req = AccountDeletionRequest.objects.create(
+                user=None,
+                user_snapshot_id=user.id,
+                email_sha256=email_sha256,
+                masked_email=masked_email,
+                status='COMPLETED',
+                sole_owned_company_ids=archived_company_ids,
+                company_resolution='ARCHIVE_SOLO_COMPANIES' if archived_company_ids else 'DETACHED_ONLY',
+                reason=reason,
+                retention_summary=ACCOUNT_RETENTION_NOTICE,
+                ip_address=client_ip,
+                verified_at=now,
+                completed_at=now,
+            )
+
+        resp = Response({
+            "success": True,
+            "reference_id": str(deletion_req.id),
+            "status": deletion_req.status,
+            "completed_at": now.isoformat(),
+            "archived_company_ids": archived_company_ids,
+            "retention_summary": ACCOUNT_RETENTION_NOTICE,
+            "message": "Your SriLekh user account and personal credentials have been permanently anonymized and all sessions revoked.",
+        }, status=status.HTTP_200_OK)
+        clear_auth_cookies(request, resp)
+        return resp
+
+
+class AccountDeletionStatusView(TestBypassThrottleMixin, APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [OtpVerifyRateThrottle]
+
+    def get(self, request):
+        ref = (request.query_params.get('reference') or '').strip()
+        if not ref:
+            return Response({"success": False, "error": "Deletion reference ID is required."}, status=400)
+        import uuid as _uuid
+        try:
+            ref_uuid = _uuid.UUID(ref)
+        except (ValueError, TypeError):
+            return Response({"success": False, "error": "Invalid deletion reference format."}, status=400)
+
+        rec = AccountDeletionRequest.objects.filter(id=ref_uuid).first()
+        if not rec:
+            return Response({"success": False, "error": "Deletion reference not found."}, status=404)
+
+        return Response({
+            "success": True,
+            "data": {
+                "reference_id": str(rec.id),
+                "status": rec.status,
+                "company_resolution": rec.company_resolution,
+                "created_at": rec.created_at.isoformat(),
+                "completed_at": rec.completed_at.isoformat() if rec.completed_at else None,
+                "retention_summary": rec.retention_summary,
+            }
+        }, status=200)

@@ -62,6 +62,9 @@ class GSTR2BUploadView(APIView):
         if not file_obj:
             return Response({'error': 'No file uploaded. Please provide a GSTR-2B JSON or Excel file.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        if file_obj.size and file_obj.size > 15 * 1024 * 1024:
+            return Response({'error': 'Uploaded GSTR-2B file exceeds the 15MB maximum limit.'}, status=status.HTTP_400_BAD_REQUEST)
+
         file_name = file_obj.name.lower()
 
         try:

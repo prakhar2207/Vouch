@@ -129,3 +129,41 @@ class PendingRegistration(models.Model):
     def __str__(self):
         return f"Pending Registration: {self.email} [Verified: {self.is_verified}]"
 
+
+class AccountDeletionRequest(models.Model):
+    """
+    Auditable record of self-service account deletion & PII anonymization requests.
+    Stores SHA-256 email digest and redacted label so completion status remains
+    verifiable without retaining recoverable personal email after erasure.
+    """
+
+    STATUS_CHOICES = (
+        ('PENDING_OWNERSHIP_TRANSFER', 'Pending Ownership Transfer'),
+        ('COMPLETED', 'Completed'),
+        ('CANCELLED', 'Cancelled'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='deletion_requests'
+    )
+    user_snapshot_id = models.UUIDField(db_index=True)
+    email_sha256 = models.CharField(max_length=64, db_index=True)
+    masked_email = models.CharField(max_length=255)
+    status = models.CharField(max_length=40, choices=STATUS_CHOICES, default='COMPLETED', db_index=True)
+    sole_owned_company_ids = models.JSONField(default=list, blank=True)
+    company_resolution = models.CharField(max_length=60, default='DETACHED_ONLY')
+    reason = models.TextField(blank=True, default='')
+    retention_summary = models.TextField(blank=True, default='')
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    verified_at = models.DateTimeField(default=timezone.now)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"DeletionRequest {self.id} [{self.status}]"
+
