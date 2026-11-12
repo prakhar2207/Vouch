@@ -278,3 +278,149 @@ class PlayLaunchAccountDeletionAndHardeningTests(TestCase):
         resp = AccountDeletionView.as_view()(req)
         self.assertEqual(resp.status_code, status.HTTP_409_CONFLICT)
         self.assertEqual(resp.data.get('code'), 'ACCOUNT_ALREADY_DELETED')
+
+
+@override_settings(
+    EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
+    AUTH_COOKIE_SECURE=False,
+)
+class Stage124DeletionConcurrencyThrottleAndAuditTests(TestCase):
+    def test_account_deletion_rate_throttle_blocks_excess_requests(self):
+        from django.core.cache import cache
+        cache.clear()
+        pw = 'ThrottlePass!123'
+        u = User.objects.create_user(
+            email='throttle.del@srilekh-sandbox.local',
+            password=pw,
+            first_name='Throttle',
+            last_name='Tester',
+            role='OWNER',
+            email_verified=True,
+        )
+        client = APIClient()
+        tok = client.post(
+            '/api/v1/auth/login/',
+            {'email': u.email, 'password': pw},
+            format='json',
+            HTTP_X_CLIENT_TYPE='capacitor',
+        ).data['access']
+        with override_settings(TESTING=False, DISABLE_THROTTLING=False):
+            statuses = []
+            for _ in range(11):
+                r = APIClient().get(
+                    '/api/v1/auth/account/delete-request/',
+                    HTTP_AUTHORIZATION=f'Bearer {tok}',
+                )
+                statuses.append(r.status_code)
+        self.assertEqual(statuses[:10], [200] * 10)
+        self.assertEqual(statuses[10], 429)
+        cache.clear()
+
+    def test_deletion_preserves_audit_hash_chain_and_isolates_unrelated_users(self):
+        from apps.audit.services.audit_service import AuditService
+        from apps.audit.views import AuditLogListView
+
+        pw = 'AuditChainPass!123'
+        owner = User.objects.create_user(
+            email='chain.owner@srilekh-sandbox.local', password=pw, first_name='Chain', role='OWNER', email_verified=True
+        )
+        bystander = User.objects.create_user(
+            email='bystander@srilekh-sandbox.local', password=pw, first_name='Safe', role='OWNER', email_verified=True
+        )
+        comp = Company.objects.create(name='Chain Sandbox Co', gstin='09BBBBB0000B1Z5', state_code='09')
+        bystander_comp = Company.objects.create(name='Bystander Co', gstin='09CCCCC0000C1Z5', state_code='09')
+        UserCompany.objects.create(user=owner, company=comp, role='OWNER')
+        UserCompany.objects.create(user=bystander, company=bystander_comp, role='OWNER')
+
+        AuditService.log_action(
+            company=comp, user=owner, action='CREATE', model_name='Voucher', record_id='V-PRE-1', changes={'total': 500}
+        )
+
+        client = APIClient()
+        tok = client.post(
+            '/api/v1/auth/login/',
+            {'email': owner.email, 'password': pw},
+            format='json',
+            HTTP_X_CLIENT_TYPE='capacitor',
+        ).data['access']
+
+        res = client.post(
+            '/api/v1/auth/account/delete-request/',
+            {
+                'current_password': pw,
+                'confirmation_text': 'DELETE MY ACCOUNT',
+                'sole_company_action': 'ARCHIVE_SOLO_COMPANIES',
+            },
+            format='json',
+            HTTP_AUTHORIZATION=f'Bearer {tok}',
+        )
+        self.assertEqual(res.status_code, 200)
+
+        telemetry = AuditLogListView.verify_company_chain_telemetry(comp)
+        self.assertEqual(telemetry['status'], 'VERIFIED', f'Audit chain broken: {telemetry}')
+        self.assertEqual(telemetry['invalid_records_count'], 0)
+        self.assertGreaterEqual(telemetry['total_records_checked'], 2)
+
+        bystander.refresh_from_db()
+        bystander_comp.refresh_from_db()
+        self.assertTrue(bystander.is_active)
+        self.assertTrue(bystander_comp.is_active)
+        self.assertTrue(UserCompany.objects.filter(user=bystander, company=bystander_comp).exists())
+
+
+import unittest
+from django.test import TransactionTestCase
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from django.db import connections
+
+
+@override_settings(
+    EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
+    AUTH_COOKIE_SECURE=False,
+)
+class Stage124ConcurrentAccountDeletionTransactionTests(TransactionTestCase):
+    def test_parallel_concurrent_delete_requests_execute_atomically_once(self):
+        if connections['default'].vendor == 'sqlite':
+            self.skipTest("Multi-threaded write-lock concurrency requires PostgreSQL MVCC (executed on test_neondb_staging)")
+        pw = 'RacePass!123'
+        owner = User.objects.create_user(
+            email='race.owner@srilekh-sandbox.local', password=pw, first_name='Race', role='OWNER', email_verified=True
+        )
+        comp = Company.objects.create(name='Race Co', gstin='09DDDDD0000D1Z5', state_code='09')
+        UserCompany.objects.create(user=owner, company=comp, role='OWNER')
+
+        tok = APIClient().post(
+            '/api/v1/auth/login/',
+            {'email': owner.email, 'password': pw},
+            format='json',
+            HTTP_X_CLIENT_TYPE='capacitor',
+        ).data['access']
+
+        barrier = threading.Barrier(2)
+
+        def worker():
+            try:
+                barrier.wait(timeout=10)
+                return APIClient().post(
+                    '/api/v1/auth/account/delete-request/',
+                    {
+                        'current_password': pw,
+                        'confirmation_text': 'DELETE MY ACCOUNT',
+                        'sole_company_action': 'ARCHIVE_SOLO_COMPANIES',
+                    },
+                    format='json',
+                    HTTP_AUTHORIZATION=f'Bearer {tok}',
+                ).status_code
+            finally:
+                connections.close_all()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            f1 = pool.submit(worker)
+            f2 = pool.submit(worker)
+            codes = sorted([f1.result(), f2.result()])
+
+        self.assertIn(200, codes)
+        self.assertEqual(codes.count(200), 1)
+        self.assertTrue(codes[1] in (401, 409) or (codes[0] in (401, 409) and codes[1] == 200))
+        self.assertEqual(AccountDeletionRequest.objects.filter(user_snapshot_id=owner.id).count(), 1)

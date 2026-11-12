@@ -13,6 +13,12 @@ from apps.companies.models import Company
 from apps.accounting.models import Voucher
 from apps.accounts.permissions import get_authorized_company, user_has_company_roles, CanViewGST, CanReconcileGST
 from apps.gst.models import GSTR2BImport, GSTR2BRecord
+import io
+from apps.accounting.services.upload_security import (
+    MAX_IMPORT_FILE_SIZE,
+    UploadValidationError,
+    read_validated_upload_bytes,
+)
 from apps.gst.services.itc_reconciliation_service import ITCReconciliationService
 from apps.gst.services.itc_notification_service import ITCNotificationService
 
@@ -55,21 +61,25 @@ class GSTR2BUploadView(APIView):
                     'total_itc': float(import_batch.total_itc_available),
                     'stats': stats
                 }, status=status.HTTP_201_CREATED)
-            except Exception as e:
+            except (ValueError, KeyError, TypeError):
                 logger.exception("Error processing GSTR-2B JSON payload")
-                return Response({'error': f"Failed to parse GSTR-2B JSON: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({'error': "Invalid GSTR-2B JSON structure."}, status=status.HTTP_400_BAD_REQUEST)
+            except Exception:
+                logger.exception("Unexpected error processing GSTR-2B JSON payload")
+                return Response({'error': "Failed to process GSTR-2B JSON payload."}, status=status.HTTP_400_BAD_REQUEST)
 
         if not file_obj:
             return Response({'error': 'No file uploaded. Please provide a GSTR-2B JSON or Excel file.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        if file_obj.size and file_obj.size > 15 * 1024 * 1024:
-            return Response({'error': 'Uploaded GSTR-2B file exceeds the 15MB maximum limit.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        file_name = file_obj.name.lower()
-
         try:
+            raw_bytes = read_validated_upload_bytes(
+                file_obj,
+                allowed_extensions={'.json', '.xlsx', '.xls'},
+                max_bytes=MAX_IMPORT_FILE_SIZE,
+            )
+            file_name = file_obj.name.lower()
             if file_name.endswith('.json'):
-                content = file_obj.read().decode('utf-8')
+                content = raw_bytes.decode('utf-8')
                 json_data = json.loads(content)
                 import_batch = ITCReconciliationService.ingest_gstr2b_json(
                     company=company,
@@ -81,7 +91,7 @@ class GSTR2BUploadView(APIView):
             elif file_name.endswith(('.xlsx', '.xls')):
                 import_batch = ITCReconciliationService.ingest_gstr2b_excel(
                     company=company,
-                    file_obj=file_obj,
+                    file_obj=io.BytesIO(raw_bytes),
                     user=request.user,
                     file_name=file_obj.name,
                     return_period=return_period
@@ -101,9 +111,13 @@ class GSTR2BUploadView(APIView):
                 'stats': stats
             }, status=status.HTTP_201_CREATED)
 
-        except Exception as e:
+        except UploadValidationError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return Response({'error': "Invalid or malformed GSTR-2B JSON file."}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
             logger.exception("Error processing GSTR-2B file upload")
-            return Response({'error': f"Processing failed: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': "Failed to process uploaded GSTR-2B file."}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class ITCReconciliationListView(APIView):

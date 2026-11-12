@@ -5,16 +5,17 @@ import {
   MAX_SPREADSHEET_ROWS,
   MAX_SPREADSHEET_SIZE_BYTES,
   parseCsvToRows,
+  parseNonNegativeSpreadsheetNumber,
   parseSpreadsheetFileToRows,
   sanitizeSpreadsheetExportCell,
 } from "./spreadsheet-parser";
 
-function createMinimalXlsxFile(name = "pricelist.xlsx"): File {
+function createMinimalXlsxFile(name = "pricelist.xlsx", type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"): File {
   // Minimal valid OOXML workbook with sharedStrings.xml so read-excel-file parses it cleanly
   const contentTypes =
     '<?xml version="1.0" encoding="UTF-8"?>' +
     '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
-    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-officedocument.relationships+xml"/>' +
     '<Default Extension="xml" ContentType="application/xml"/>' +
     '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
     '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
@@ -59,12 +60,9 @@ function createMinimalXlsxFile(name = "pricelist.xlsx"): File {
     "xl/workbook.xml": strToU8(workbook),
     "xl/worksheets/sheet1.xml": strToU8(sheet1),
   });
-  // Sanity-check zip structure before constructing File
   assert.ok(Object.keys(unzipSync(zipped)).includes("xl/worksheets/sheet1.xml"));
   const ab = zipped.buffer.slice(zipped.byteOffset, zipped.byteOffset + zipped.byteLength);
-  return new File([ab], name, {
-    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  });
+  return new File([ab], name, { type });
 }
 
 describe("Spreadsheet Parser (safe xlsx replacement & CSV hardening)", () => {
@@ -77,6 +75,11 @@ describe("Spreadsheet Parser (safe xlsx replacement & CSV hardening)", () => {
     assert.deepEqual(rows[2], ["B50", "Standard", "510"]);
   });
 
+  it("rejects malformed CSV with unclosed quotes or embedded binary null bytes", () => {
+    assert.throws(() => parseCsvToRows('Item,MRP\n"Unclosed quote,450'), /unclosed quoted field/i);
+    assert.throws(() => parseCsvToRows("Item\x00,MRP\nBelt,450"), /binary or executable/i);
+  });
+
   it("parses valid .xlsx files via read-excel-file without SheetJS/xlsx", async () => {
     const file = createMinimalXlsxFile();
     const rows = await parseSpreadsheetFileToRows(file);
@@ -86,7 +89,10 @@ describe("Spreadsheet Parser (safe xlsx replacement & CSV hardening)", () => {
     assert.equal(rows[1][1], 425);
   });
 
-  it("rejects legacy binary .xls and unsupported extensions cleanly", async () => {
+  it("rejects legacy binary .xls, zero-byte empty files, and unsupported extensions", async () => {
+    const emptyCsv = new File([], "empty.csv", { type: "text/csv" });
+    await assert.rejects(() => parseSpreadsheetFileToRows(emptyCsv), /empty \(0 bytes\)/i);
+
     const legacy = new File([new Uint8Array([0xd0, 0xcf, 0x11, 0xe0])], "legacy.xls");
     await assert.rejects(() => parseSpreadsheetFileToRows(legacy), /save as \.xlsx or \.csv/i);
 
@@ -94,15 +100,72 @@ describe("Spreadsheet Parser (safe xlsx replacement & CSV hardening)", () => {
     await assert.rejects(() => parseSpreadsheetFileToRows(badExt), /Unsupported spreadsheet format/i);
   });
 
+  it("rejects malicious filenames (path traversal, slashes, null bytes) and unexpected MIME types", async () => {
+    const traversal = new File(["Item,Rate\nA,10"], "../../evil.csv", { type: "text/csv" });
+    await assert.rejects(() => parseSpreadsheetFileToRows(traversal), /Unsafe spreadsheet filename/i);
+
+    const nullByte = new File(["Item,Rate\nA,10"], "evil\0.csv", { type: "text/csv" });
+    await assert.rejects(() => parseSpreadsheetFileToRows(nullByte), /Unsafe spreadsheet filename/i);
+
+    const htmlMime = new File(["<html><script>alert(1)</script></html>"], "report.csv", { type: "text/html" });
+    await assert.rejects(() => parseSpreadsheetFileToRows(htmlMime), /Disallowed spreadsheet MIME/i);
+
+    const exeSpoof = new File(["MZ\x90\x00bad"], "fake.xlsx", {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    await assert.rejects(() => parseSpreadsheetFileToRows(exeSpoof), /Invalid \.xlsx file signature/i);
+
+    const pdfAsCsv = new File(["%PDF-1.7\n1 0 obj"], "fake.csv", { type: "text/csv" });
+    await assert.rejects(() => parseSpreadsheetFileToRows(pdfAsCsv), /binary or executable/i);
+  });
+
+  it("blocks .xlsx ZIP bombs exceeding decompressed limits/ratios and path traversal entries before parsing", async () => {
+    // 1. Over-ratio / >1MB highly compressed zero-filled XML bomb (~55 MB zeros -> small zip)
+    const bombBuf = zipSync({
+      "xl/worksheets/sheet1.xml": new Uint8Array(52 * 1024 * 1024),
+    });
+    const bombAb = bombBuf.buffer.slice(bombBuf.byteOffset, bombBuf.byteOffset + bombBuf.byteLength);
+    const bombFile = new File([bombAb], "bomb.xlsx", {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    await assert.rejects(() => parseSpreadsheetFileToRows(bombFile), /50 MB|compression ratio|ZIP bomb/i);
+
+    // 2. ZIP member path traversal
+    const zipSlip = zipSync({
+      "../../evil.xml": strToU8("<x/>"),
+    });
+    const slipAb = zipSlip.buffer.slice(zipSlip.byteOffset, zipSlip.byteOffset + zipSlip.byteLength);
+    const slipFile = new File([slipAb], "slip.xlsx", {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    await assert.rejects(() => parseSpreadsheetFileToRows(slipFile), /Unsafe path inside \.xlsx/i);
+
+    // 3. Corrupted truncated xlsx
+    const corrupt = new File([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00])], "corrupt.xlsx");
+    await assert.rejects(() => parseSpreadsheetFileToRows(corrupt), /Corrupted \.xlsx/i);
+  });
+
   it("enforces 15 MB size limit and 50,000 row ceiling against DoS payloads", async () => {
     const hugeFakeFile = {
       name: "huge.csv",
+      type: "text/csv",
       size: MAX_SPREADSHEET_SIZE_BYTES + 1,
     } as File;
     await assert.rejects(() => parseSpreadsheetFileToRows(hugeFakeFile), /15 MB size limit/i);
 
     const tooManyRows = Array.from({ length: MAX_SPREADSHEET_ROWS + 1 }, (_, i) => `R${i},1`).join("\n");
     assert.throws(() => parseCsvToRows(tooManyRows), /exceeds maximum allowed/i);
+  });
+
+  it("rejects negative prices and malformed numbers cleanly instead of flipping signs positive", () => {
+    assert.deepEqual(parseNonNegativeSpreadsheetNumber("₹1,450.50"), { valid: true, isEmpty: false, value: 1450.5 });
+    assert.deepEqual(parseNonNegativeSpreadsheetNumber("Rs. 250"), { valid: true, isEmpty: false, value: 250 });
+    assert.deepEqual(parseNonNegativeSpreadsheetNumber(""), { valid: true, isEmpty: true, value: 0 });
+    assert.equal(parseNonNegativeSpreadsheetNumber("-500").valid, false);
+    assert.equal(parseNonNegativeSpreadsheetNumber("(500)").valid, false);
+    assert.equal(parseNonNegativeSpreadsheetNumber("12.34.56").valid, false);
+    assert.equal(parseNonNegativeSpreadsheetNumber("NaN").valid, false);
+    assert.equal(parseNonNegativeSpreadsheetNumber(-10).valid, false);
   });
 
   it("neutralizes spreadsheet formula injection prefixes on export", () => {

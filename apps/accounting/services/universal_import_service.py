@@ -11,6 +11,14 @@ from apps.ledgers.models import LedgerGroup, Ledger
 from apps.inventory.models import Product, ProductCategory
 from apps.accounting.models import Voucher, LedgerEntry, FinancialYear
 from apps.accounting.services.tally_migration_service import TallyMigrationService
+from apps.accounting.services.upload_security import (
+    MAX_IMPORT_FILE_SIZE,
+    MAX_IMPORT_ROWS,
+    UploadValidationError,
+    validate_csv_bytes,
+    validate_upload_filename,
+    validate_xlsx_zip_bytes,
+)
 
 # Fuzzy Column Synonyms for Indian Accounting / ERP Platforms
 PARTY_SYNONYMS = {
@@ -192,6 +200,15 @@ class UniversalImportService:
         Detects file format and platform, parses sheets, and returns raw structured tables.
         Guaranteed not to crash on corrupted or unexpected input.
         """
+        try:
+            validate_upload_filename(filename, {'.xlsx', '.xls', '.csv', '.xml'})
+        except UploadValidationError as e:
+            return {"error": str(e)}
+        if not file_content:
+            return {"error": "Uploaded file is empty (0 bytes)."}
+        if len(file_content) > MAX_IMPORT_FILE_SIZE:
+            return {"error": "Import file exceeds the 15MB maximum size limit."}
+
         fname_lower = filename.lower()
 
         # 1. Tally XML Detection
@@ -235,6 +252,7 @@ class UniversalImportService:
         # CSV handling
         if fname_lower.endswith(".csv"):
             try:
+                validate_csv_bytes(file_content)
                 # Try UTF-8 with BOM first, then UTF-8, then latin-1
                 text = None
                 for enc in ("utf-8-sig", "utf-8", "latin-1"):
@@ -247,49 +265,74 @@ class UniversalImportService:
                     text = file_content.decode("utf-8", errors="replace")
 
                 reader = csv.reader(io.StringIO(text))
-                raw_rows = [row for row in reader if any(cell.strip() for cell in row)]
+                raw_rows = []
+                for row in reader:
+                    if any(cell.strip() for cell in row):
+                        raw_rows.append(row)
+                        if len(raw_rows) > MAX_IMPORT_ROWS:
+                            return {"error": f"Spreadsheet exceeds maximum allowed {MAX_IMPORT_ROWS} rows."}
                 if not raw_rows:
                     return {"error": "The CSV file is empty."}
 
                 headers, data_rows = cls._extract_headers_and_rows(raw_rows)
                 sheets_data["Sheet1"] = [dict(zip(headers, row)) for row in data_rows]
                 return {"sheets": sheets_data}
-            except Exception as e:
-                return {"error": f"Unable to read CSV file: {str(e)}"}
+            except UploadValidationError as e:
+                return {"error": str(e)}
+            except csv.Error:
+                return {"error": "Malformed CSV structure."}
+            except Exception:
+                return {"error": "Unable to read CSV file."}
 
-        # Excel (.xlsx / .xls) handling
-        try:
-            import openpyxl
-            wb = openpyxl.load_workbook(io.BytesIO(file_content), data_only=True)
-            for sheetname in wb.sheetnames:
-                ws = wb[sheetname]
-                raw_rows = []
-                for row in ws.iter_rows(values_only=True):
-                    if any(cell is not None and str(cell).strip() != "" for cell in row):
-                        raw_rows.append([cell if cell is not None else "" for cell in row])
-                
-                if raw_rows:
-                    headers, data_rows = cls._extract_headers_and_rows(raw_rows)
-                    sheets_data[sheetname] = [dict(zip(headers, row)) for row in data_rows]
-            wb.close()
-            if sheets_data:
-                return {"sheets": sheets_data}
-        except Exception:
-            pass
+        # Validate OOXML .xlsx archive before invoking openpyxl/pandas to prevent ZIP bombs
+        is_xlsx_or_zip = fname_lower.endswith(".xlsx") or file_content.startswith(b"PK\x03\x04")
+        if is_xlsx_or_zip:
+            try:
+                validate_xlsx_zip_bytes(file_content)
+            except UploadValidationError as e:
+                return {"error": str(e)}
 
-        # Fallback to pandas with openpyxl or xlrd
+            wb = None
+            try:
+                import openpyxl
+                wb = openpyxl.load_workbook(io.BytesIO(file_content), read_only=True, data_only=True)
+                total_rows = 0
+                for sheetname in wb.sheetnames:
+                    ws = wb[sheetname]
+                    raw_rows = []
+                    for row in ws.iter_rows(values_only=True):
+                        if any(cell is not None and str(cell).strip() != "" for cell in row):
+                            total_rows += 1
+                            if total_rows > MAX_IMPORT_ROWS:
+                                return {"error": f"Spreadsheet exceeds maximum allowed {MAX_IMPORT_ROWS} rows."}
+                            raw_rows.append([cell if cell is not None else "" for cell in row])
+                    if raw_rows:
+                        headers, data_rows = cls._extract_headers_and_rows(raw_rows)
+                        sheets_data[sheetname] = [dict(zip(headers, row)) for row in data_rows]
+                if sheets_data:
+                    return {"sheets": sheets_data}
+                return {"error": "No readable data found in spreadsheet."}
+            except Exception:
+                return {"error": "Failed to read corrupted or unsupported .xlsx file."}
+            finally:
+                if wb is not None:
+                    wb.close()
+
+        # Legacy binary .xls fallback via xlrd/pandas
         try:
             import pandas as pd
             xls = pd.read_excel(io.BytesIO(file_content), sheet_name=None)
             for sheetname, df in xls.items():
                 df = df.dropna(how="all")
+                if len(df) > MAX_IMPORT_ROWS:
+                    return {"error": f"Spreadsheet exceeds maximum allowed {MAX_IMPORT_ROWS} rows."}
                 if not df.empty:
                     df.columns = [str(c).strip() for c in df.columns]
                     sheets_data[sheetname] = df.to_dict(orient="records")
             if sheets_data:
                 return {"sheets": sheets_data}
-        except Exception as e:
-            return {"error": f"Failed to read spreadsheet file: {str(e)}"}
+        except Exception:
+            return {"error": "Failed to read legacy .xls spreadsheet file."}
 
         return {"error": "No readable data found in spreadsheet."}
 

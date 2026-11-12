@@ -1,9 +1,8 @@
 "use client";
 import React, { useState, useRef, useEffect, useMemo } from "react";
-import { parseSpreadsheetFileToRows } from "@/lib/import/spreadsheet-parser";
+import { parseNonNegativeSpreadsheetNumber, parseSpreadsheetFileToRows } from "@/lib/import/spreadsheet-parser";
 import axios from "axios";
 import api, { API_BASE_URL } from "@/utils/api";
-import { getAccessToken } from "@/utils/auth";
 import { useToast } from "@/context/ToastContext";
 import { offlineDb } from "@/lib/db/offlineDb";
 import {
@@ -145,6 +144,9 @@ export default function PriceListImportModal({
         }
 
         const items: PriceListItem[] = [];
+        const seenNames = new Set<string>();
+        let skippedInvalidRows = 0;
+        let duplicateRowCount = 0;
         for (let i = bestHeaderIdx + 1; i < rows.length; i++) {
           const row = rows[i];
           if (!row || !Array.isArray(row) || !row.some((cell: any) => cell !== null && cell !== undefined && cell !== "")) continue;
@@ -177,26 +179,53 @@ export default function PriceListImportModal({
 
           let mrpVal = 0;
           if (mrpIdx !== -1 && mrpIdx < row.length) {
-            const cleanP = String(row[mrpIdx] || "").replace(/[^0-9.]/g, "");
-            mrpVal = parseFloat(cleanP) || 0;
+            const res = parseNonNegativeSpreadsheetNumber(row[mrpIdx], { defaultValue: 0 });
+            if (!res.valid) {
+              skippedInvalidRows++;
+              continue;
+            }
+            mrpVal = res.value;
           }
 
           let purchaseVal = mrpVal * 0.70;
           if (purchaseIdx !== -1 && purchaseIdx < row.length) {
-            const cleanCost = String(row[purchaseIdx] || "").replace(/[^0-9.]/g, "");
-            const parsedCost = parseFloat(cleanCost);
-            if (!isNaN(parsedCost) && parsedCost > 0) {
-              purchaseVal = parsedCost;
+            const res = parseNonNegativeSpreadsheetNumber(row[purchaseIdx], { defaultValue: 0 });
+            if (!res.valid) {
+              skippedInvalidRows++;
+              continue;
+            }
+            if (!res.isEmpty && res.value > 0) {
+              purchaseVal = res.value;
             }
           }
 
           let stockVal = 0;
           if (qtyIdx !== -1 && qtyIdx < row.length) {
-            const cleanS = String(row[qtyIdx] || "").replace(/[^0-9.]/g, "");
-            stockVal = parseFloat(cleanS) || 0;
+            const res = parseNonNegativeSpreadsheetNumber(row[qtyIdx], { defaultValue: 0 });
+            if (!res.valid) {
+              skippedInvalidRows++;
+              continue;
+            }
+            stockVal = res.value;
           }
 
-          const caseQtyVal = caseQtyIdx !== -1 && caseQtyIdx < row.length ? parseInt(String(row[caseQtyIdx] || "1").replace(/[^0-9]/g, "")) || 1 : 1;
+          let caseQtyVal = 1;
+          if (caseQtyIdx !== -1 && caseQtyIdx < row.length) {
+            const res = parseNonNegativeSpreadsheetNumber(row[caseQtyIdx], { defaultValue: 1, integerOnly: true });
+            if (!res.valid || res.value < 1) {
+              skippedInvalidRows++;
+              continue;
+            }
+            caseQtyVal = res.value;
+          }
+
+          const normalizedKey = rawName.toLowerCase();
+          if (seenNames.has(normalizedKey)) {
+            duplicateRowCount++;
+          } else {
+            seenNames.add(normalizedKey);
+          }
+
           const sectionFinal = sectionVal || "";
           const unitVal = unitIdx !== -1 && unitIdx < row.length ? String(row[unitIdx] || "PCS").trim().toUpperCase() : "PCS";
 
@@ -212,16 +241,24 @@ export default function PriceListImportModal({
           });
         }
 
+        if (items.length === 0 && skippedInvalidRows > 0) {
+          toast.error(`All ${skippedInvalidRows} rows contained invalid or negative numeric values and were skipped.`);
+          setParsing(false);
+          return;
+        }
+
         setParsedItems(items);
         setSelectedSection("ALL");
         setPreviewPage(1);
         setParsingEngine("Spreadsheet Importer");
         toast.success(`Extracted ${items.length} items from spreadsheet`);
+        if (skippedInvalidRows > 0 || duplicateRowCount > 0) {
+          const parts = [];
+          if (skippedInvalidRows > 0) parts.push(`${skippedInvalidRows} invalid/negative row(s) skipped`);
+          if (duplicateRowCount > 0) parts.push(`${duplicateRowCount} duplicate item name(s) detected`);
+          toast.error(parts.join("; "));
+        }
       } else if (fileName.endsWith(".pdf")) {
-        const token = getAccessToken();
-        const headers: Record<string, string> = {
-          Authorization: `Bearer ${token}`,
-        };
 
         // Calculate fast SHA-256 fingerprint of the file for local instant caching
         const buffer = await selectedFile.arrayBuffer();
