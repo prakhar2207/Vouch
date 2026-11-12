@@ -62,6 +62,7 @@ jobs:
         env:
           ENVIRONMENT: staging
           DEBUG: 'False'
+          SECURE_SSL_REDIRECT: 'False'
           SECRET_KEY: 'ci-verification-ephemeral-secret-key-not-production'
           DATABASE_URL: 'postgresql://srilekh_ci:srilekh_ci_password@127.0.0.1:5432/neondb_ci_staging'
           TESTING_DATABASE_URL: 'postgresql://srilekh_ci:srilekh_ci_password@127.0.0.1:5432/neondb_ci_staging'
