@@ -156,7 +156,7 @@ export default function Register() {
         setError(res.data.error || "Unable to send verification code.");
       }
     } catch (err: any) {
-      setError(err.response?.data?.error || "Error initiating registration. Please try again.");
+      setError(err.response?.data?.error || err.response?.data?.detail || "Error initiating registration. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -186,7 +186,7 @@ export default function Register() {
         setError(res.data.error || "Invalid verification code.");
       }
     } catch (err: any) {
-      setError(err.response?.data?.error || "Invalid verification code. Please check and try again.");
+      setError(err.response?.data?.error || err.response?.data?.detail || "Invalid verification code. Please check and try again.");
     } finally {
       setLoading(false);
     }
@@ -210,7 +210,7 @@ export default function Register() {
         setError(res.data.error || "Could not resend OTP.");
       }
     } catch (err: any) {
-      setError(err.response?.data?.error || "Unable to resend OTP at this time.");
+      setError(err.response?.data?.error || err.response?.data?.detail || "Unable to resend OTP at this time.");
     } finally {
       setLoading(false);
     }
@@ -315,7 +315,7 @@ export default function Register() {
         setError(res.data.error || "Registration failed. Please check your details.");
       }
     } catch (err: any) {
-      setError(err.response?.data?.error || "Registration error. Please check your details and try again.");
+      setError(err.response?.data?.error || err.response?.data?.detail || "Registration error. Please check your details and try again.");
     } finally {
       setLoading(false);
     }
