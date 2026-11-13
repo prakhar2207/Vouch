@@ -2,7 +2,13 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status
+from rest_framework.exceptions import PermissionDenied
 from django.core.exceptions import ValidationError
+
+class _DuplicateConflictException(Exception):
+    def __init__(self, dup_result):
+        self.dup_result = dup_result
+        super().__init__(dup_result.get("reason", "Potential duplicate transaction detected."))
 from django.db import transaction, IntegrityError
 from django.db.models import Q
 from decimal import Decimal
@@ -67,6 +73,10 @@ class CreateSalesInvoiceAPIView(APIView):
             from apps.ledgers.models import LedgerGroup
             company = Company.objects.get(id=company_id, users__user=request.user)
             party_ledger = Ledger.objects.get(id=party_ledger_id, company=company)
+
+            from apps.accounting.services.deduplication_engine import TransactionDeduplicationEngine
+            allow_dup_override = TransactionDeduplicationEngine.authorize_and_resolve_duplicate_override(request, company, data)
+            parse_bool = TransactionDeduplicationEngine.parse_bool_flag
 
             with transaction.atomic():
                 # Resolve sales ledger
@@ -143,12 +153,44 @@ class CreateSalesInvoiceAPIView(APIView):
                     cartage_ledger=Ledger.objects.filter(id=data.get('cartage_ledger_id'), company=company).first() if data.get('cartage_ledger_id') else None,
                     discount_amount=Decimal(str(data.get('discount_amount', 0) or 0)),
                     discount_ledger=Ledger.objects.filter(id=data.get('discount_ledger_id'), company=company).first() if data.get('discount_ledger_id') else None,
-                    is_reverse_charge=bool(data.get('is_reverse_charge', False))
+                    is_reverse_charge=bool(data.get('is_reverse_charge', False)),
+                    reference_number=data.get('reference_number')
                 )
+
+                if data.get('narration'):
+                    voucher.narration = str(data.get('narration')).strip()
+                    voucher.save(update_fields=['narration'])
+
+                # Deduplication pre-check inside atomic boundary (rolls back draft safely on 409 conflict)
+                should_post = parse_bool(data['post_immediately']) if 'post_immediately' in data else True
+                voucher_items = list(voucher.items.select_related('product').all())
+                dup_result = TransactionDeduplicationEngine.check_duplicate_candidate(
+                    company=company,
+                    voucher_type='SALES',
+                    party_ledger=party_ledger,
+                    total_amount=voucher.total_amount,
+                    voucher_date=voucher.voucher_date,
+                    exclude_voucher_id=voucher.id,
+                    lookback_minutes=15,
+                    items_data=voucher_items,
+                    reference_number=voucher.reference_number,
+                    voucher_number=voucher.voucher_number,
+                )
+                if dup_result.get('is_duplicate') and dup_result.get('rule') == 'RAPID_DOUBLE_SUBMISSION' and not allow_dup_override:
+                    raise _DuplicateConflictException(dup_result)
                 
                 # 2. Automatically post it if requested
-                if data.get('post_immediately', True):
-                    VoucherService.post_voucher(voucher)
+                if should_post:
+                    voucher = VoucherService.post_voucher(voucher, force_duplicate=allow_dup_override)
+                    if allow_dup_override and dup_result.get('is_duplicate'):
+                        TransactionDeduplicationEngine.log_duplicate_override(
+                            company=company,
+                            user=request.user,
+                            voucher=voucher,
+                            matching_info=dup_result.get('matching_voucher'),
+                            override_reason=data.get('override_reason') or data.get('duplicate_override_reason'),
+                            rule=dup_result.get('rule'),
+                        )
 
                     # 3. Optional Counter Cash / Payment Settlement at billing
                     settle_payment_ledger_id = data.get('payment_ledger_id')
@@ -180,7 +222,7 @@ class CreateSalesInvoiceAPIView(APIView):
                             )
                             LedgerEntry.objects.create(voucher=rcpt_voucher, company=company, ledger=settle_ledger, debit_amount=voucher.total_amount, credit_amount=Decimal('0.00'), narration=f"Receipt from {party_ledger.name}")
                             LedgerEntry.objects.create(voucher=rcpt_voucher, company=company, ledger=party_ledger, debit_amount=Decimal('0.00'), credit_amount=voucher.total_amount, narration=f"Receipt for Inv #{voucher.voucher_number}")
-                            VoucherService.post_voucher(rcpt_voucher)
+                            VoucherService.post_voucher(rcpt_voucher, force_duplicate=allow_dup_override)
                             PaymentAllocationService.auto_allocate_voucher(rcpt_voucher, preferred_invoice_id=str(voucher.id))
 
                 from apps.accounting.services.allocation_service import PaymentAllocationService
@@ -225,6 +267,7 @@ class CreateSalesInvoiceAPIView(APIView):
                     "party_ledger_id": str(voucher.party_ledger_id) if voucher.party_ledger_id else None,
                     "party_name": voucher.party_ledger.name if voucher.party_ledger else (voucher.buyer_name or ''),
                     "status": voucher.status,
+                    "version": getattr(voucher, 'version', 1) or 1,
                     "total_amount": str(voucher.total_amount or '0.00'),
                     "paid_amount": paid_amt,
                     "paidAmount": paid_amt,
@@ -244,6 +287,18 @@ class CreateSalesInvoiceAPIView(APIView):
                 }
             }, status=status.HTTP_201_CREATED)
             
+        except PermissionDenied as pd:
+            return Response({"success": False, "error": str(pd)}, status=status.HTTP_403_FORBIDDEN)
+        except _DuplicateConflictException as dc:
+            dr = dc.dup_result
+            return Response({
+                "success": False,
+                "is_duplicate": True,
+                "requires_confirmation": True,
+                "error": dr.get("reason"),
+                "rule": dr.get("rule"),
+                "matching_voucher": dr.get("matching_voucher"),
+            }, status=status.HTTP_409_CONFLICT)
         except ValidationError as e:
             msg = e.message if hasattr(e, 'message') else (e.messages[0] if hasattr(e, 'messages') and e.messages else str(e))
             return Response({"success": False, "error": msg}, status=status.HTTP_400_BAD_REQUEST)
@@ -275,6 +330,10 @@ class CreatePurchaseInvoiceAPIView(APIView):
             from apps.ledgers.models import LedgerGroup
             company = Company.objects.get(id=company_id, users__user=request.user)
             party_ledger = Ledger.objects.get(id=party_ledger_id, company=company)
+
+            from apps.accounting.services.deduplication_engine import TransactionDeduplicationEngine
+            allow_dup_override = TransactionDeduplicationEngine.authorize_and_resolve_duplicate_override(request, company, data)
+            parse_bool = TransactionDeduplicationEngine.parse_bool_flag
 
             # Resolve purchase ledger
             purchase_ledger = None
@@ -354,8 +413,35 @@ class CreatePurchaseInvoiceAPIView(APIView):
                     voucher.attachment_mime = final_mime
                     voucher.save(update_fields=['attachment_data', 'attachment_mime'])
                 
-                if data.get('post_immediately', True):
-                    VoucherService.post_voucher(voucher)
+                should_post = parse_bool(data['post_immediately']) if 'post_immediately' in data else True
+                voucher_items = list(voucher.items.select_related('product').all())
+                dup_result = TransactionDeduplicationEngine.check_duplicate_candidate(
+                    company=company,
+                    voucher_type='PURCHASE',
+                    party_ledger=party_ledger,
+                    total_amount=voucher.total_amount,
+                    voucher_date=voucher.voucher_date,
+                    exclude_voucher_id=voucher.id,
+                    lookback_minutes=15,
+                    items_data=voucher_items,
+                    reference_number=voucher.reference_number,
+                    voucher_number=voucher.voucher_number,
+                    external_invoice_number=voucher.external_invoice_number,
+                )
+                if dup_result.get('is_duplicate') and dup_result.get('rule') == 'RAPID_DOUBLE_SUBMISSION' and not allow_dup_override:
+                    raise _DuplicateConflictException(dup_result)
+
+                if should_post:
+                    voucher = VoucherService.post_voucher(voucher, force_duplicate=allow_dup_override)
+                    if allow_dup_override and dup_result.get('is_duplicate'):
+                        TransactionDeduplicationEngine.log_duplicate_override(
+                            company=company,
+                            user=request.user,
+                            voucher=voucher,
+                            matching_info=dup_result.get('matching_voucher'),
+                            override_reason=data.get('override_reason') or data.get('duplicate_override_reason'),
+                            rule=dup_result.get('rule'),
+                        )
 
                     # 3. Optional Counter Cash / Payment Settlement at billing
                     settle_payment_ledger_id = data.get('payment_ledger_id')
@@ -387,11 +473,32 @@ class CreatePurchaseInvoiceAPIView(APIView):
                             )
                             LedgerEntry.objects.create(voucher=pmt_voucher, company=company, ledger=party_ledger, debit_amount=voucher.total_amount, credit_amount=Decimal('0.00'), narration=f"Payment via {settle_ledger.name}")
                             LedgerEntry.objects.create(voucher=pmt_voucher, company=company, ledger=settle_ledger, debit_amount=Decimal('0.00'), credit_amount=voucher.total_amount, narration=f"Payment to {party_ledger.name}")
-                            VoucherService.post_voucher(pmt_voucher)
+                            VoucherService.post_voucher(pmt_voucher, force_duplicate=allow_dup_override)
                             PaymentAllocationService.auto_allocate_voucher(pmt_voucher, preferred_invoice_id=str(voucher.id))
 
                 from apps.accounting.services.allocation_service import PaymentAllocationService
                 p_status, paid_amt = PaymentAllocationService.get_voucher_payment_status(voucher)
+
+                from apps.common.idempotency import IdempotencyService
+                cpi_resp_payload = {
+                    "success": True,
+                    "voucher_id": str(voucher.id),
+                    "voucher_number": voucher.voucher_number,
+                    "status": voucher.status,
+                    "total_amount": str(voucher.total_amount),
+                    "paid_amount": paid_amt,
+                    "payment_status": p_status,
+                    "voucher": {
+                        "id": str(voucher.id),
+                        "voucher_type": voucher.voucher_type,
+                        "voucher_number": voucher.voucher_number,
+                        "voucher_date": str(voucher.voucher_date),
+                        "status": voucher.status,
+                        "version": getattr(voucher, 'version', 1) or 1,
+                        "total_amount": str(voucher.total_amount or '0.00'),
+                    }
+                }
+                IdempotencyService.commit_idempotent_operation(request, cpi_resp_payload, status_code=201)
 
             return Response({
                 "success": True,
@@ -420,6 +527,18 @@ class CreatePurchaseInvoiceAPIView(APIView):
                 }
             }, status=status.HTTP_201_CREATED)
             
+        except PermissionDenied as pd:
+            return Response({"success": False, "error": str(pd)}, status=status.HTTP_403_FORBIDDEN)
+        except _DuplicateConflictException as dc:
+            dr = dc.dup_result
+            return Response({
+                "success": False,
+                "is_duplicate": True,
+                "requires_confirmation": True,
+                "error": dr.get("reason"),
+                "rule": dr.get("rule"),
+                "matching_voucher": dr.get("matching_voucher"),
+            }, status=status.HTTP_409_CONFLICT)
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1033,6 +1152,7 @@ class VoucherDetailAPIView(APIView):
             from apps.ledgers.models import Ledger, LedgerGroup
             from django.utils import timezone
             from decimal import Decimal
+            from django.db.models import Sum, Q
             import re
 
             data = request.data or {}
@@ -1104,7 +1224,7 @@ class VoucherDetailAPIView(APIView):
                     }, status=status.HTTP_403_FORBIDDEN)
 
                 # Prevent modification of terminal / immutable vouchers
-                if voucher.status in ['REVERSED', 'CANCELLED']:
+                if voucher.status in ['REVERSED', 'CANCELLED', 'SUPERSEDED']:
                     return Response({
                         "success": False,
                         "error": f"Cannot modify a {voucher.status.lower()} voucher."
@@ -1117,6 +1237,46 @@ class VoucherDetailAPIView(APIView):
                         "error": f"Conflict: Voucher was modified by another client. Expected version {expected_version}, got {current_version}.",
                         "current_version": current_version
                     }, status=status.HTTP_409_CONFLICT)
+
+                from apps.accounting.services.deduplication_engine import TransactionDeduplicationEngine
+                parse_bool = TransactionDeduplicationEngine.parse_bool_flag
+                was_posted = voucher.status in ['POSTED', 'VALIDATING']
+                has_items = 'items' in data and isinstance(data['items'], list)
+                is_invoice_voucher = voucher.voucher_type in ['SALES', 'PURCHASE']
+                is_payment_receipt = voucher.voucher_type in ['PAYMENT', 'RECEIPT']
+
+                # Strictly guard prohibited direct financial / status field edits
+                if 'status' in data and data.get('status') and str(data.get('status')).upper() != voucher.status:
+                    raise ValidationError("Direct modification of voucher status is prohibited. Use post, cancel, or reverse workflows.")
+                if 'entries' in data or 'ledger_entries' in data:
+                    raise ValidationError("Direct modification of raw double-entry ledger rows is prohibited.")
+                prohibited_financial_fields = ('taxable_amount', 'cgst_amount', 'sgst_amount', 'igst_amount', 'tds_amount', 'round_off')
+                if any(k in data for k in prohibited_financial_fields):
+                    raise ValidationError("Direct modification of computed tax or financial summary fields is prohibited.")
+                if 'total_amount' in data and not is_payment_receipt:
+                    raise ValidationError("Direct modification of total_amount is prohibited; line items govern invoice totals.")
+                if has_items and not is_invoice_voucher:
+                    raise ValidationError(f"Financial line items cannot be modified on a {voucher.voucher_type} voucher.")
+                if has_items and len(data['items']) == 0:
+                    raise ValidationError("Invoice must contain at least one line item.")
+                if was_posted and voucher.voucher_type not in ['SALES', 'PURCHASE', 'PAYMENT', 'RECEIPT', 'SALES_INVOICE']:
+                    disallowed_keys = [
+                        k for k in ('party_ledger_id', 'party_name', 'payment_ledger_id', 'amount', 'total_amount', 'voucher_date', 'voucher_number')
+                        if k in data and data.get(k) not in (None, '')
+                    ]
+                    if disallowed_keys:
+                        raise ValidationError(
+                            f"Prohibited edit: Financial fields ({', '.join(disallowed_keys)}) cannot be modified on a posted {voucher.voucher_type} voucher."
+                        )
+                if was_posted and voucher.voucher_type == 'SALES_INVOICE':
+                    disallowed_si_keys = [
+                        k for k in ('party_ledger_id', 'party_name', 'payment_ledger_id', 'amount', 'total_amount')
+                        if k in data and data.get(k) not in (None, '')
+                    ]
+                    if disallowed_si_keys:
+                        raise ValidationError(
+                            f"Prohibited edit: Financial fields ({', '.join(disallowed_si_keys)}) cannot be modified on a posted {voucher.voucher_type} voucher."
+                        )
 
                 company = voucher.company
                 # 1. Resolve party change safely without ever mutating existing party ledger master!
@@ -1160,6 +1320,15 @@ class VoucherDetailAPIView(APIView):
                         voucher.reference_number = new_vnum
                 if 'voucher_date' in data and data['voucher_date']:
                     voucher.voucher_date = data['voucher_date']
+                if 'due_date' in data:
+                    dd_val = data.get('due_date')
+                    if dd_val in (None, ''):
+                        voucher.due_date = None
+                    elif hasattr(dd_val, 'year'):
+                        voucher.due_date = dd_val
+                    else:
+                        from datetime import date as _dt_date
+                        voucher.due_date = _dt_date.fromisoformat(str(dd_val).split('T')[0])
                 if 'narration' in data and data['narration'] is not None:
                     voucher.narration = str(data['narration']).strip()
                 if 'buyer_name' in data:
@@ -1588,9 +1757,9 @@ class VoucherDetailAPIView(APIView):
                             else:
                                 LedgerEntry.objects.create(voucher=voucher, company=company, ledger=round_off_ledger, debit_amount=Decimal('0.00'), credit_amount=abs(round_off))
 
-                    # 5. Re-post voucher to update stock & balances
-                    if was_posted or data.get('post_immediately', True):
-                        VoucherService.post_voucher(voucher)
+                    # 5. Re-post voucher to update stock & balances for SALES/PURCHASE item replacements
+                    if was_posted or (parse_bool(data['post_immediately']) if 'post_immediately' in data else True):
+                        VoucherService.post_voucher(voucher, force_duplicate=True)
                     else:
                         voucher.save()
 
@@ -1605,8 +1774,8 @@ class VoucherDetailAPIView(APIView):
                     purch_ledger = Ledger.objects.filter(company=company, ledger_type='PURCHASE').first()
                     if purch_ledger:
                         VoucherService.recalculate_ledger_balance(purch_ledger)
-                elif voucher.voucher_type in ['PAYMENT', 'RECEIPT']:
-                    # Update Payment or Receipt voucher
+                elif is_payment_receipt and any(k in data for k in ('amount', 'party_ledger_id', 'payment_ledger_id', 'voucher_date')):
+                    # Update Payment or Receipt voucher financial fields
                     from apps.ledgers.models import Ledger
                     from datetime import date
 
@@ -1615,17 +1784,6 @@ class VoucherDetailAPIView(APIView):
                     if voucher.party_ledger_id:
                         affected_ledger_ids.add(voucher.party_ledger_id)
 
-                    # 1. Clear old allocations and ledger entries without creating cancellation/reversal artifacts
-                    from apps.accounting.models import PaymentAllocation
-                    from django.db.models import Q
-                    PaymentAllocation.objects.filter(
-                        Q(payment_voucher=voucher) | Q(invoice_voucher=voucher)
-                    ).delete()
-                    voucher.ledger_entries.all().delete()
-                    voucher.status = 'DRAFT'
-                    voucher.save(update_fields=['status'])
-
-                    # 2. Determine updated party and cash/bank ledgers
                     if 'party_ledger_id' in data and data['party_ledger_id']:
                         party_ledger = Ledger.objects.get(id=data['party_ledger_id'], company=company)
                         voucher.party_ledger = party_ledger
@@ -1636,7 +1794,7 @@ class VoucherDetailAPIView(APIView):
                     if payment_ledger_id:
                         payment_ledger = Ledger.objects.get(id=payment_ledger_id, company=company)
                     else:
-                        # Fallback to existing non-party ledger
+                        # Resolve existing non-party ledger BEFORE clearing entries
                         existing_entry = voucher.ledger_entries.exclude(ledger=party_ledger).first()
                         payment_ledger = existing_entry.ledger if existing_entry else None
 
@@ -1645,6 +1803,16 @@ class VoucherDetailAPIView(APIView):
 
                     affected_ledger_ids.add(party_ledger.id)
                     affected_ledger_ids.add(payment_ledger.id)
+
+                    # 1. Clear old allocations and ledger entries without creating cancellation/reversal artifacts
+                    from apps.accounting.models import PaymentAllocation
+                    from django.db.models import Q
+                    PaymentAllocation.objects.filter(
+                        Q(payment_voucher=voucher) | Q(invoice_voucher=voucher)
+                    ).delete()
+                    voucher.ledger_entries.all().delete()
+                    voucher.status = 'DRAFT'
+                    voucher.save(update_fields=['status'])
 
                     # Update amount
                     if 'amount' in data and data['amount']:
@@ -1663,16 +1831,15 @@ class VoucherDetailAPIView(APIView):
 
                     # 4. Create new ledger entries
                     if voucher.voucher_type == 'RECEIPT':
-                        # Receipt: Debit Cash/Bank, Credit Customer
                         LedgerEntry.objects.create(voucher=voucher, company=company, ledger=payment_ledger, debit_amount=amount, credit_amount=Decimal('0.00'), narration=f"Receipt from {party_ledger.name}")
                         LedgerEntry.objects.create(voucher=voucher, company=company, ledger=party_ledger, debit_amount=Decimal('0.00'), credit_amount=amount, narration=f"Receipt via {payment_ledger.name}")
                     else:
-                        # Payment: Debit Supplier, Credit Cash/Bank
                         LedgerEntry.objects.create(voucher=voucher, company=company, ledger=party_ledger, debit_amount=amount, credit_amount=Decimal('0.00'), narration=f"Payment via {payment_ledger.name}")
                         LedgerEntry.objects.create(voucher=voucher, company=company, ledger=payment_ledger, debit_amount=Decimal('0.00'), credit_amount=amount, narration=f"Payment to {party_ledger.name}")
 
-                    # 5. Re-post voucher
-                    VoucherService.post_voucher(voucher)
+                    # 5. Re-post voucher cleanly when it was posted or post_immediately requested
+                    if was_posted or (parse_bool(data['post_immediately']) if 'post_immediately' in data else True):
+                        VoucherService.post_voucher(voucher, force_duplicate=True)
 
                     # 6. Auto-allocate against unpaid invoices FIFO or preferred invoice
                     preferred_inv_id = data.get('invoice_id') or data.get('allocated_invoice_id') or data.get('preferred_invoice_id')
@@ -1684,7 +1851,13 @@ class VoucherDetailAPIView(APIView):
                         if l:
                             VoucherService.recalculate_ledger_balance(l)
                 else:
+                    # Metadata-only PATCH (or party reassignment without items):
+                    # Never re-post an already-POSTED voucher; only post a DRAFT if post_immediately=True is explicitly requested.
+                    if 'reference_number' in data:
+                        voucher.reference_number = str(data.get('reference_number') or '').strip()
                     voucher.save()
+                    if not was_posted and voucher.status == 'DRAFT' and parse_bool(data.get('post_immediately')):
+                        VoucherService.post_voucher(voucher)
 
                 # Increment OCC version counter
                 voucher.version = getattr(voucher, 'version', 1) + 1
@@ -2247,30 +2420,35 @@ class CreatePaymentReceiptAPIView(APIView):
             voucher_date_str = data.get('voucher_date')
             voucher_date = date.fromisoformat(voucher_date_str) if voucher_date_str else date.today()
 
-            # Smart Deduplication Gatekeeper
-            force_create = bool(data.get('force_create') or data.get('allow_duplicate'))
+            # Smart Deduplication Gatekeeper with Role-Authorized Override
+            from apps.accounting.services.deduplication_engine import TransactionDeduplicationEngine
+            parse_bool = TransactionDeduplicationEngine.parse_bool_flag
+            force_duplicate_override = TransactionDeduplicationEngine.authorize_and_resolve_duplicate_override(request, company, data)
+            ref_num = str(data.get('reference_number') or '').strip()
             invoice_id = data.get('invoice_id') or data.get('allocated_invoice_id') or data.get('preferred_invoice_id')
-            if not force_create:
-                from apps.accounting.services.deduplication_engine import TransactionDeduplicationEngine
-                dup_result = TransactionDeduplicationEngine.check_duplicate_candidate(
-                    company=company,
-                    voucher_type=voucher_type,
-                    party_ledger=party_ledger,
-                    total_amount=amount,
-                    voucher_date=voucher_date,
-                    preferred_invoice_id=invoice_id
-                )
-                if dup_result.get('is_duplicate'):
-                    return Response({
-                        "success": False,
-                        "is_duplicate": True,
-                        "error": dup_result.get('reason'),
-                        "rule": dup_result.get('rule'),
-                        "matching_voucher": dup_result.get('matching_voucher')
-                    }, status=status.HTTP_409_CONFLICT)
+
+            dup_result = TransactionDeduplicationEngine.check_duplicate_candidate(
+                company=company,
+                voucher_type=voucher_type,
+                party_ledger=party_ledger,
+                total_amount=amount,
+                voucher_date=voucher_date,
+                preferred_invoice_id=invoice_id,
+                reference_number=ref_num or None,
+                payment_ledger_id=str(payment_ledger.id),
+            )
+            if not force_duplicate_override and dup_result.get('is_duplicate'):
+                return Response({
+                    "success": False,
+                    "is_duplicate": True,
+                    "requires_confirmation": True,
+                    "error": dup_result.get('reason'),
+                    "rule": dup_result.get('rule'),
+                    "matching_voucher": dup_result.get('matching_voucher')
+                }, status=status.HTTP_409_CONFLICT)
 
             is_cash_payment = (payment_ledger.ledger_type == 'CASH' or 'CASH' in (payment_ledger.name or '').upper())
-            force_statutory = bool(data.get('force_create') or data.get('allow_statutory_override') or data.get('allow_duplicate'))
+            force_statutory = parse_bool(data.get('allow_statutory_override'))
 
             # 1. Statutory Limit: Section 269ST (Receipts >= ₹2,00,000 in cash)
             if voucher_type == 'RECEIPT' and is_cash_payment and amount >= Decimal('200000.00') and not force_statutory:
@@ -2298,7 +2476,7 @@ class CreatePaymentReceiptAPIView(APIView):
                     }, status=400)
 
             # 3. Cash in Hand Deficit Guard (Negative Cash Protection)
-            if voucher_type == 'PAYMENT' and is_cash_payment and not bool(data.get('allow_negative_cash') or data.get('force_create')):
+            if voucher_type == 'PAYMENT' and is_cash_payment and not parse_bool(data.get('allow_negative_cash')):
                 avail_cash = quantize_money(payment_ledger.current_balance or Decimal('0.00'))
                 if avail_cash < amount:
                     deficit = quantize_money(amount - avail_cash)
@@ -2338,11 +2516,45 @@ class CreatePaymentReceiptAPIView(APIView):
                     LedgerEntry.objects.create(voucher=voucher, company=company, ledger=party_ledger, debit_amount=amount, credit_amount=Decimal('0.00'), narration=f"Payment via {payment_ledger.name}")
                     LedgerEntry.objects.create(voucher=voucher, company=company, ledger=payment_ledger, debit_amount=Decimal('0.00'), credit_amount=amount, narration=f"Payment to {party_ledger.name}")
 
-                # Auto-post voucher atomically
-                VoucherService.post_voucher(voucher)
+                # Auto-post voucher atomically (forwarding confirmed authorized duplicate override)
+                VoucherService.post_voucher(voucher, force_duplicate=force_duplicate_override)
+
+                if force_duplicate_override and dup_result.get('is_duplicate'):
+                    TransactionDeduplicationEngine.log_duplicate_override(
+                        company=company,
+                        user=request.user,
+                        voucher=voucher,
+                        matching_info=dup_result.get('matching_voucher'),
+                        override_reason=data.get('override_reason') or data.get('duplicate_override_reason'),
+                        rule=dup_result.get('rule'),
+                    )
 
                 # Auto-allocate against unpaid invoices FIFO or preferred invoice
                 allocations = PaymentAllocationService.auto_allocate_voucher(voucher, preferred_invoice_id=invoice_id)
+
+                from apps.common.idempotency import IdempotencyService
+                cpr_resp_payload = {
+                    "success": True,
+                    "message": f"{voucher_type.title()} Voucher posted successfully.",
+                    "voucher_number": voucher.voucher_number,
+                    "amount": str(amount),
+                    "allocations": allocations,
+                    "voucher": {
+                        "id": str(voucher.id),
+                        "voucher_type": voucher.voucher_type,
+                        "voucher_number": voucher.voucher_number,
+                        "voucher_date": str(voucher.voucher_date),
+                        "due_date": str(voucher.due_date) if voucher.due_date else None,
+                        "party_ledger_id": str(voucher.party_ledger_id) if voucher.party_ledger_id else None,
+                        "party_name": voucher.party_ledger.name if voucher.party_ledger else '',
+                        "status": voucher.status,
+                        "version": getattr(voucher, 'version', 1) or 1,
+                        "total_amount": str(voucher.total_amount or '0.00'),
+                        "narration": voucher.narration or '',
+                        "server_updated_at": int(voucher.updated_at.timestamp() * 1000) if voucher.updated_at else int(timezone.now().timestamp() * 1000),
+                    }
+                }
+                IdempotencyService.commit_idempotent_operation(request, cpr_resp_payload, status_code=201)
 
             return Response({
                 "success": True,
@@ -2359,12 +2571,15 @@ class CreatePaymentReceiptAPIView(APIView):
                     "party_ledger_id": str(voucher.party_ledger_id) if voucher.party_ledger_id else None,
                     "party_name": voucher.party_ledger.name if voucher.party_ledger else '',
                     "status": voucher.status,
+                    "version": getattr(voucher, 'version', 1) or 1,
                     "total_amount": str(voucher.total_amount or '0.00'),
                     "narration": voucher.narration or '',
                     "server_updated_at": int(voucher.updated_at.timestamp() * 1000) if voucher.updated_at else int(timezone.now().timestamp() * 1000),
                 }
             }, status=status.HTTP_201_CREATED)
 
+        except PermissionDenied as pd:
+            return Response({"success": False, "error": str(pd)}, status=status.HTTP_403_FORBIDDEN)
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -2507,6 +2722,43 @@ class UniversalVoucherAPIView(APIView):
         if self.request.method in ['GET', 'HEAD', 'OPTIONS']:
             return [IsAuthenticated(), IsCompanyMember()]
         return [IsAuthenticated(), CanPostVoucher()]
+
+    @staticmethod
+    def _post_and_audit_voucher(request, company, voucher, allow_dup_override, parse_bool, data, items_data=None):
+        from apps.accounting.services.deduplication_engine import TransactionDeduplicationEngine
+        from apps.accounting.services.voucher_service import VoucherService
+
+        should_post = parse_bool(data['post_immediately']) if 'post_immediately' in data else True
+        dup_result = {"is_duplicate": False}
+        if voucher.voucher_type in ('SALES', 'PURCHASE', 'PAYMENT', 'RECEIPT'):
+            dup_result = TransactionDeduplicationEngine.check_duplicate_candidate(
+                company=company,
+                voucher_type=voucher.voucher_type,
+                party_ledger=voucher.party_ledger,
+                total_amount=voucher.total_amount,
+                voucher_date=voucher.voucher_date,
+                exclude_voucher_id=voucher.id,
+                lookback_minutes=15,
+                items_data=items_data,
+                reference_number=voucher.reference_number,
+                voucher_number=voucher.voucher_number,
+                external_invoice_number=voucher.external_invoice_number,
+            )
+            if dup_result.get('is_duplicate') and dup_result.get('rule') == 'RAPID_DOUBLE_SUBMISSION' and not allow_dup_override:
+                raise _DuplicateConflictException(dup_result)
+
+        if should_post:
+            voucher = VoucherService.post_voucher(voucher, force_duplicate=allow_dup_override)
+            if allow_dup_override and dup_result.get('is_duplicate'):
+                TransactionDeduplicationEngine.log_duplicate_override(
+                    company=company,
+                    user=request.user,
+                    voucher=voucher,
+                    matching_info=dup_result.get('matching_voucher'),
+                    override_reason=data.get('override_reason') or data.get('duplicate_override_reason'),
+                    rule=dup_result.get('rule'),
+                )
+        return voucher
 
     def get(self, request, company_id=None):
         try:
@@ -2688,6 +2940,10 @@ class UniversalVoucherAPIView(APIView):
                         "error": f"Permission denied: Only Owner, Admin, or CA can create {voucher_type} entries."
                     }, status=status.HTTP_403_FORBIDDEN)
 
+            from apps.accounting.services.deduplication_engine import TransactionDeduplicationEngine
+            parse_bool = TransactionDeduplicationEngine.parse_bool_flag
+            allow_dup_override = TransactionDeduplicationEngine.authorize_and_resolve_duplicate_override(request, company, data)
+
             with transaction.atomic():
                 # Case 1: Structured Items provided (Sales or Purchase)
                 if 'items' in data and len(data['items']) > 0:
@@ -2757,7 +3013,8 @@ class UniversalVoucherAPIView(APIView):
                             buyer_state_code=data.get('buyer_state_code'),
                             buyer_phone=data.get('buyer_phone'),
                             cartage_amount=Decimal(str(data.get('cartage_amount', 0) or 0)),
-                            cartage_ledger=Ledger.objects.filter(id=data.get('cartage_ledger_id'), company=company).first() if data.get('cartage_ledger_id') else None
+                            cartage_ledger=Ledger.objects.filter(id=data.get('cartage_ledger_id'), company=company).first() if data.get('cartage_ledger_id') else None,
+                            reference_number=data.get('reference_number')
                         )
                     elif voucher_type == 'PURCHASE':
                         purchase_ledger = None
@@ -2865,30 +3122,13 @@ class UniversalVoucherAPIView(APIView):
                         voucher.narration = narration
                         voucher.save(update_fields=['narration'])
 
-                    if data.get('post_immediately', True):
-                        VoucherService.post_voucher(voucher)
+                    voucher_items = list(voucher.items.select_related('product').all()) if voucher.voucher_type in ('SALES', 'PURCHASE') else None
+                    voucher = UniversalVoucherAPIView._post_and_audit_voucher(
+                        request, company, voucher, allow_dup_override, parse_bool, data, items_data=voucher_items
+                    )
 
                     from apps.common.idempotency import IdempotencyService
                     resp_dict = {
-                        "success": True,
-                        "message": f"{voucher_type.title()} voucher created and posted successfully.",
-                        "id": str(voucher.id),
-                        "voucher_id": str(voucher.id),
-                        "voucher_number": voucher.voucher_number,
-                        "total_amount": str(voucher.total_amount),
-                        "has_attachment": bool(voucher.attachment_mime),
-                        "voucher": {
-                            "id": str(voucher.id),
-                            "voucher_type": voucher.voucher_type,
-                            "voucher_number": voucher.voucher_number,
-                            "voucher_date": str(voucher.voucher_date),
-                            "status": voucher.status,
-                            "total_amount": str(voucher.total_amount or '0.00'),
-                        }
-                    }
-                    IdempotencyService.commit_idempotent_operation(request, resp_dict, status_code=201)
-
-                    return Response({
                         "success": True,
                         "message": f"{voucher_type.title()} voucher created and posted successfully.",
                         "id": str(voucher.id),
@@ -2905,11 +3145,14 @@ class UniversalVoucherAPIView(APIView):
                             "party_ledger_id": str(voucher.party_ledger_id) if voucher.party_ledger_id else None,
                             "party_name": voucher.party_ledger.name if voucher.party_ledger else '',
                             "status": voucher.status,
+                            "version": getattr(voucher, 'version', 1) or 1,
                             "total_amount": str(voucher.total_amount or '0.00'),
                             "narration": voucher.narration or '',
                             "server_updated_at": int(voucher.updated_at.timestamp() * 1000) if voucher.updated_at else int(timezone.now().timestamp() * 1000),
                         }
-                    }, status=status.HTTP_201_CREATED)
+                    }
+                    IdempotencyService.commit_idempotent_operation(request, resp_dict, status_code=201)
+                    return Response(resp_dict, status=status.HTTP_201_CREATED)
 
                 # Case 2: Generic Double-Entry Rows (e.g. from AG Grid / Journal / Contra)
                 entries_data = data.get('entries', data.get('ledger_entries', []))
@@ -2990,10 +3233,12 @@ class UniversalVoucherAPIView(APIView):
 
                 voucher.save()
 
-                if data.get('post_immediately', True):
-                    VoucherService.post_voucher(voucher)
+                voucher = UniversalVoucherAPIView._post_and_audit_voucher(
+                    request, company, voucher, allow_dup_override, parse_bool, data, items_data=None
+                )
 
-                return Response({
+                from apps.common.idempotency import IdempotencyService
+                case2_resp = {
                     "success": True,
                     "message": "Voucher created and posted successfully.",
                     "id": str(voucher.id),
@@ -3005,14 +3250,30 @@ class UniversalVoucherAPIView(APIView):
                         "voucher_type": voucher.voucher_type,
                         "voucher_number": voucher.voucher_number,
                         "voucher_date": str(voucher.voucher_date),
+                        "due_date": str(voucher.due_date) if voucher.due_date else None,
                         "status": voucher.status,
+                        "version": getattr(voucher, 'version', 1) or 1,
                         "total_amount": str(voucher.total_amount or '0.00'),
                         "party_name": voucher.party_ledger.name if voucher.party_ledger else '',
                         "narration": voucher.narration or '',
                         "server_updated_at": int(voucher.updated_at.timestamp() * 1000) if voucher.updated_at else int(timezone.now().timestamp() * 1000),
                     }
-                }, status=status.HTTP_201_CREATED)
+                }
+                IdempotencyService.commit_idempotent_operation(request, case2_resp, status_code=201)
+                return Response(case2_resp, status=status.HTTP_201_CREATED)
 
+        except PermissionDenied as pd:
+            return Response({"success": False, "error": str(pd)}, status=status.HTTP_403_FORBIDDEN)
+        except _DuplicateConflictException as dc:
+            dr = dc.dup_result
+            return Response({
+                "success": False,
+                "is_duplicate": True,
+                "requires_confirmation": True,
+                "error": dr.get("reason"),
+                "rule": dr.get("rule"),
+                "matching_voucher": dr.get("matching_voucher"),
+            }, status=status.HTTP_409_CONFLICT)
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -3605,6 +3866,7 @@ class CheckDuplicateVoucherAPIView(APIView):
         date_str = request.query_params.get('voucher_date') or request.query_params.get('date')
         invoice_id = request.query_params.get('invoice_id')
         exclude_id = request.query_params.get('exclude_id')
+        reference_number = request.query_params.get('reference_number')
 
         if not (voucher_type and amount_str and date_str):
             return Response({"is_duplicate": False, "confidence": 0.0, "reason": "Missing required fields"}, status=status.HTTP_200_OK)
@@ -3624,7 +3886,8 @@ class CheckDuplicateVoucherAPIView(APIView):
             total_amount=total_amount,
             voucher_date=voucher_date,
             preferred_invoice_id=invoice_id,
-            exclude_voucher_id=exclude_id
+            exclude_voucher_id=exclude_id,
+            reference_number=reference_number
         )
 
         return Response(result, status=status.HTTP_200_OK)

@@ -11,6 +11,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
+# JioFiber WAN DNS Workaround for Neon PostgreSQL
+_orig_getaddrinfo = socket.getaddrinfo
+def patched_getaddrinfo(host, port, *args, **kwargs):
+    if 'neon.tech' in host:
+        return _orig_getaddrinfo('52.76.246.190', port, *args, **kwargs)
+    return _orig_getaddrinfo(host, port, *args, **kwargs)
+socket.getaddrinfo = patched_getaddrinfo
 # Warm up Windows DNS for Neon PostgreSQL WAN connection
 for _ in range(5):
     try:

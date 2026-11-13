@@ -13,14 +13,7 @@ const config: CapacitorConfig = {
     allowNavigation: [
       'srilekh.com',
       '*.srilekh.com',
-      'api.srilekh.com',
-      'vouch-pi-one.vercel.app',
-      '*.vercel.app',
-      'api.whatsapp.com',
-      'wa.me',
-      'web.whatsapp.com',
-      'localhost',
-      '127.0.0.1'
+      'api.srilekh.com'
     ],
   },
   plugins: {

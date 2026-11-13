@@ -1,15 +1,20 @@
 import re
+import json
+import hashlib
 import datetime
 from decimal import Decimal
 from typing import Dict, Any, List, Optional
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
+from rest_framework.exceptions import PermissionDenied
 
 from apps.companies.models import Company
 from apps.ledgers.models import Ledger
 from apps.accounting.models import Voucher, LedgerEntry, PaymentAllocation, BankTransaction, AccountingFinding
 from apps.inventory.models import Product, InventoryEntry
 from apps.accounting.services.effective_voucher_service import EffectiveVoucherService
+from apps.accounts.permissions import user_has_company_roles
+from apps.audit.services.audit_service import AuditService
 
 
 class TransactionDeduplicationEngine:
@@ -21,6 +26,138 @@ class TransactionDeduplicationEngine:
     records for Books Health audits with deterministic, audit-preserving fixes.
     """
 
+    DUPLICATE_OVERRIDE_ALLOWED_ROLES = ['ADMIN', 'OWNER', 'CA']
+
+    @staticmethod
+    def parse_bool_flag(val) -> bool:
+        """Safely parses boolean override flags without treating string 'false'/'0' as True."""
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, (int, float)):
+            return val == 1
+        if isinstance(val, str):
+            return val.strip().lower() in ('true', '1', 'yes', 'on')
+        return False
+
+    @classmethod
+    def authorize_and_resolve_duplicate_override(cls, request, company: Company, data: Dict[str, Any]) -> bool:
+        """
+        Determines whether the caller explicitly requested a duplicate override
+        ('allow_duplicate', 'force_duplicate', or 'force_create') and enforces
+        strict RBAC (only OWNER, ADMIN, or CA may bypass duplicate protection).
+        """
+        if not isinstance(data, dict):
+            return False
+
+        override_requested = (
+            cls.parse_bool_flag(data.get('allow_duplicate'))
+            or cls.parse_bool_flag(data.get('force_duplicate'))
+            or cls.parse_bool_flag(data.get('force_create'))
+        )
+        if not override_requested:
+            return False
+
+        if not user_has_company_roles(request.user, company, cls.DUPLICATE_OVERRIDE_ALLOWED_ROLES):
+            raise PermissionDenied(
+                "Permission denied: Only Owner, Admin, or CA can authorize duplicate voucher override."
+            )
+        return True
+
+    @staticmethod
+    def log_duplicate_override(
+        company: Company,
+        user,
+        voucher: Voucher,
+        matching_info: Optional[Dict[str, Any]] = None,
+        override_reason: Optional[str] = None,
+        rule: Optional[str] = None,
+    ) -> None:
+        """Records explicit duplicate override authorization in the immutable audit trail."""
+        match = matching_info or {}
+        AuditService.log_action(
+            company=company,
+            user=user,
+            action='DUPLICATE_OVERRIDE',
+            model_name='Voucher',
+            record_id=voucher.id,
+            changes={
+                "voucher_number": voucher.voucher_number,
+                "voucher_type": voucher.voucher_type,
+                "voucher_date": str(voucher.voucher_date),
+                "total_amount": str(voucher.total_amount),
+                "reference_number": voucher.reference_number or "",
+                "rule_overridden": rule or "DUPLICATE_CANDIDATE",
+                "matched_voucher_id": match.get("id"),
+                "matched_voucher_number": match.get("voucher_number"),
+                "override_reason": str(override_reason or "Explicitly confirmed distinct transaction by authorized user").strip(),
+                "confirmed_by": getattr(user, 'email', str(getattr(user, 'id', 'SYSTEM'))),
+            }
+        )
+
+    @staticmethod
+    def normalize_commercial_reference(
+        reference_number: Optional[str] = None,
+        voucher_number: Optional[str] = None,
+        external_invoice_number: Optional[str] = None,
+    ) -> str:
+        """
+        Extracts canonical external/commercial reference (PO ref, supplier bill #, bank UTR/cheque).
+        Ignores auto-generated internal sequence numbers mirrored into reference_number.
+        """
+        ext = str(external_invoice_number or '').strip()
+        if ext:
+            return ext.lower()
+        ref = str(reference_number or '').strip()
+        vnum = str(voucher_number or '').strip()
+        if ref and (not vnum or ref.lower() != vnum.lower()):
+            return ref.lower()
+        return ''
+
+    @staticmethod
+    def compute_items_canonical_hash(items_or_dicts, company: Optional[Company] = None) -> Optional[str]:
+        """
+        Computes a deterministic canonical SHA-256 fingerprint over invoice line items
+        (sorted normalized product key, quantity, rate, discount_percent) so distinct
+        commercial baskets with identical grand totals are never collapsed as duplicates.
+        """
+        if not items_or_dicts:
+            return None
+
+        items_list = list(items_or_dicts)
+        if not items_list:
+            return None
+
+        normalized_lines = []
+        for item in items_list:
+            if isinstance(item, dict):
+                pid = item.get('product_id')
+                raw_name = str(item.get('product_name') or item.get('description') or item.get('name') or '').strip()
+                if not pid and company and raw_name:
+                    pid = Product.objects.filter(company=company, name__iexact=raw_name).values_list('id', flat=True).first()
+                product_key = f"id:{str(pid).strip().lower()}" if pid else f"name:{raw_name.lower()}"
+                qty = Decimal(str(item.get('quantity') or '0')).quantize(Decimal('0.01'))
+                rate = Decimal(str(item.get('rate') or '0')).quantize(Decimal('0.01'))
+                disc = Decimal(str(item.get('discount_percent') or '0')).quantize(Decimal('0.01'))
+            else:
+                pid = getattr(item, 'product_id', None)
+                prod_obj = getattr(item, 'product', None)
+                raw_name = str(getattr(prod_obj, 'name', '') or getattr(item, 'description', '') or '').strip()
+                product_key = f"id:{str(pid).strip().lower()}" if pid else f"name:{raw_name.lower()}"
+                qty = Decimal(str(getattr(item, 'quantity', 0) or '0')).quantize(Decimal('0.01'))
+                rate = Decimal(str(getattr(item, 'rate', 0) or '0')).quantize(Decimal('0.01'))
+                disc = Decimal(str(getattr(item, 'discount_percent', 0) or '0')).quantize(Decimal('0.01'))
+
+            normalized_lines.append({
+                "product": product_key,
+                "qty": f"{qty:.2f}",
+                "rate": f"{rate:.2f}",
+                "disc": f"{disc:.2f}",
+            })
+
+        normalized_lines.sort(key=lambda x: (x["product"], x["qty"], x["rate"], x["disc"]))
+        canonical_json = json.dumps(normalized_lines, sort_keys=True, separators=(',', ':'))
+        return hashlib.sha256(canonical_json.encode('utf-8')).hexdigest()
+
     @classmethod
     def check_duplicate_candidate(
         cls,
@@ -31,16 +168,21 @@ class TransactionDeduplicationEngine:
         voucher_date: datetime.date,
         preferred_invoice_id: Optional[str] = None,
         exclude_voucher_id: Optional[str] = None,
-        lookback_minutes: int = 15
+        lookback_minutes: int = 15,
+        items_data: Optional[List[Any]] = None,
+        reference_number: Optional[str] = None,
+        voucher_number: Optional[str] = None,
+        external_invoice_number: Optional[str] = None,
+        payment_ledger_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Real-time gatekeeper pre-check before saving/posting a voucher.
         Checks:
-        1. Exact duplicate (same type, party, amount, date)
+        1. Exact rapid double-submission (same type, party, amount, date, matching items & non-distinct ref)
         2. Duplicate payment allocated against the same invoice
-        3. Rapid double-submission (created within lookback_minutes with same attributes)
+        3. Exact transaction match on same day (when items and commercial references do not distinguish it)
         """
-        amount = Decimal(str(total_amount or '0.00'))
+        amount = Decimal(str(total_amount or '0.00')).quantize(Decimal('0.01'))
         if amount <= Decimal('0.00'):
             return {"is_duplicate": False, "confidence": 0.0}
 
@@ -57,9 +199,43 @@ class TransactionDeduplicationEngine:
         if exclude_voucher_id:
             qs = qs.exclude(id=exclude_voucher_id)
 
+        cand_items_hash = cls.compute_items_canonical_hash(items_data, company=company) if items_data else None
+        cand_ref = cls.normalize_commercial_reference(
+            reference_number=reference_number,
+            voucher_number=voucher_number,
+            external_invoice_number=external_invoice_number,
+        )
+
+        # Evaluate candidates with item-level canonical hash and commercial reference distinction
+        candidates = list(
+            qs.prefetch_related('items', 'items__product')
+            .defer('attachment_data', 'attachment_mime')
+            .order_by('-created_at')
+        )
+        matching_candidates = []
+        for cand in candidates:
+            if cand_items_hash:
+                existing_items = list(cand.items.all())
+                if existing_items:
+                    existing_items_hash = cls.compute_items_canonical_hash(existing_items, company=company)
+                    if existing_items_hash and existing_items_hash != cand_items_hash:
+                        # Different line-item basket: legitimate distinct invoice even with matching total
+                        continue
+
+            existing_ref = cls.normalize_commercial_reference(
+                reference_number=cand.reference_number,
+                voucher_number=cand.voucher_number,
+                external_invoice_number=cand.external_invoice_number,
+            )
+            if (cand_ref or existing_ref) and cand_ref != existing_ref:
+                # Explicitly distinct commercial reference / PO / supplier bill / UTR number
+                continue
+
+            matching_candidates.append(cand)
+
         # 1. Check for rapid double-submission (created in last N minutes)
         recent_threshold = timezone.now() - datetime.timedelta(minutes=lookback_minutes)
-        rapid_dup = qs.filter(created_at__gte=recent_threshold).first()
+        rapid_dup = next((c for c in matching_candidates if c.created_at and c.created_at >= recent_threshold), None)
         if rapid_dup:
             return {
                 "is_duplicate": True,
@@ -111,8 +287,8 @@ class TransactionDeduplicationEngine:
                     }
                 }
 
-        # 3. Exact match on date, party, amount, and type
-        exact_dup = qs.first()
+        # 3. Exact match on date, party, amount, type, items, and non-distinct ref
+        exact_dup = matching_candidates[0] if matching_candidates else None
         if exact_dup:
             return {
                 "is_duplicate": True,
@@ -310,17 +486,54 @@ class TransactionDeduplicationEngine:
                 flagged_voucher_ids.add(dup_v.id)
                 flagged_voucher_ids.add(primary_v.id)
 
-                # Detect origin / cause
-                linked_bank_tx = bank_tx_matched_map.get(dup_v.id)
-                is_bank_recon = bool(linked_bank_tx)
-                is_rapid = (dup_v.created_at - primary_v.created_at).total_seconds() < 300
+                # Detect origin / cause and deterministic corroboration (DEF-DUP-02)
+                bt_dup = bank_tx_matched_map.get(dup_v.id)
+                bt_prim = bank_tx_matched_map.get(primary_v.id)
+                is_bank_recon = bool(bt_dup or bt_prim)
+                is_bank_collision = bool((bt_dup is not None) != (bt_prim is not None))
+                is_rapid = abs((dup_v.created_at - primary_v.created_at).total_seconds()) < 300
 
-                if is_bank_recon:
+                # Reference number / UTR / invoice digits check
+                r1_digits = {n.lstrip('0') for n in re.findall(r'\d+', primary_v.reference_number or '') if n.lstrip('0')}
+                r2_digits = {n.lstrip('0') for n in re.findall(r'\d+', dup_v.reference_number or '') if n.lstrip('0')}
+                ext1_digits = {n.lstrip('0') for n in re.findall(r'\d+', primary_v.external_invoice_number or '') if n.lstrip('0')}
+                ext2_digits = {n.lstrip('0') for n in re.findall(r'\d+', dup_v.external_invoice_number or '') if n.lstrip('0')}
+                common_digits = (r1_digits & r2_digits) | (ext1_digits & ext2_digits)
+                ref_digit_match = bool(common_digits)
+
+                ref_str_match = bool(
+                    primary_v.reference_number and dup_v.reference_number and
+                    primary_v.reference_number.strip().lower() == dup_v.reference_number.strip().lower()
+                )
+                ext_str_match = bool(
+                    primary_v.external_invoice_number and dup_v.external_invoice_number and
+                    primary_v.external_invoice_number.strip().lower() == dup_v.external_invoice_number.strip().lower()
+                )
+
+                linked_bank_tx = bt_dup or bt_prim
+
+                if is_bank_collision or (is_bank_recon and (ref_digit_match or ref_str_match)):
                     source_desc = "Created via Bank Reconciliation while manual voucher already existed"
+                    duplicate_classification = "CONFIRMED_DUPLICATE"
+                    fix_action = "VOID_DUPLICATE_VOUCHER"
+                    suggested_action = f"Permanently delete duplicate voucher #{dup_v.voucher_number} from system and record in Audit Trail, retaining #{primary_v.voucher_number}."
+                elif ref_digit_match or ref_str_match or ext_str_match:
+                    match_ref = next(iter(common_digits), dup_v.reference_number)
+                    source_desc = f"Identical {group['voucher_type']} recorded with matching reference/cheque digits ({match_ref})"
+                    duplicate_classification = "CONFIRMED_DUPLICATE"
+                    fix_action = "VOID_DUPLICATE_VOUCHER"
+                    suggested_action = f"Permanently delete duplicate voucher #{dup_v.voucher_number} from system and record in Audit Trail, retaining #{primary_v.voucher_number}."
                 elif is_rapid:
                     source_desc = "Rapid double-click submission (created within seconds of original)"
+                    duplicate_classification = "CONFIRMED_DUPLICATE"
+                    fix_action = "VOID_DUPLICATE_VOUCHER"
+                    suggested_action = f"Permanently delete duplicate voucher #{dup_v.voucher_number} from system and record in Audit Trail, retaining #{primary_v.voucher_number}."
                 else:
-                    source_desc = "Identical manual double-entry"
+                    # Legitimate distinct payments on the same day must NOT be automatically deleted!
+                    source_desc = "Multiple same-day entries with identical amount (review required)"
+                    duplicate_classification = "PROBABLE_DUPLICATE"
+                    fix_action = None
+                    suggested_action = f"Review vouchers #{primary_v.voucher_number} and #{dup_v.voucher_number}. If this represents two distinct transactions, keep both. Otherwise, void or cancel the duplicate voucher."
 
                 findings_data.append({
                     "type": "DUPLICATE_VOUCHER",
@@ -345,13 +558,14 @@ class TransactionDeduplicationEngine:
                         "has_linked_bank_tx": bool(linked_bank_tx),
                         "linked_bank_tx_id": str(linked_bank_tx.id) if linked_bank_tx else None,
                         "linked_bank_tx_desc": linked_bank_tx.description if linked_bank_tx else None,
+                        "duplicate_classification": duplicate_classification,
                     },
                     "expected_state": f"Single {group['voucher_type']} voucher #{primary_v.voucher_number} for ₹{group['total_amount']}.",
                     "actual_state": f"{len(vouchers)} duplicate vouchers posted ({', '.join(v.voucher_number for v in vouchers)}).",
                     "probable_cause": source_desc,
-                    "suggested_action": f"Permanently delete duplicate voucher #{dup_v.voucher_number} from system and record in Audit Trail, retaining #{primary_v.voucher_number}.",
-                    "confidence": 0.98,
-                    "fix_action": "VOID_DUPLICATE_VOUCHER"
+                    "suggested_action": suggested_action,
+                    "confidence": 0.98 if duplicate_classification == "CONFIRMED_DUPLICATE" else 0.75,
+                    "fix_action": fix_action
                 })
 
         # 2. Near-date duplicate detection (1 to 3 days apart for same party & amount):
@@ -459,6 +673,16 @@ class TransactionDeduplicationEngine:
                     else:
                         source_desc = f"Identical {ng['voucher_type']} recorded {day_diff} day(s) apart"
 
+                    if ref_digit_match and is_bank_collision:
+                        duplicate_classification = "CONFIRMED_DUPLICATE"
+                        near_fix_action = "VOID_DUPLICATE_VOUCHER"
+                    elif is_bank_collision or ref_digit_match or ref_str_match:
+                        duplicate_classification = "PROBABLE_DUPLICATE"
+                        near_fix_action = None  # Requires manual accountant confirmation
+                    else:
+                        duplicate_classification = "POSSIBLE_DUPLICATE"
+                        near_fix_action = None
+
                     findings_data.append({
                         "type": "DUPLICATE_VOUCHER",
                         "category": "DUPLICATE",
@@ -485,13 +709,14 @@ class TransactionDeduplicationEngine:
                             "has_linked_bank_tx": bool(linked_bank_tx),
                             "linked_bank_tx_id": str(linked_bank_tx.id) if linked_bank_tx else None,
                             "linked_bank_tx_desc": linked_bank_tx.description if linked_bank_tx else None,
+                            "duplicate_classification": duplicate_classification,
                         },
                         "expected_state": f"Single {ng['voucher_type']} voucher #{primary_v.voucher_number} for ₹{primary_v.total_amount}.",
                         "actual_state": f"Duplicate {ng['voucher_type']} #{dup_v.voucher_number} posted within {day_diff} day(s) of #{primary_v.voucher_number}.",
                         "probable_cause": source_desc,
-                        "suggested_action": f"Permanently delete duplicate voucher #{dup_v.voucher_number} from system and record in Audit Trail, retaining #{primary_v.voucher_number}.",
+                        "suggested_action": f"Permanently delete duplicate voucher #{dup_v.voucher_number} from system and record in Audit Trail, retaining #{primary_v.voucher_number}." if near_fix_action else f"Review potential duplicate {ng['voucher_type']} #{dup_v.voucher_number} manually.",
                         "confidence": 0.98 if (ref_digit_match and is_bank_collision) else 0.95,
-                        "fix_action": "VOID_DUPLICATE_VOUCHER"
+                        "fix_action": near_fix_action
                     })
 
         # Check duplicate payment allocations against the same invoice

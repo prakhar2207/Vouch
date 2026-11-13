@@ -2,7 +2,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
 import api from "@/utils/api";
 import { isAuthenticated } from "@/utils/auth";
-import { offlineDb } from "@/lib/db/offlineDb";
+import { offlineDb, safePurgeTenantData } from "@/lib/db/offlineDb";
 
 export interface Company {
   id: string;
@@ -26,6 +26,7 @@ interface CompanyContextType {
   companyId: string | null;
   loading: boolean;
   setActiveCompany: (company: Company) => void;
+  switchCompany: (company: Company) => Promise<void>;
   refreshCompanies: () => Promise<Company | null>;
 }
 
@@ -185,7 +186,7 @@ export function CompanyProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const setActiveCompany = (company: Company) => {
+  const applyCompanyContext = useCallback((company: Company) => {
     setActiveCompanyState(company);
     if (typeof window !== "undefined" && company) {
       localStorage.setItem(STORAGE_KEY, company.id);
@@ -209,7 +210,28 @@ export function CompanyProvider({ children }: { children: React.ReactNode }) {
       // Retain company in IndexedDB
       offlineDb.masters.put({ key: `company_${company.id}`, data: company, updatedAt: Date.now() }).catch(() => {});
     }
-  };
+  }, []);
+
+  const setActiveCompany = useCallback((company: Company) => {
+    const prevId =
+      activeCompany?.id ||
+      (typeof window !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null);
+    if (prevId && company && prevId !== company.id) {
+      // Purge previous tenant read caches while preserving unacknowledged outbox items
+      safePurgeTenantData(prevId).catch(() => {});
+    }
+    applyCompanyContext(company);
+  }, [activeCompany, applyCompanyContext]);
+
+  const switchCompany = useCallback(async (company: Company): Promise<void> => {
+    const prevId =
+      activeCompany?.id ||
+      (typeof window !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null);
+    if (prevId && company && prevId !== company.id) {
+      await safePurgeTenantData(prevId);
+    }
+    applyCompanyContext(company);
+  }, [activeCompany, applyCompanyContext]);
 
   useEffect(() => {
     refreshCompanies();
@@ -223,6 +245,7 @@ export function CompanyProvider({ children }: { children: React.ReactNode }) {
         companyId: activeCompany?.id || null,
         loading,
         setActiveCompany,
+        switchCompany,
         refreshCompanies,
       }}
     >

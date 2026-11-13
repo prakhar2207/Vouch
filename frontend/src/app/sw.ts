@@ -6,8 +6,16 @@ import {
   CacheFirst,
   ExpirationPlugin,
   NetworkFirst,
+  NetworkOnly,
   type RuntimeCaching,
 } from "serwist";
+import {
+  filterSafeDefaultCache,
+  isSensitiveOrApiRequest,
+  SENSITIVE_CACHE_NAMES,
+  shouldPurgeCacheOnActivate,
+  shouldPurgeCacheOnLogout,
+} from "../lib/pwa/sw-cache-policy";
 
 declare global {
   interface WorkerGlobalScope {
@@ -17,24 +25,32 @@ declare global {
 
 declare const self: ServiceWorkerGlobalScope;
 
-// Filter defaultCache so catch-all matchers do NOT intercept backend API or cross-origin calls
-const safeDefaultCache = defaultCache.filter((entry) => {
-  if (entry.matcher instanceof RegExp && entry.matcher.toString() === "/.*/i") {
-    return false;
-  }
-  return true;
-});
+// Strictly filter Serwist defaultCache so cross-origin APIs, RSC payloads,
+// JSON/XML/CSV downloads, and session pages cannot be cached by generic defaults.
+const safeDefaultCache = filterSafeDefaultCache(defaultCache);
 
 // Accounting custom runtime caching strategies
-// RULE: Service Worker must NEVER intercept, cache, or modify authenticated accounting API requests
-// (e.g., /api/v1/companies/, /api/v1/sync/, onrender.com backend, etc.)
+// RULE: Service Worker must NEVER cache authenticated accounting API requests,
+// backend API origins (api.srilekh.com, *.onrender.com), or Authorization-bearing requests.
 // All offline financial data is managed authoritatively via IndexedDB (Dexie).
 const accountingCustomCaching: RuntimeCaching[] = [
-  // 0. Navigation / Documents (NetworkFirst with offline fallback)
+  // -1. Explicit NetworkOnly guard for all APIs, backend hosts, and authenticated requests
   {
-    matcher: ({ request, url }: any) => {
-      // Never intercept API calls or backend endpoints
-      if (url.pathname.startsWith("/api/")) return false;
+    matcher: ({ request, url }: { request: Request; url: URL }) =>
+      isSensitiveOrApiRequest({
+        url,
+        hasAuthorizationHeader: Boolean(request.headers.get("Authorization")),
+      }),
+    handler: new NetworkOnly(),
+  },
+
+  // 0. Navigation / Documents (NetworkFirst with short timeout + offline fallback)
+  // Policy pages (/pricing, /contact, /privacy-policy, /terms, /refund-policy) always fetch live network first when online.
+  {
+    matcher: ({ request, url }: { request: Request; url: URL }) => {
+      if (isSensitiveOrApiRequest({ url, hasAuthorizationHeader: Boolean(request.headers.get("Authorization")) })) {
+        return false;
+      }
       return request.mode === "navigate" || request.destination === "document";
     },
     handler: new NetworkFirst({
@@ -46,7 +62,7 @@ const accountingCustomCaching: RuntimeCaching[] = [
           maxAgeSeconds: 24 * 60 * 60, // 24 hours (prevents stale HTML shells on shared devices)
         }),
         {
-          handlerDidError: async ({ request }: any) => {
+          handlerDidError: async ({ request }: { request: Request }) => {
             try {
               // 1. Try exact match from cache first
               const exactMatch = await caches.match(request);
@@ -72,7 +88,7 @@ const accountingCustomCaching: RuntimeCaching[] = [
                 if (inv) return inv;
               }
               if (reqUrl.includes("/parties") || reqUrl.includes("/ledgers")) {
-                const parties = await caches.match("/parties") || await caches.match("/ledgers");
+                const parties = (await caches.match("/parties")) || (await caches.match("/ledgers"));
                 if (parties) return parties;
               }
               if (reqUrl.includes("/banking")) {
@@ -104,12 +120,12 @@ const accountingCustomCaching: RuntimeCaching[] = [
 </head>
 <body>
   <div class="card">
-    <div class="badge">⚡ OFFLINE MODE</div>
+    <div class="badge">OFFLINE MODE</div>
     <h2>SriLekh Offline</h2>
-    <p>Your local accounting engine is operational. You can continue creating sales invoices without internet.</p>
-    <a href="/sales/new" class="btn">📝 Create Sales Invoice</a>
-    <a href="/sales" class="btn btn-secondary">📋 View Sales</a>
-    <a href="/dashboard" class="btn btn-secondary">📊 Dashboard</a>
+    <p>Your local accounting engine is operational. You can continue creating supported offline invoices without internet.</p>
+    <a href="/sales/new" class="btn">Create Sales Invoice</a>
+    <a href="/sales" class="btn btn-secondary">View Sales</a>
+    <a href="/dashboard" class="btn btn-secondary">Dashboard</a>
   </div>
 </body>
 </html>`,
@@ -157,23 +173,23 @@ try {
     runtimeCaching: [...accountingCustomCaching, ...safeDefaultCache],
   });
 } catch (swInitErr) {
-  console.warn('[SW] Serwist registration fallback triggered:', swInitErr);
+  console.warn("[SW] Serwist registration fallback triggered:", swInitErr);
 }
 
 // Precache offline page on install
-self.addEventListener("install", (event: any) => {
+self.addEventListener("install", (event: ExtendableEvent) => {
   event.waitUntil(
     caches.open("srilekh-pages-cache").then((cache) => cache.add("/~offline").catch(() => {}))
   );
 });
 
-// Cache cleanup: Wipe obsolete vouch, legacy shrilekh, and previous icon caches from existing clients
-self.addEventListener("activate", (event: any) => {
+// Cache cleanup: Wipe obsolete vouch, legacy shrilekh, and legacy unsafe cross-origin/API caches
+self.addEventListener("activate", (event: ExtendableEvent) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames
-          .filter((cacheName) => cacheName.includes("vouch") || cacheName.includes("shrilekh") || cacheName === "srilekh-static-icons")
+          .filter((cacheName) => shouldPurgeCacheOnActivate(cacheName))
           .map((cacheName) => caches.delete(cacheName))
       );
     })
@@ -181,18 +197,24 @@ self.addEventListener("activate", (event: any) => {
 });
 
 // VSA-12: Session cache purge listener on user logout (shared-device protection)
-self.addEventListener("message", (event: any) => {
+self.addEventListener("message", (event: ExtendableMessageEvent) => {
   if (event.data && event.data.type === "CLEAR_SESSION_CACHES") {
     event.waitUntil(
-      caches.delete("srilekh-pages-cache").then(() => {
-        console.log("[SW] Cleared navigation page cache upon user logout.");
-      })
+      (async () => {
+        const cacheNames = await caches.keys().catch(() => [] as string[]);
+        const targets = new Set<string>([
+          ...SENSITIVE_CACHE_NAMES,
+          ...cacheNames.filter((name) => shouldPurgeCacheOnLogout(name)),
+        ]);
+        await Promise.all(Array.from(targets).map((name) => caches.delete(name).catch(() => false)));
+        console.log("[SW] Cleared session, page, and dynamic data caches upon user logout.");
+      })()
     );
   }
 });
 
 // Service Worker Background Sync Event Listener
-self.addEventListener("sync", (event: any) => {
+self.addEventListener("sync", ((event: Event & { tag?: string; waitUntil: (f: Promise<unknown>) => void }) => {
   if (event.tag === "srilekh-outbox-sync") {
     event.waitUntil(
       (async () => {
@@ -206,47 +228,39 @@ self.addEventListener("sync", (event: any) => {
       })()
     );
   }
-});
+}) as EventListener);
 
-
-self.addEventListener('push', (event: any) => {
-  let data: any = {};
+self.addEventListener("push", ((event: Event & { data?: { json: () => Record<string, string>; text: () => string }; waitUntil: (f: Promise<unknown>) => void }) => {
+  let data: Record<string, string> = {};
   try {
     data = event.data ? event.data.json() : {};
-  } catch (e) {
-    data = { body: event.data ? event.data.text() : '' };
+  } catch {
+    data = { body: event.data ? event.data.text() : "" };
   }
-  const title = data.title || 'New Notification';
+  const title = data.title || "New Notification";
   const options = {
-    body: data.body || 'You have a new alert in SriLekh.',
-    icon: '/icons/icon-192x192.png',
-    badge: '/icons/icon-192x192.png',
+    body: data.body || "You have a new alert in SriLekh.",
+    icon: "/icons/icon-192x192.png",
+    badge: "/icons/icon-192x192.png",
     data: {
-      url: data.url || '/network/inbox',
+      url: data.url || "/network/inbox",
     },
   };
   event.waitUntil(self.registration.showNotification(title, options));
-});
+}) as EventListener);
 
-self.addEventListener('notificationclick', (event: any) => {
+self.addEventListener("notificationclick", ((event: Event & { notification: { close: () => void; data?: { url?: string } }; waitUntil: (f: Promise<unknown>) => void }) => {
   event.notification.close();
-  const urlToOpen = new URL(event.notification.data.url, self.location.origin).href;
+  const targetPath = event.notification.data?.url || "/network/inbox";
+  const urlToOpen = new URL(targetPath, self.location.origin).href;
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
-      let matchingClient = null;
-      for (let i = 0; i < windowClients.length; i++) {
-        const windowClient = windowClients[i];
-        if (windowClient.url === urlToOpen) {
-          matchingClient = windowClient;
-          break;
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((windowClients) => {
+      for (const windowClient of windowClients) {
+        if (windowClient.url === urlToOpen && "focus" in windowClient) {
+          return windowClient.focus();
         }
       }
-      if (matchingClient) {
-        return matchingClient.focus();
-      } else {
-        return self.clients.openWindow(urlToOpen);
-      }
+      return self.clients.openWindow(urlToOpen);
     })
   );
-});
-
+}) as EventListener);

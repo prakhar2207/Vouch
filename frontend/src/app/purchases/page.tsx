@@ -153,9 +153,10 @@ function PurchaseInvoiceListContent() {
       const token = getAccessToken();
       let serverSummaryFetched = false;
 
-      if (token) {
+      if (isAuthenticated()) {
         try {
-          const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": companyId };
+          const headers: Record<string, string> = { "X-Company-ID": companyId };
+          if (token) headers.Authorization = `Bearer ${token}`;
           const params = new URLSearchParams();
           if (startDate) params.append("start_date", startDate);
           if (endDate) params.append("end_date", endDate);

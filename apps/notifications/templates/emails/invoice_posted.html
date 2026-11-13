@@ -1,0 +1,94 @@
+{% extends "emails/base_email.html" %}
+
+{% block content %}
+<div style="text-align: center; margin-bottom: 20px;">
+    <span class="badge badge-success">Official Tax Invoice</span>
+</div>
+
+<h2 style="margin-top: 0; color: #0f172a; font-size: 22px; font-weight: 700; text-align: center;">New Invoice Issued</h2>
+<p style="text-align: center; color: #64748b; font-size: 15px; margin-top: -6px;">
+    <strong>{{ seller_name }}</strong> has issued a tax invoice to <strong>{{ recipient_name }}</strong>.
+</p>
+
+<div class="info-card">
+    <div class="info-row">
+        <span style="color: #64748b;">Invoice Number</span>
+        <strong style="color: #0f172a; font-family: monospace;">{{ invoice_number }}</strong>
+    </div>
+    <div class="info-row">
+        <span style="color: #64748b;">Invoice Date</span>
+        <strong style="color: #0f172a;">{{ invoice_date }}</strong>
+    </div>
+    {% if due_date %}
+    <div class="info-row">
+        <span style="color: #64748b;">Due Date</span>
+        <strong style="color: #0f172a;">{{ due_date }}</strong>
+    </div>
+    {% endif %}
+    {% if seller_gstin %}
+    <div class="info-row">
+        <span style="color: #64748b;">Seller GSTIN</span>
+        <strong style="color: #0f172a; font-family: monospace;">{{ seller_gstin }}</strong>
+    </div>
+    {% endif %}
+    {% if recipient_gstin %}
+    <div class="info-row">
+        <span style="color: #64748b;">Recipient GSTIN</span>
+        <strong style="color: #0f172a; font-family: monospace;">{{ recipient_gstin }}</strong>
+    </div>
+    {% endif %}
+    <div class="info-row">
+        <span style="color: #64748b;">Taxable Amount</span>
+        <strong style="color: #0f172a;">₹{{ taxable_amount }}</strong>
+    </div>
+    {% if cgst_amount %}
+    <div class="info-row">
+        <span style="color: #64748b;">CGST</span>
+        <strong style="color: #0f172a;">₹{{ cgst_amount }}</strong>
+    </div>
+    {% endif %}
+    {% if sgst_amount %}
+    <div class="info-row">
+        <span style="color: #64748b;">SGST</span>
+        <strong style="color: #0f172a;">₹{{ sgst_amount }}</strong>
+    </div>
+    {% endif %}
+    {% if igst_amount %}
+    <div class="info-row">
+        <span style="color: #64748b;">IGST</span>
+        <strong style="color: #0f172a;">₹{{ igst_amount }}</strong>
+    </div>
+    {% endif %}
+    <div class="info-row" style="background: #e0f2fe; padding: 12px 14px; border-radius: 8px; margin-top: 10px;">
+        <span style="color: #0369a1; font-weight: 700; font-size: 16px;">Total Invoice Value</span>
+        <strong style="color: #0369a1; font-size: 18px;">₹{{ total_amount }}</strong>
+    </div>
+</div>
+
+{% if secure_view_url %}
+<div style="text-align: center; margin: 30px 0;">
+    <a href="{{ secure_view_url }}" class="btn">View & Download Tax Invoice &rarr;</a>
+    <p style="font-size: 12px; color: #94a3b8; margin-top: 8px;">
+        {% if has_attachment %}
+        A copy of this invoice PDF is also attached to this email.
+        {% else %}
+        Click above to securely view or download your official GST invoice PDF.
+        {% endif %}
+    </p>
+</div>
+{% endif %}
+
+<div class="info-card" style="margin-top: 24px;">
+    <div style="font-size: 13px; font-weight: 700; color: #0f172a; margin-bottom: 8px;">Issuer Contact Information:</div>
+    <div style="font-size: 13px; color: #475569; line-height: 1.5;">
+        <strong>{{ seller_name }}</strong><br/>
+        {% if seller_address %}{{ seller_address }}<br/>{% endif %}
+        {% if seller_phone %}Phone: {{ seller_phone }} &bull; {% endif %}
+        {% if seller_email %}Email: <a href="mailto:{{ seller_email }}" style="color: #2563eb;">{{ seller_email }}</a>{% endif %}
+    </div>
+</div>
+
+<p style="font-size: 12px; color: #94a3b8; text-align: center; margin-top: 24px;">
+    This transaction has been recorded on the SriLekh B2B Invoicing Network.
+</p>
+{% endblock %}

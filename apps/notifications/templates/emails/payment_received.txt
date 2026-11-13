@@ -1,0 +1,18 @@
+Payment Received — SriLekh
+
+{{ seller_name }} acknowledges receipt of payment from {{ recipient_name }}.
+
+Receipt Details:
+- Voucher No.: {{ voucher_number }}
+- Payment Date: {{ payment_date }}
+{% if payment_mode %}- Payment Mode: {{ payment_mode }}
+{% endif %}{% if reference_no %}- Reference No.: {{ reference_no }}
+{% endif %}- Amount Received: INR {{ amount }}
+
+Thank you for your business.
+
+--
+SriLekh Technologies
+https://srilekh.com
+Support: support@srilekh.com
+Sender: admin@srilekh.com

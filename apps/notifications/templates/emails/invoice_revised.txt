@@ -1,0 +1,17 @@
+Revised Tax Invoice — SriLekh
+
+{{ seller_name }} has issued an amendment to invoice {{ invoice_number }}.
+
+Details:
+- Invoice Number: {{ invoice_number }}
+- Revised Date: {{ invoice_date }}
+- Updated Invoice Total: INR {{ total_amount }}
+
+{% if secure_view_url %}View Updated Invoice:
+{{ secure_view_url }}
+{% endif %}
+--
+SriLekh Technologies
+https://srilekh.com
+Support: support@srilekh.com
+Sender: admin@srilekh.com

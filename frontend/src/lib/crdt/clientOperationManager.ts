@@ -2,9 +2,8 @@ import { offlineDb, type ClientAccountingOperation, type OutboxItem, type InboxI
 import { ClientKeyManager } from "./clientKeyManager";
 import { canonicalJsonStringify, computeCanonicalSha256, getCanonicalOperationDict } from "./canonicalJson";
 import { buildCanonicalTransaction, hashCanonicalTransaction, type CanonicalTransactionEnvelope } from "./canonicalTransaction";
-import { getAccessToken } from "@/utils/auth";
-import { getValidAccessToken } from "@/utils/api";
-import { API_BASE_URL } from "@/utils/api";
+import { getAccessToken, getAuthEpoch, getUser, isAuthenticated } from "@/utils/auth";
+import { apiFetch, API_BASE_URL, ensureValidSession } from "@/utils/api";
 
 export interface VoucherMutationParams {
   companyId: string;
@@ -17,9 +16,13 @@ export interface VoucherMutationParams {
 }
 
 export class ClientOperationManager {
-  private static syncChannel = typeof window !== "undefined" && "BroadcastChannel" in window
-    ? new BroadcastChannel("vouch_local_sync")
-    : null;
+  private static syncChannel = (() => {
+    const ch = typeof window !== "undefined" && "BroadcastChannel" in window
+      ? new BroadcastChannel("vouch_local_sync")
+      : null;
+    (ch as unknown as { unref?: () => void } | null)?.unref?.();
+    return ch;
+  })();
 
   public static getReplicaId(): string {
     return ClientKeyManager.getReplicaId();
@@ -161,9 +164,12 @@ export class ClientOperationManager {
       throw new Error("Cryptographic Signing Failed: Generated invalid signature length.");
     }
 
+    const currentUserId = getUser()?.id || null;
     const op: ClientAccountingOperation = {
       operationId,
       transactionId,
+      companyId: params.companyId,
+      userId: currentUserId,
       replicaId,
       operationType,
       operationClass,
@@ -181,6 +187,8 @@ export class ClientOperationManager {
     await offlineDb.outboxQueue.add({
       operationId,
       transactionId,
+      companyId: params.companyId,
+      userId: currentUserId,
       status: "QUEUED",
       retryCount: 0,
       createdAt: timestamp,
@@ -320,6 +328,8 @@ export class ClientOperationManager {
   /**
    * Flushes queued outbox operations to the SriLekh backend protocol endpoint.
    */
+  private static activeSyncPromise: Promise<{ syncedCount: number; receivedCount: number; status: string }> | null = null;
+
   public static async syncOutboxWithServer(apiBaseUrl?: string): Promise<{
     syncedCount: number;
     receivedCount: number;
@@ -328,18 +338,29 @@ export class ClientOperationManager {
     if (typeof navigator !== "undefined" && !navigator.onLine) {
       return { syncedCount: 0, receivedCount: 0, status: "OFFLINE" };
     }
-
-    // Cross-tab synchronization lock: Prevents duplicate sync loops in separate browser tabs
-    if (typeof navigator !== "undefined" && "locks" in navigator) {
-      return await (navigator as any).locks.request("vouch_outbox_sync_mutex", { ifAvailable: true }, async (lock: any) => {
-        if (!lock) {
-          return { syncedCount: 0, receivedCount: 0, status: "LOCKED_BY_OTHER_TAB" };
-        }
-        return await this._doSyncOutboxWithServer(apiBaseUrl);
-      });
+    if (this.activeSyncPromise) {
+      return await this.activeSyncPromise;
     }
 
-    return await this._doSyncOutboxWithServer(apiBaseUrl);
+    const runner = async () => {
+      // Cross-tab synchronization lock: Prevents duplicate sync loops in separate browser tabs
+      if (typeof navigator !== "undefined" && "locks" in navigator && typeof (navigator as any).locks?.request === "function") {
+        return await (navigator as any).locks.request("vouch_outbox_sync_mutex", { ifAvailable: true }, async (lock: any) => {
+          if (!lock) {
+            return { syncedCount: 0, receivedCount: 0, status: "LOCKED_BY_OTHER_TAB" };
+          }
+          return await this._doSyncOutboxWithServer(apiBaseUrl);
+        });
+      }
+      return await this._doSyncOutboxWithServer(apiBaseUrl);
+    };
+
+    this.activeSyncPromise = runner();
+    try {
+      return await this.activeSyncPromise;
+    } finally {
+      this.activeSyncPromise = null;
+    }
   }
 
   private static async _doSyncOutboxWithServer(apiBaseUrl?: string): Promise<{
@@ -349,6 +370,19 @@ export class ClientOperationManager {
   }> {
 
     const baseUrl = apiBaseUrl || API_BASE_URL || "";
+
+    // Crash/reload recovery: reset any orphaned IN_FLIGHT outbox rows back to QUEUED under mutex
+    try {
+      const orphanedInFlight = await offlineDb.outboxQueue.where("status").equals("IN_FLIGHT").toArray();
+      for (const orphan of orphanedInFlight) {
+        if (orphan.id) {
+          await offlineDb.outboxQueue.update(orphan.id, { status: "QUEUED" });
+        }
+      }
+    } catch (err) {
+      console.warn("[ClientOperationManager] Failed recovering IN_FLIGHT outbox items:", err);
+    }
+
     const queuedOps = await offlineDb.outboxQueue
       .where("status")
       .equals("QUEUED")
@@ -372,7 +406,18 @@ export class ClientOperationManager {
       return { syncedCount: 0, receivedCount: 0, status: "IDLE" };
     }
 
-    const token = (await getValidAccessToken()) || getAccessToken();
+    if (!isAuthenticated()) {
+      return { syncedCount: 0, receivedCount: 0, status: "UNAUTHENTICATED" };
+    }
+
+    const startEpoch = getAuthEpoch();
+    const startUserId = getUser()?.id || null;
+    const sessionOk = await ensureValidSession();
+    if (!sessionOk || !isAuthenticated() || getAuthEpoch() !== startEpoch || getUser()?.id !== startUserId) {
+      return { syncedCount: 0, receivedCount: 0, status: "UNAUTHENTICATED" };
+    }
+
+    const token = getAccessToken();
     const replicaId = this.getReplicaId();
 
     // Group outbox items by transactionId
@@ -386,6 +431,10 @@ export class ClientOperationManager {
     let totalReceived = 0;
 
     for (const [txId, items] of Object.entries(byTx)) {
+      if (getAuthEpoch() !== startEpoch || !isAuthenticated() || getUser()?.id !== startUserId) {
+        return { syncedCount: totalSynced, receivedCount: totalReceived, status: "ABORTED_ON_LOGOUT" };
+      }
+
       const opIds = items.map(i => i.operationId);
       const ops = await offlineDb.operationLog.where("operationId").anyOf(opIds).toArray();
       if (ops.length === 0) continue;
@@ -397,12 +446,18 @@ export class ClientOperationManager {
         continue;
       }
 
-      // STRICT TENANT GUARD: Never sync outbox mutations belonging to a different tenant under current credentials
-      const activeCompanyId = typeof window !== "undefined"
+      // STRICT USER & TENANT GUARD: Require active user & matching tenant before pushing queued records
+      const currentUserId = getUser()?.id || null;
+      const opUserId = firstOp.userId || items.find((i) => i.userId)?.userId;
+      if (!currentUserId || (opUserId && String(opUserId) !== String(currentUserId))) {
+        console.warn(`[User Guard] Refusing to push transaction ${txId}: queued by user ${opUserId || "unknown"}, current session user is ${currentUserId || "anonymous"}.`);
+        continue;
+      }
+      const activeCompanyId = typeof window !== "undefined" && typeof localStorage !== "undefined"
         ? (localStorage.getItem("vouch_active_company_id") || localStorage.getItem("activeCompanyId") || localStorage.getItem("vouch_active_company"))
         : null;
-      if (activeCompanyId && companyId !== activeCompanyId) {
-        console.warn(`[Tenant Guard] Refusing to push transaction ${txId} for company ${companyId} under active session ${activeCompanyId}`);
+      if (!activeCompanyId || companyId !== activeCompanyId) {
+        console.warn(`[Tenant Guard] Refusing to push transaction ${txId} for company ${companyId} under active session ${activeCompanyId || "none"}`);
         continue;
       }
       const canonicalTx = firstOp.payload?.canonical_transaction;
@@ -441,7 +496,16 @@ export class ClientOperationManager {
           }))
         };
 
-        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        for (const item of items) {
+          if (item.id) {
+            await offlineDb.outboxQueue.update(item.id, { status: "IN_FLIGHT" });
+          }
+        }
+
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          "X-Idempotency-Key": opIds[0] || txId,
+        };
         if (token) {
           headers["Authorization"] = `Bearer ${token}`;
         }
@@ -449,11 +513,19 @@ export class ClientOperationManager {
           headers["X-Company-ID"] = companyId;
         }
 
-        const res = await fetch(`${baseUrl}/api/v1/protocol/sync/`, {
+        const res = await apiFetch(`${baseUrl}/api/v1/protocol/sync/`, {
           method: "POST",
           headers,
           body: JSON.stringify(payload)
         });
+
+        // Do not mutate local state if logout/user switch or tenant switch occurred while request was in flight
+        const postCompanyId = typeof window !== "undefined" && typeof localStorage !== "undefined"
+          ? (localStorage.getItem("vouch_active_company_id") || localStorage.getItem("activeCompanyId") || localStorage.getItem("vouch_active_company"))
+          : null;
+        if (getAuthEpoch() !== startEpoch || !isAuthenticated() || getUser()?.id !== startUserId || postCompanyId !== companyId) {
+          return { syncedCount: totalSynced, receivedCount: totalReceived, status: "ABORTED_ON_SESSION_CHANGE" };
+        }
 
         if (res.ok) {
           const data = await res.json();

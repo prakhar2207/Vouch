@@ -8,8 +8,25 @@ from django.shortcuts import get_object_or_404
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
+import logging
 from apps.companies.models import Company, UserCompany
 from apps.accounting.services.universal_import_service import UniversalImportService
+from apps.accounting.services.upload_security import (
+    MAX_IMPORT_FILE_SIZE,
+    UploadValidationError,
+    read_validated_upload_bytes,
+)
+
+logger = logging.getLogger(__name__)
+ALLOWED_IMPORT_EXTENSIONS = {'.xlsx', '.xls', '.csv', '.xml'}
+
+
+def _read_safe_import_bytes(uploaded_file):
+    return read_validated_upload_bytes(
+        uploaded_file,
+        allowed_extensions=ALLOWED_IMPORT_EXTENSIONS,
+        max_bytes=MAX_IMPORT_FILE_SIZE,
+    )
 
 
 class UniversalImportPreviewAPIView(APIView):
@@ -34,7 +51,7 @@ class UniversalImportPreviewAPIView(APIView):
 
         filename = uploaded_file.name
         try:
-            file_content = uploaded_file.read()
+            file_content = _read_safe_import_bytes(uploaded_file)
             parsed_info = UniversalImportService.detect_and_parse_file(file_content, filename)
             if "error" in parsed_info:
                 return Response({"error": parsed_info["error"]}, status=status.HTTP_400_BAD_REQUEST)
@@ -50,8 +67,10 @@ class UniversalImportPreviewAPIView(APIView):
                 "preview": preview_data,
                 "cached_token": True
             })
-        except Exception as e:
-            return Response({"error": f"Failed to process file: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except UploadValidationError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            return Response({"error": "Failed to parse the uploaded import file."}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class UniversalImportExecuteAPIView(APIView):
@@ -76,7 +95,7 @@ class UniversalImportExecuteAPIView(APIView):
 
         try:
             if uploaded_file:
-                file_content = uploaded_file.read()
+                file_content = _read_safe_import_bytes(uploaded_file)
                 parsed_info = UniversalImportService.detect_and_parse_file(file_content, uploaded_file.name)
             elif parsed_payload:
                 parsed_info = parsed_payload
@@ -95,8 +114,11 @@ class UniversalImportExecuteAPIView(APIView):
             )
 
             return Response(res, status=status.HTTP_200_OK if res.get("success") else status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            return Response({"error": f"Import execution failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except UploadValidationError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception("Import execution failed")
+            return Response({"error": "Import execution failed due to an unexpected error."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class UniversalImportTemplateAPIView(APIView):

@@ -161,9 +161,10 @@ function SalesInvoiceListContent() {
       const token = getAccessToken();
       let serverSummaryFetched = false;
 
-      if (token) {
+      if (isAuthenticated()) {
         try {
-          const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": companyId };
+          const headers: Record<string, string> = { "X-Company-ID": companyId };
+          if (token) headers.Authorization = `Bearer ${token}`;
           const params = new URLSearchParams();
           if (startDate) params.append("start_date", startDate);
           if (endDate) params.append("end_date", endDate);
@@ -379,8 +380,9 @@ function SalesInvoiceListContent() {
         if (!result.data || result.data.length === 0) {
           try {
             const token = getAccessToken();
-            if (token) {
-              const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": companyId };
+            if (isAuthenticated()) {
+              const headers: Record<string, string> = { "X-Company-ID": companyId };
+              if (token) headers.Authorization = `Bearer ${token}`;
               const params = new URLSearchParams();
               params.append("type", "SALES");
               params.append("limit", "500");

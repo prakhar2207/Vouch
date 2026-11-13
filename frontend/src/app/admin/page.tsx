@@ -1,5 +1,6 @@
 "use client";
-import { API_BASE_URL } from "@/utils/api";
+import { API_BASE_URL, performLogout } from "@/utils/api";
+import LogoutConfirmModal from "@/components/modals/LogoutConfirmModal";
 import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { useRouter } from "next/navigation";
@@ -107,6 +108,7 @@ export default function SuperadminPortalPage() {
     name: string;
   } | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
 
   // 1. Authenticate and check permissions
   useEffect(() => {
@@ -357,15 +359,12 @@ export default function SuperadminPortalPage() {
   }
 
   const handleLogout = () => {
-    try {
-      if (typeof window !== 'undefined' && 'caches' in window) {
-        caches.delete('srilekh-pages-cache').catch(() => {});
-      }
-      if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && navigator.serviceWorker.controller) {
-        navigator.serviceWorker.controller.postMessage({ type: 'CLEAR_SESSION_CACHES' });
-      }
-    } catch {}
-    removeTokens();
+    setIsLogoutModalOpen(true);
+  };
+
+  const confirmLogout = async ({ wipeLocalDeviceData }: { wipeLocalDeviceData: boolean }) => {
+    await performLogout({ wipeLocalDeviceData });
+    setIsLogoutModalOpen(false);
     if (typeof window !== 'undefined') {
       window.location.replace('/login');
     } else {
@@ -1113,6 +1112,12 @@ export default function SuperadminPortalPage() {
           </div>
         )}
       </main>
+
+      <LogoutConfirmModal
+        isOpen={isLogoutModalOpen}
+        onClose={() => setIsLogoutModalOpen(false)}
+        onConfirmLogout={confirmLogout}
+      />
     </div>
   );
 }

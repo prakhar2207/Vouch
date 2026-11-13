@@ -15,8 +15,15 @@ from .settings import *
 db_conf = DATABASES.get('default', {})
 engine = db_conf.get('ENGINE', '')
 if 'sqlite' in engine or not engine:
-    # Build PostgreSQL configuration from DATABASE_URL or explicit parameters
-    test_db_url = os.environ.get('TEST_DATABASE_URL') or os.environ.get('DATABASE_URL')
+    # Build PostgreSQL configuration from TESTING_DATABASE_URL, TEST_DATABASE_URL or DATABASE_URL
+    test_db_url = (
+        os.environ.get('TESTING_DATABASE_URL')
+        or os.environ.get('testIng_database_url')
+        or os.environ.get('testing_database_url')
+        or os.environ.get('TEST_DATABASE_URL')
+        or os.environ.get('test_database_url')
+        or os.environ.get('DATABASE_URL')
+    )
     if test_db_url and 'postgres' in test_db_url:
         DATABASES['default'] = env.db_url_config(test_db_url)
     else:

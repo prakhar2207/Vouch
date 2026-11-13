@@ -1,7 +1,7 @@
 import { offlineDb, SyncedBankTransaction } from "../db/offlineDb";
 import axios from "axios";
 import api, { API_BASE_URL } from "@/utils/api";
-import { getAccessToken } from "@/utils/auth";
+import { getAuthEpoch, isAuthenticated } from "@/utils/auth";
 
 export interface BankTransactionQueryOptions {
   bankLedgerId?: string;
@@ -41,14 +41,16 @@ export class BankTransactionsRepository {
     // Server fallback if local bank transactions store is unpopulated or forceRefresh requested
     if (txs.length === 0 || options.forceRefresh) {
       try {
-        const token = getAccessToken();
-        if (token) {
-          const headers = { Authorization: `Bearer ${token}`, "X-Company-ID": companyId };
+        if (isAuthenticated()) {
+          const epochAtStart = getAuthEpoch();
           const res = await api.get(`/api/v1/accounting/banking/transactions/`, {
             headers: { "X-Company-ID": companyId },
             params: { company_id: companyId, page_size: 100 },
             timeout: 8000,
           });
+          if (getAuthEpoch() !== epochAtStart || !isAuthenticated()) {
+            return { data: [], totalCount: 0, page, pageSize, isLocal: true };
+          }
           const raw = res.data?.results || (Array.isArray(res.data) ? res.data : []);
           if (raw.length > 0) {
             const toPut: SyncedBankTransaction[] = raw.map((t: any) => ({

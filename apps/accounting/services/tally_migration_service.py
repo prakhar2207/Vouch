@@ -9,6 +9,7 @@ from apps.accounts.models import User
 from apps.ledgers.models import LedgerGroup, Ledger
 from apps.inventory.models import Product, ProductCategory
 from apps.accounting.models import Voucher, LedgerEntry, FinancialYear
+from apps.accounting.services.upload_security import validate_xml_no_xxe
 
 TALLY_GROUP_MAPPINGS = {
     # Tally Group -> (Vouch Nature, Vouch Default Group Name, Ledger Type)
@@ -64,6 +65,7 @@ class TallyMigrationService:
         if isinstance(xml_content, bytes):
             xml_content = xml_content.decode('utf-8', errors='replace')
 
+        validate_xml_no_xxe(xml_content)
         root = ET.fromstring(xml_content)
         
         groups = []

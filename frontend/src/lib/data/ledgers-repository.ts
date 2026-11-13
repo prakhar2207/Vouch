@@ -1,6 +1,6 @@
 import { offlineDb, SyncedLedger } from "../db/offlineDb";
 import api from "@/utils/api";
-import { getAccessToken } from "@/utils/auth";
+import { getAuthEpoch, isAuthenticated } from "@/utils/auth";
 
 export interface LedgerQueryOptions {
   ledgerType?: string;
@@ -53,8 +53,7 @@ export class LedgersRepository {
 
     if (requiresRemote) {
       try {
-        const token = getAccessToken();
-        if (token) {
+        if (isAuthenticated()) {
           const params: Record<string, string> = {};
           if (options.financialYearId) params.financial_year_id = options.financialYearId;
           if (options.startDate) params.start_date = options.startDate;
@@ -100,9 +99,12 @@ export class LedgersRepository {
     // Server fallback if local read model is empty
     if (ledgers.length === 0) {
       try {
-        const token = getAccessToken();
-        if (token) {
+        if (isAuthenticated()) {
+          const epochAtStart = getAuthEpoch();
           const res = await api.get(`/api/v1/ledgers/${companyId}/`, { timeout: 15000 });
+          if (getAuthEpoch() !== epochAtStart || !isAuthenticated()) {
+            return { data: [], isLocal: true };
+          }
           const raw = res.data?.data || (Array.isArray(res.data) ? res.data : []);
           if (raw.length > 0) {
             const toPut: SyncedLedger[] = raw.map((l: any) => ({
@@ -208,8 +210,10 @@ export class LedgersRepository {
   async refreshLedgers(companyId: string): Promise<SyncedLedger[]> {
     if (!companyId) return [];
     try {
-      const token = getAccessToken();
+      if (!isAuthenticated()) return [];
+      const epochAtStart = getAuthEpoch();
       const res = await api.get(`/api/v1/ledgers/${companyId}/`, { timeout: 15000 });
+      if (getAuthEpoch() !== epochAtStart || !isAuthenticated()) return [];
       const raw = res.data?.data || (Array.isArray(res.data) ? res.data : []);
       if (raw.length > 0) {
         const toPut: SyncedLedger[] = raw.map((l: any) => ({

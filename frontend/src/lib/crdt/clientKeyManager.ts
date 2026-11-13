@@ -18,7 +18,14 @@ export interface DeviceIdentity {
   publicKeyHex: string;
 }
 
-class KeyVaultIDB {
+export interface OfflineCryptoKeyRecord {
+  id: string;
+  kid: string;
+  key: CryptoKey;
+  createdAt: number;
+}
+
+export class KeyVaultIDB {
   private static dbPromise: Promise<IDBDatabase> | null = null;
 
   private static getDB(): Promise<IDBDatabase> {
@@ -28,11 +35,14 @@ class KeyVaultIDB {
           reject(new Error("IndexedDB is not supported in this environment"));
           return;
         }
-        const req = indexedDB.open("VouchSecurityVault", 1);
+        const req = indexedDB.open("VouchSecurityVault", 2);
         req.onupgradeneeded = () => {
           const db = req.result;
           if (!db.objectStoreNames.contains("device_keys")) {
             db.createObjectStore("device_keys", { keyPath: "id" });
+          }
+          if (!db.objectStoreNames.contains("offline_crypto_keys")) {
+            db.createObjectStore("offline_crypto_keys", { keyPath: "id" });
           }
         };
         req.onsuccess = () => resolve(req.result);
@@ -40,6 +50,35 @@ class KeyVaultIDB {
       });
     }
     return this.dbPromise;
+  }
+
+  public static async getOfflineCryptoKey(id: string): Promise<OfflineCryptoKeyRecord | null> {
+    try {
+      const db = await this.getDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction("offline_crypto_keys", "readonly");
+        const store = tx.objectStore("offline_crypto_keys");
+        const req = store.get(id);
+        req.onsuccess = () => resolve((req.result as OfflineCryptoKeyRecord) || null);
+        req.onerror = () => reject(req.error);
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  public static async saveOfflineCryptoKey(
+    id: string,
+    record: Omit<OfflineCryptoKeyRecord, "id">
+  ): Promise<void> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("offline_crypto_keys", "readwrite");
+      const store = tx.objectStore("offline_crypto_keys");
+      const req = store.put({ id, ...record });
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
   }
 
   public static async getPrivateKey(): Promise<CryptoKey | null> {
@@ -57,6 +96,16 @@ class KeyVaultIDB {
     }
   }
 
+  public static async closeConnection(): Promise<void> {
+    if (!this.dbPromise) return;
+    try {
+      const db = await this.dbPromise;
+      db.close();
+    } catch {} finally {
+      this.dbPromise = null;
+    }
+  }
+
   public static async savePrivateKey(key: CryptoKey): Promise<void> {
     const db = await this.getDB();
     return new Promise((resolve, reject) => {
@@ -69,9 +118,17 @@ class KeyVaultIDB {
   }
 }
 
+import { apiFetch } from "@/utils/api";
+
 export class ClientKeyManager {
   private static cachedPrivateKey: CryptoKey | null = null;
   private static cachedIdentity: DeviceIdentity | null = null;
+
+  public static async closeAndResetVault(): Promise<void> {
+    this.cachedPrivateKey = null;
+    this.cachedIdentity = null;
+    await KeyVaultIDB.closeConnection();
+  }
 
   public static getDeviceId(): string {
     if (typeof window !== "undefined") {
@@ -253,7 +310,7 @@ export class ClientKeyManager {
         headers["Authorization"] = `Bearer ${params.accessToken}`;
       }
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method: "POST",
         headers,
         body: JSON.stringify({
@@ -334,7 +391,7 @@ export class ClientKeyManager {
         headers["Authorization"] = `Bearer ${params.accessToken}`;
       }
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method: "POST",
         headers,
         body: JSON.stringify({

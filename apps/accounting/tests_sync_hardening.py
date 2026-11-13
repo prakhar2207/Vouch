@@ -523,7 +523,7 @@ class SyncHardeningComprehensiveTestCase(TestCase):
             party_ledger=self.customer_a,
             items_data=[{"product_id": str(self.prod_a.id), "quantity": "1", "rate": "4000.00", "gst_rate": "18.00"}]
         )
-        VoucherService.post_voucher(voucher)
+        voucher = VoucherService.post_voucher(voucher)
         self.assertEqual(voucher.status, 'POSTED')
 
         res = self.client.delete(f'/api/vouchers/{voucher.id}/')

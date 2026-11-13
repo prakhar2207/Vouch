@@ -4,7 +4,6 @@ import React, { useState, useRef, useEffect } from "react";
 import axios from "axios";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
-import * as XLSX from "xlsx";
 import DashboardLayout from "@/components/DashboardLayout";
 import { API_BASE_URL } from "@/utils/api";
 import { getAccessToken } from "@/utils/auth";

@@ -2,9 +2,11 @@ import logging
 logger = logging.getLogger(__name__)
 import uuid
 import datetime
+from datetime import timedelta
 from decimal import Decimal
 from typing import Dict, Any, Optional, List
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 
@@ -25,6 +27,29 @@ class BankReconciliationService:
     allocates funds against outstanding invoices, learns confirmed mappings,
     and recalculates authoritative balances.
     """
+
+    @classmethod
+    def _save_idempotency_record(cls, company, user, client_key, payload, response_dict):
+        """Persists database-backed idempotency record for all reconciliation resolution outcomes."""
+        if not client_key:
+            return
+        import json
+        payload_items = sorted([(k, str(v)) for k, v in payload.items() if k not in ['idempotency_key', 'client_key']])
+        payload_hash = str(hash(str(payload_items)))
+        IdempotencyRecord.objects.update_or_create(
+            scope_key=f"recon_{company.id}_{client_key}",
+            defaults={
+                "company": company,
+                "user": user,
+                "client_key": client_key,
+                "endpoint": "resolve_transaction",
+                "method": "POST",
+                "payload_hash": payload_hash,
+                "status": "COMPLETED",
+                "response_code": 200,
+                "response_body": json.dumps(response_dict)
+            }
+        )
 
     @classmethod
     @transaction.atomic
@@ -65,12 +90,17 @@ class BankReconciliationService:
         if client_key:
             scope_key = f"recon_{company.id}_{client_key}"
             existing_idem = IdempotencyRecord.objects.filter(scope_key=scope_key, status='COMPLETED').first()
-            if existing_idem and existing_idem.response_body:
-                import json
-                try:
-                    return json.loads(existing_idem.response_body)
-                except Exception:
-                    pass
+            if existing_idem:
+                payload_items = sorted([(k, str(v)) for k, v in payload.items() if k not in ['idempotency_key', 'client_key']])
+                current_payload_hash = str(hash(str(payload_items)))
+                if existing_idem.payload_hash and existing_idem.payload_hash != current_payload_hash:
+                    raise ValidationError("Idempotency key reused with different payload.")
+                if existing_idem.response_body:
+                    import json
+                    try:
+                        return json.loads(existing_idem.response_body)
+                    except Exception:
+                        pass
 
         # Closed accounting period protection
         fy = InvoiceSequenceService.get_or_create_active_fy(company, bank_tx.transaction_date)
@@ -91,13 +121,15 @@ class BankReconciliationService:
 
         if bank_tx.status == 'RECONCILED':
             if bank_tx.matched_voucher:
-                return {
+                res = {
                     "status": "SUCCESS",
                     "voucher_id": str(bank_tx.matched_voucher.id),
                     "voucher_number": bank_tx.matched_voucher.voucher_number,
                     "message": "Transaction already reconciled.",
                     "allocations": []
                 }
+                cls._save_idempotency_record(company, user, client_key, payload, res)
+                return res
             raise ValidationError(
                 f"Bank transaction '{bank_tx.description}' has already been reconciled. "
                 f"One bank transaction can produce only one accounting outcome."
@@ -158,7 +190,12 @@ class BankReconciliationService:
                     bank_tx.matched_party = party
                     bank_tx.status = 'RECONCILED'
                     bank_tx.match_confidence = existing_match.get('confidence', 1.0)
-                    bank_tx.save(update_fields=['matched_voucher', 'matched_party', 'status', 'match_confidence', 'updated_at'])
+                    notes = bank_tx.match_notes if isinstance(bank_tx.match_notes, dict) else {}
+                    notes['is_existing_matched'] = True
+                    notes['is_system_generated'] = False
+                    notes['matched_voucher_number'] = matched_vch.voucher_number
+                    bank_tx.match_notes = notes
+                    bank_tx.save(update_fields=['matched_voucher', 'matched_party', 'status', 'match_confidence', 'match_notes', 'updated_at'])
 
                     AuditService.log_action(
                         company=company,
@@ -175,13 +212,15 @@ class BankReconciliationService:
                         }
                     )
 
-                    return {
+                    res = {
                         "status": "SUCCESS",
                         "voucher_id": str(matched_vch.id),
                         "voucher_number": matched_vch.voucher_number,
                         "message": f"Automatically linked to existing voucher #{matched_vch.voucher_number} to prevent duplicate transaction.",
                         "allocations": []
                     }
+                    cls._save_idempotency_record(company, user, client_key, payload, res)
+                    return res
 
             v_num, _ = InvoiceSequenceService.get_next_number(company, v_type, bank_tx.transaction_date)
 
@@ -284,6 +323,10 @@ class BankReconciliationService:
             bank_tx.user_classification = v_classification
             bank_tx.is_refund = is_refund
             notes = bank_tx.match_notes if isinstance(bank_tx.match_notes, dict) else {}
+            notes['created_via_reconciliation'] = True
+            notes['is_existing_matched'] = False
+            notes['created_voucher_id'] = str(created_voucher.id)
+            notes['created_voucher_number'] = created_voucher.voucher_number
             notes.setdefault('interpretation_history', []).append({
                 'timestamp': timezone.now().isoformat(),
                 'action_type': action_type,
@@ -313,12 +356,14 @@ class BankReconciliationService:
                 }
             )
 
-            return {
+            res = {
                 "status": "SUCCESS",
                 "voucher_id": str(created_voucher.id),
                 "voucher_number": created_voucher.voucher_number,
                 "allocations": allocations
             }
+            cls._save_idempotency_record(company, user, client_key, payload, res)
+            return res
 
         elif action_type == 'MATCH_EXISTING_VOUCHER':
             voucher_id = payload.get('voucher_id')
@@ -349,22 +394,30 @@ class BankReconciliationService:
                         f"Direction mismatch: Bank transaction is a Withdrawal (Money OUT), but voucher {vch.voucher_number} does not credit {bank_ledger.name}."
                     )
 
-            # Amount validation: Total bank impact must match bank transaction amount
-            bank_effect = sum(
-                e.debit_amount if is_money_in else e.credit_amount
-                for e in bank_entries
-            )
-            # Allow documented small currency rounding tolerance up to 0.05
-            if abs(bank_effect - amount) > Decimal('0.05'):
+            # Net Bank Movement Validation (P0 Accounting Correctness):
+            # Compute net debit minus credit for deposit, or net credit minus debit for withdrawal.
+            if is_money_in:
+                net_bank_movement = sum(e.debit_amount - e.credit_amount for e in bank_entries)
+            else:
+                net_bank_movement = sum(e.credit_amount - e.debit_amount for e in bank_entries)
+
+            if net_bank_movement <= Decimal('0.00'):
                 raise ValidationError(
-                    f"Amount mismatch: Bank transaction amount is ₹{amount}, but voucher {vch.voucher_number} affects {bank_ledger.name} by ₹{bank_effect}."
+                    f"Direction mismatch: Net bank movement for {bank_ledger.name} is non-positive ({net_bank_movement})."
                 )
 
-            # Uniqueness verification: Prevent multiple transactions from linking to same voucher
+            # Allow documented small currency rounding tolerance up to 0.05
+            if abs(net_bank_movement - amount) > Decimal('0.05'):
+                raise ValidationError(
+                    f"Amount mismatch: Bank transaction amount is ₹{amount}, but voucher {vch.voucher_number} affects {bank_ledger.name} by ₹{net_bank_movement}."
+                )
+
+            # Uniqueness verification: Prevent multiple active transactions from linking to same voucher
             already_linked = BankTransaction.objects.filter(
                 company=company,
                 matched_voucher=vch,
-                status='RECONCILED'
+                status='RECONCILED',
+                is_excluded=False
             ).exclude(id=bank_tx.id).first()
             if already_linked and not payload.get('allow_split_allocation', False):
                 raise ValidationError(
@@ -377,7 +430,13 @@ class BankReconciliationService:
                 bank_tx.matched_party = vch.party_ledger
             bank_tx.status = 'RECONCILED'
             bank_tx.match_confidence = 1.0
-            bank_tx.save(update_fields=['matched_voucher', 'matched_party', 'status', 'match_confidence', 'updated_at'])
+
+            notes = bank_tx.match_notes if isinstance(bank_tx.match_notes, dict) else {}
+            notes['is_existing_matched'] = True
+            notes['matched_voucher_number'] = vch.voucher_number
+            bank_tx.match_notes = notes
+
+            bank_tx.save(update_fields=['matched_voucher', 'matched_party', 'status', 'match_confidence', 'match_notes', 'updated_at'])
 
             AuditService.log_action(
                 company=company,
@@ -399,22 +458,7 @@ class BankReconciliationService:
                 "voucher_number": vch.voucher_number,
                 "message": f"Successfully matched transaction to voucher {vch.voucher_number}"
             }
-            if client_key:
-                import json
-                IdempotencyRecord.objects.update_or_create(
-                    scope_key=f"recon_{company.id}_{client_key}",
-                    defaults={
-                        "company": company,
-                        "user": user,
-                        "client_key": client_key,
-                        "endpoint": "resolve_transaction",
-                        "method": "POST",
-                        "payload_hash": str(hash(str(payload))),
-                        "status": "COMPLETED",
-                        "response_code": 200,
-                        "response_body": json.dumps(res)
-                    }
-                )
+            cls._save_idempotency_record(company, user, client_key, payload, res)
             return res
 
         elif action_type == 'RECORD_EXPENSE':
@@ -464,13 +508,21 @@ class BankReconciliationService:
             bank_tx.matched_voucher = created_voucher
             bank_tx.status = 'RECONCILED'
             bank_tx.match_confidence = 1.0
-            bank_tx.save(update_fields=['matched_party', 'matched_voucher', 'status', 'match_confidence', 'updated_at'])
+            notes = bank_tx.match_notes if isinstance(bank_tx.match_notes, dict) else {}
+            notes['created_via_reconciliation'] = True
+            notes['is_existing_matched'] = False
+            notes['created_voucher_id'] = str(created_voucher.id)
+            notes['created_voucher_number'] = created_voucher.voucher_number
+            bank_tx.match_notes = notes
+            bank_tx.save(update_fields=['matched_party', 'matched_voucher', 'status', 'match_confidence', 'match_notes', 'updated_at'])
 
-            return {
+            res = {
                 "status": "SUCCESS",
                 "voucher_id": str(created_voucher.id),
                 "voucher_number": created_voucher.voucher_number
             }
+            cls._save_idempotency_record(company, user, client_key, payload, res)
+            return res
 
         elif action_type == 'RECORD_TRANSFER':
             target_ledger_id = payload.get('target_ledger_id') or payload.get('transfer_ledger_id')
@@ -505,13 +557,21 @@ class BankReconciliationService:
 
             bank_tx.matched_voucher = created_voucher
             bank_tx.status = 'RECONCILED'
-            bank_tx.save(update_fields=['matched_voucher', 'status', 'updated_at'])
+            notes = bank_tx.match_notes if isinstance(bank_tx.match_notes, dict) else {}
+            notes['created_via_reconciliation'] = True
+            notes['is_existing_matched'] = False
+            notes['created_voucher_id'] = str(created_voucher.id)
+            notes['created_voucher_number'] = created_voucher.voucher_number
+            bank_tx.match_notes = notes
+            bank_tx.save(update_fields=['matched_voucher', 'status', 'match_notes', 'updated_at'])
 
-            return {
+            res = {
                 "status": "SUCCESS",
                 "voucher_id": str(created_voucher.id),
                 "voucher_number": created_voucher.voucher_number
             }
+            cls._save_idempotency_record(company, user, client_key, payload, res)
+            return res
 
         elif action_type in ['TRIANGULAR_SETTLEMENT', 'SISTER_COMPANY_SETTLEMENT']:
             target_company_id = payload.get('target_company_id')
@@ -625,7 +685,7 @@ class BankReconciliationService:
             bank_tx.match_confidence = 1.0
             bank_tx.save(update_fields=['matched_voucher', 'matched_party', 'status', 'match_confidence', 'updated_at'])
 
-            return {
+            res = {
                 "status": "SUCCESS",
                 "voucher_id": str(voucher_b.id),
                 "voucher_number": voucher_b.voucher_number,
@@ -634,6 +694,8 @@ class BankReconciliationService:
                 "target_company_name": target_company.name,
                 "message": f"Triangular settlement complete: Reconciled in {company.name} and posted in {target_company.name}."
             }
+            cls._save_idempotency_record(company, user, client_key, payload, res)
+            return res
 
         elif action_type == 'OWNER_DRAWING':
             equity_grp, _ = LedgerGroup.objects.get_or_create(
@@ -673,13 +735,21 @@ class BankReconciliationService:
             bank_tx.matched_party = drawings_ledger
             bank_tx.matched_voucher = created_voucher
             bank_tx.status = 'RECONCILED'
-            bank_tx.save(update_fields=['matched_party', 'matched_voucher', 'status', 'updated_at'])
+            notes = bank_tx.match_notes if isinstance(bank_tx.match_notes, dict) else {}
+            notes['created_via_reconciliation'] = True
+            notes['is_existing_matched'] = False
+            notes['created_voucher_id'] = str(created_voucher.id)
+            notes['created_voucher_number'] = created_voucher.voucher_number
+            bank_tx.match_notes = notes
+            bank_tx.save(update_fields=['matched_party', 'matched_voucher', 'status', 'match_notes', 'updated_at'])
 
-            return {
+            res = {
                 "status": "SUCCESS",
                 "voucher_id": str(created_voucher.id),
                 "voucher_number": created_voucher.voucher_number
             }
+            cls._save_idempotency_record(company, user, client_key, payload, res)
+            return res
 
         else:
             raise ValidationError(f"Unknown reconciliation action '{action_type}'.")
@@ -762,8 +832,8 @@ class BankReconciliationService:
             excluded=Count('id', filter=Q(is_excluded=True)),
             total_debits=Sum('debit_amount', filter=Q(is_excluded=False)),
             total_credits=Sum('credit_amount', filter=Q(is_excluded=False)),
-            unrec_debit=Sum('debit_amount', filter=Q(status__in=['UNPROCESSED', 'UNRESOLVED', 'MATCHED_SUGGESTED'], is_excluded=False)),
-            unrec_credit=Sum('credit_amount', filter=Q(status__in=['UNPROCESSED', 'UNRESOLVED', 'MATCHED_SUGGESTED'], is_excluded=False))
+            unrec_debit=Sum('debit_amount', filter=Q(status__in=['UNPROCESSED', 'UNRESOLVED', 'MATCHED_SUGGESTED', 'MATCHED_AUTO'], is_excluded=False)),
+            unrec_credit=Sum('credit_amount', filter=Q(status__in=['UNPROCESSED', 'UNRESOLVED', 'MATCHED_SUGGESTED', 'MATCHED_AUTO'], is_excluded=False))
         )
 
         total_tx = stats['total'] or 0
@@ -874,15 +944,22 @@ class BankReconciliationService:
         # 4. BALANCE_MATCHED: Balances match exactly (gap=0.00), but transactions still require review/confirmation.
         # 5. IN_PROGRESS: Some transactions reconciled, but unresolved transactions remain.
         # 6. NEEDS_ATTENTION: Discrepancy detected or unresolved transactions await user review.
+        # Authoritative State Machine Definitions (Phase 2 & Phase 3):
+        # 1. NOT_STARTED: No transactions and no statement imports recorded.
+        # 2. NOT_VERIFIABLE: Transactions exist but no statement closing balance is verifiable.
+        # 3. FULLY_RECONCILED: Statement balance verifiable, is_balanced (gap==0.00), unresolved==0, suggested==0, and auto_matched==0.
+        # 4. BALANCE_MATCHED: Balances match exactly (gap==0.00), but transactions still require review/confirmation.
+        # 5. IN_PROGRESS: Some transactions reconciled, but unresolved transactions or suggestions remain.
+        # 6. NEEDS_ATTENTION: Discrepancy detected or unresolved transactions await user review.
         if total_tx == 0 and not has_statement_evidence:
             reconciliation_state = "NOT_STARTED"
         elif not has_statement_evidence:
             reconciliation_state = "NOT_VERIFIABLE"
-        elif unresolved == 0 and suggested == 0 and is_balanced:
+        elif unresolved == 0 and suggested == 0 and auto_matched == 0 and is_balanced:
             reconciliation_state = "FULLY_RECONCILED"
-        elif is_balanced and (unresolved > 0 or suggested > 0):
+        elif is_balanced and (unresolved > 0 or suggested > 0 or auto_matched > 0):
             reconciliation_state = "BALANCE_MATCHED"
-        elif reconciled > 0 and (unresolved > 0 or suggested > 0):
+        elif reconciled > 0 and (unresolved > 0 or suggested > 0 or auto_matched > 0):
             reconciliation_state = "IN_PROGRESS"
         else:
             reconciliation_state = "NEEDS_ATTENTION"
@@ -900,7 +977,7 @@ class BankReconciliationService:
             "ignored": ignored,
             "excluded": excluded,
             "unresolved_count": unresolved,
-            "needs_review_count": suggested,
+            "needs_review_count": suggested + auto_matched,
             "matched_count": reconciled,
             "completed_count": reconciled,
             "reconciled_count": reconciled,
@@ -961,14 +1038,17 @@ class BankReconciliationService:
         # 1. Authoritative Book Ledger Balance as of cutoff date
         book_balance = cls.get_bank_balance_as_of(bank_ledger, cutoff_date=d_as_of)
 
-        # 2. Reconciled vouchers set up to cutoff date
+        # 2. Reconciled vouchers set up to cutoff date (P0 BRS Cutoff Strictness):
+        # Must only consider vouchers whose voucher_date is on or before cutoff date, and from non-excluded items.
         rec_voucher_ids = set(
             BankTransaction.objects.filter(
                 company=company,
                 bank_ledger=bank_ledger,
                 status='RECONCILED',
                 matched_voucher__isnull=False,
-                transaction_date__lte=d_as_of
+                transaction_date__lte=d_as_of,
+                matched_voucher__voucher_date__lte=d_as_of,
+                is_excluded=False
             ).values_list('matched_voucher_id', flat=True)
         )
 
@@ -1015,13 +1095,17 @@ class BankReconciliationService:
                 })
                 tot_uncleared += entry.debit_amount
 
-        # 4. Unreconciled bank statement transactions up to cutoff date
+        # 4. Unreconciled bank statement transactions up to cutoff date:
+        # Includes transactions not reconciled, OR transactions reconciled to future vouchers (> d_as_of)
         unrec_statement_txs = BankTransaction.objects.filter(
             company=company,
             bank_ledger=bank_ledger,
             transaction_date__lte=d_as_of,
             is_excluded=False
-        ).exclude(status__in=['RECONCILED', 'IGNORED']).order_by('transaction_date')
+        ).exclude(status='IGNORED').filter(
+            Q(status__in=['UNPROCESSED', 'UNRESOLVED', 'MATCHED_SUGGESTED', 'MATCHED_AUTO']) |
+            (Q(status='RECONCILED') & Q(matched_voucher__voucher_date__gt=d_as_of))
+        ).order_by('transaction_date')
 
         unrecorded_bank_credits_list = []
         unrecorded_bank_debits_list = []
@@ -1131,6 +1215,34 @@ class BankReconciliationService:
         }
 
     @classmethod
+    def is_system_generated_for_transaction(cls, bank_tx: BankTransaction, voucher: Optional[Voucher]) -> bool:
+        """
+        Determines with mathematical and audit certainty whether the voucher was created
+        by the bank reconciliation service specifically for this bank transaction.
+        Pre-existing manual vouchers matched via auto-match, manual-match, or finding-fix
+        are strictly protected and will NEVER be cancelled or reversed on exclusion/unreconcile.
+        """
+        if not voucher:
+            return False
+        notes = bank_tx.match_notes if isinstance(bank_tx.match_notes, dict) else {}
+        if notes.get('is_existing_matched'):
+            return False
+        if notes.get('is_system_generated') is False:
+            return False
+        if notes.get('created_via_reconciliation') and str(notes.get('created_voucher_id', '')) == str(voucher.id):
+            return True
+        if notes.get('created_via_reconciliation') and notes.get('created_voucher_number') == voucher.voucher_number:
+            return True
+        # If created_at of voucher is earlier than bank_tx, it was pre-existing
+        if bank_tx.created_at and voucher.created_at and (voucher.created_at < bank_tx.created_at - timedelta(seconds=5)):
+            return False
+        # If notes explicitly specify it was matched to existing
+        if notes.get('matched_action') in ['MATCH_EXISTING_VOUCHER', 'AUTO_MATCH_EXISTING_DEDUPLICATED']:
+            return False
+        # Default to False for safety: NEVER reverse/cancel a voucher unless we are 100% certain it was created by this transaction!
+        return bool(notes.get('created_via_reconciliation'))
+
+    @classmethod
     @transaction.atomic
     def unreconcile_transaction(cls, bank_tx: BankTransaction, reason: str = "User un-reconciled transaction", user=None) -> Dict[str, Any]:
         """
@@ -1154,11 +1266,12 @@ class BankReconciliationService:
                 f"Accounting period {fy.code} is closed. Cannot unreconcile transactions in a closed period."
             )
 
+        notes = bank_tx.match_notes if isinstance(bank_tx.match_notes, dict) else {}
         vch = bank_tx.matched_voucher
         vch_num = vch.voucher_number if vch else None
         reversal_voucher = None
 
-        if vch:
+        if vch and cls.is_system_generated_for_transaction(bank_tx, vch):
             vch = Voucher.objects.select_for_update().get(id=vch.id)
             if vch.status == 'POSTED':
                 # Attempt safe cancellation; if voucher cannot be cancelled directly, create an auditable reversal
@@ -1171,6 +1284,8 @@ class BankReconciliationService:
                         user=user,
                         reason=f"Unreconcile bank transaction: {reason}"
                     )
+        elif vch:
+            logger.info(f"Unlinking pre-existing manual voucher #{vch.voucher_number} from bank transaction without cancellation/reversal.")
 
         bank_tx.matched_voucher = None
         bank_tx.matched_party = None
@@ -1178,8 +1293,7 @@ class BankReconciliationService:
         bank_tx.status = 'UNRESOLVED'
         bank_tx.user_classification = ''
         bank_tx.is_refund = False
-
-        notes = bank_tx.match_notes if isinstance(bank_tx.match_notes, dict) else {}
+        notes.pop('is_existing_matched', None)
         notes.setdefault('interpretation_history', []).append({
             'timestamp': timezone.now().isoformat(),
             'action_type': 'UNRECONCILE',
@@ -1228,19 +1342,26 @@ class BankReconciliationService:
         reversal_voucher = None
         if bank_tx.matched_voucher:
             vch = Voucher.objects.select_for_update().get(id=bank_tx.matched_voucher_id)
-            if vch.status in ['POSTED', 'VALIDATING']:
-                reversal_voucher = VoucherService.create_reversal_voucher(
-                    voucher=vch,
-                    user=user,
-                    reason=f"Bank transaction excluded: {clean_reason}"
-                )
+            if cls.is_system_generated_for_transaction(bank_tx, vch):
+                if vch.status in ['POSTED', 'VALIDATING']:
+                    reversal_voucher = VoucherService.create_reversal_voucher(
+                        voucher=vch,
+                        user=user,
+                        reason=f"Bank transaction excluded: {clean_reason}"
+                    )
+            else:
+                logger.info(f"Preserving pre-existing manual voucher #{vch.voucher_number} upon bank transaction exclusion without reversing/cancelling it.")
 
+        # Always safely detach the voucher link upon exclusion so no stale links remain
+        bank_tx.matched_voucher = None
+        bank_tx.matched_party = None
+        bank_tx.matched_invoice = None
         bank_tx.is_excluded = True
         bank_tx.status = 'EXCLUDED'
         bank_tx.exclusion_reason = clean_reason
         bank_tx.excluded_at = timezone.now()
         bank_tx.excluded_by = user
-        bank_tx.save(update_fields=['is_excluded', 'status', 'exclusion_reason', 'excluded_at', 'excluded_by', 'updated_at'])
+        bank_tx.save(update_fields=['matched_voucher', 'matched_party', 'matched_invoice', 'is_excluded', 'status', 'exclusion_reason', 'excluded_at', 'excluded_by', 'updated_at'])
 
         AuditService.log_action(
             company=bank_tx.company,
@@ -1266,6 +1387,9 @@ class BankReconciliationService:
         Audited, non-destructive exclusion of a statement import and all of its associated transactions.
         Safely reverses any generated vouchers.
         """
+        if not reason or not str(reason).strip():
+            raise ValidationError("A meaningful reason is required to exclude a bank statement import.")
+        statement_import = BankStatementImport.objects.select_for_update().get(id=statement_import.id)
         txs = list(statement_import.transactions.all())
         count = 0
         for tx in txs:

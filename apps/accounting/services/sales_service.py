@@ -32,7 +32,8 @@ class SalesInvoiceService:
         discount_amount: Decimal = Decimal('0.00'),
         discount_ledger: Ledger = None,
         due_date=None,
-        is_reverse_charge: bool = False
+        is_reverse_charge: bool = False,
+        reference_number: str = None
     ):
         """
         End-to-End orchestration of a Sales Invoice.
@@ -106,6 +107,7 @@ class SalesInvoiceService:
             financial_year=fy,
             voucher_type='SALES',
             voucher_number=v_num,
+            reference_number=(str(reference_number).strip()[:100] or None) if reference_number else None,
             voucher_date=v_date,
             due_date=calculated_due_date,
             party_ledger=party_ledger,
@@ -667,9 +669,10 @@ class SalesInvoiceService:
                         entry.save(update_fields=['ledger'])
 
             # Recalculate closing balances for all affected ledgers
+            from apps.accounting.services.effective_voucher_service import EffectiveVoucherService
             for ldr in affected_ledgers:
                 op_balance = Decimal(str(ldr.opening_balance or '0.00'))
-                entries = LedgerEntry.objects.filter(ledger=ldr, voucher__status='POSTED')
+                entries = LedgerEntry.objects.filter(ledger=ldr, voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES)
                 total_dr = Decimal('0.00')
                 total_cr = Decimal('0.00')
                 for e in entries:
@@ -688,7 +691,7 @@ class SalesInvoiceService:
                     fy = lb.financial_year
                     fy_entries = LedgerEntry.objects.filter(
                         ledger=ldr,
-                        voucher__status='POSTED',
+                        voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
                         voucher__voucher_date__gte=fy.start_date,
                         voucher__voucher_date__lte=fy.end_date
                     )

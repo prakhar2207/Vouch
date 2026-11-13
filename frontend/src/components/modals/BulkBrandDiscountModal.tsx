@@ -1,10 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
 import { useToast } from '@/context/ToastContext';
-import { getAccessToken } from '@/utils/auth';
+import api from '@/utils/api';
 import { Percent } from 'lucide-react';
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 interface BulkBrandDiscountModalProps {
   isOpen: boolean;
@@ -45,17 +42,13 @@ export default function BulkBrandDiscountModal({
     
     setIsUpdating(true);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      
-      const res = await axios.post(
-        `${API_BASE_URL}/api/v1/inventory/brand-discount-update/${companyId}/`,
+      const res = await api.post(
+        `/api/v1/inventory/brand-discount-update/${companyId}/`,
         {
           category_id: categoryId,
           brand: selectedBrand,
           discount_percent: discountPercent
-        },
-        { headers }
+        }
       );
       
       if (res.data.success) {

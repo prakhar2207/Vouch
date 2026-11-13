@@ -28,6 +28,10 @@ SECRET_KEY = env('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env.bool('DEBUG', default=False)
+ENVIRONMENT = env.str('ENVIRONMENT', default='development' if DEBUG else 'production').strip().lower()
+VERSION = '1.0.2'
+PRODUCTION_DB_HOST = env.str('PRODUCTION_DB_HOST', default='ep-lingering-boat-b3994i6f-pooler.c-4.ap-southeast-1.aws.neon.tech').strip()
+PRODUCTION_DB_NAME = env.str('PRODUCTION_DB_NAME', default='neondb').strip()
 
 if DEBUG:
     ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['*'])
@@ -42,6 +46,10 @@ else:
         'api.srilekh.com',
         'app.srilekh.com',
         'vouch-api-752s.onrender.com',
+        'vouch-api-staging.onrender.com',
+        'api-staging.srilekh.com',
+        'staging.srilekh.com',
+        '.onrender.com',
         'localhost',
         '127.0.0.1',
     ]
@@ -49,10 +57,15 @@ else:
     if render_hostname and render_hostname not in default_hosts:
         default_hosts.append(render_hostname)
     configured_hosts = env.list('ALLOWED_HOSTS', default=default_hosts)
-    # Security Invariant: Never permit wildcard '*' in production
-    ALLOWED_HOSTS = [h.strip() for h in configured_hosts if h.strip() and h.strip() != '*']
+    # Security Invariant: Disallow bare wildcard '*' in production, fallback gracefully to default safe hosts
+    filtered_hosts = [h.strip() for h in configured_hosts if h.strip() and h.strip() != '*']
+    if not filtered_hosts:
+        filtered_hosts = [h.strip() for h in default_hosts if h.strip()]
+    if ENVIRONMENT != 'production' and '.onrender.com' not in filtered_hosts:
+        filtered_hosts.append('.onrender.com')
+    ALLOWED_HOSTS = list(dict.fromkeys(filtered_hosts))
     if not ALLOWED_HOSTS:
-        raise ValueError("Production deployment error: ALLOWED_HOSTS cannot be empty or contain wildcard '*' when DEBUG=False.")
+        raise ValueError("Production deployment error: ALLOWED_HOSTS cannot be empty when DEBUG=False.")
 
 # Application definition
 INSTALLED_APPS = [
@@ -85,7 +98,7 @@ AUTH_USER_MODEL = 'accounts.User'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'apps.accounts.authentication.CookieJWTAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
@@ -135,7 +148,7 @@ ROOT_URLCONF = 'config.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'apps' / 'notifications' / 'templates', BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -150,8 +163,16 @@ TEMPLATES = [
 WSGI_APPLICATION = 'config.wsgi.application'
 
 # Database
+# Supports DATABASE_URL as primary; if unset, allows fallback to TESTING_DATABASE_URL in staging/development
+_effective_db_url = (
+    env.str('DATABASE_URL', default='').strip()
+    or env.str('TESTING_DATABASE_URL', default='').strip()
+    or env.str('testIng_database_url', default='').strip()
+    or env.str('testing_database_url', default='').strip()
+)
+
 DATABASES = {
-    'default': env.db('DATABASE_URL', default='sqlite:///' + str(BASE_DIR / 'db.sqlite3'))
+    'default': env.db_url_config(_effective_db_url) if _effective_db_url else env.db('DATABASE_URL', default='sqlite:///' + str(BASE_DIR / 'db.sqlite3'))
 }
 
 # Optimize PostgreSQL connection persistence & keep-alive over WAN
@@ -159,14 +180,52 @@ if 'default' in DATABASES and 'postgresql' in DATABASES['default'].get('ENGINE',
     DATABASES['default']['CONN_MAX_AGE'] = env.int('CONN_MAX_AGE', default=600)
     DATABASES['default']['CONN_HEALTH_CHECKS'] = True
 
+# Startup Fail-Closed Staging Database Isolation Safety Guard
+from config.environment_guard import validate_environment_database_isolation
+validate_environment_database_isolation(
+    environment=ENVIRONMENT,
+    db_config=DATABASES.get('default', {}),
+    database_url=_effective_db_url,
+    prod_host=PRODUCTION_DB_HOST,
+    prod_db_name=PRODUCTION_DB_NAME,
+    is_testing=('test' in sys.argv)
+)
+
 import sys, os
-# Dedicated PostgreSQL testing: if USE_POSTGRES_TEST=1 or DJANGO_SETTINGS_MODULE specifies postgres test settings,
-# preserve PostgreSQL configuration; otherwise use fast isolated SQLite for unit testing.
-if 'test' in sys.argv and os.environ.get('USE_POSTGRES_TEST') != '1' and os.environ.get('DJANGO_SETTINGS_MODULE') != 'config.settings_test_pg':
-    DATABASES['default'] = {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'test_db.sqlite3',
-    }
+TESTING = 'test' in sys.argv
+
+# Check for dedicated testing database URL (e.g. TESTING_DATABASE_URL, testIng_database_url, TEST_DATABASE_URL)
+TEST_DB_URL = (
+    os.environ.get('TESTING_DATABASE_URL')
+    or os.environ.get('testIng_database_url')
+    or os.environ.get('testing_database_url')
+    or os.environ.get('TEST_DATABASE_URL')
+    or os.environ.get('test_database_url')
+)
+
+# Dedicated PostgreSQL testing:
+# 1. If TESTING_DATABASE_URL (or variants) is set, use that PostgreSQL instance for tests.
+# 2. Else if USE_POSTGRES_TEST=1 or settings_test_pg is used, retain PostgreSQL from DATABASE_URL.
+# 3. Otherwise, use fast isolated SQLite for unit testing.
+if 'test' in sys.argv:
+    if TEST_DB_URL and 'postgres' in TEST_DB_URL:
+        DATABASES['default'] = env.db_url_config(TEST_DB_URL)
+        DATABASES['default']['CONN_MAX_AGE'] = 0
+        DATABASES['default']['TEST'] = {'CHARSET': 'utf8'}
+        # Safeguard: Verify that testing database does not target production
+        validate_environment_database_isolation(
+            environment='staging',
+            db_config=DATABASES['default'],
+            database_url=TEST_DB_URL,
+            prod_host=PRODUCTION_DB_HOST,
+            prod_db_name=PRODUCTION_DB_NAME,
+            is_testing=True
+        )
+    elif os.environ.get('USE_POSTGRES_TEST') != '1' and os.environ.get('DJANGO_SETTINGS_MODULE') != 'config.settings_test_pg':
+        DATABASES['default'] = {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'test_db.sqlite3',
+        }
 
 
 
@@ -223,6 +282,24 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_WORKER_CANCEL_LONG_RUNNING_TASKS_ON_CONNECTION_LOSS = True
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_SOFT_TIME_LIMIT = 120
+CELERY_TASK_TIME_LIMIT = 180
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    'visibility_timeout': 1800,
+    'health_check_interval': 30,
+    'socket_keepalive': True,
+}
+if str(CELERY_BROKER_URL).startswith('rediss://'):
+    import ssl as _ssl
+    CELERY_BROKER_USE_SSL = {
+        'ssl_cert_reqs': _ssl.CERT_NONE if env.bool('REDIS_SSL_NO_VERIFY', default=False) else _ssl.CERT_REQUIRED
+    }
 
 # Automated Nightly Celery Beat Schedule (02:00 AM IST)
 from celery.schedules import crontab
@@ -232,6 +309,11 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.accounting.tasks.automated_nightly_backup_task',
         'schedule': crontab(hour=20, minute=30),  # 20:30 UTC = 02:00 AM IST
         'kwargs': {'upload_s3': True, 'encrypt': True},
+    },
+    'sweep-and-retry-outbox-notifications': {
+        'task': 'apps.notifications.tasks.retry_pending_outbox_events_task',
+        'schedule': 60.0,  # Sweeps every 60 seconds
+        'options': {'expires': 55.0},
     },
 }
 
@@ -258,6 +340,13 @@ SIMPLE_JWT = {
     'BLACKLIST_AFTER_ROTATION': True,
 }
 
+# HttpOnly Auth Cookies & SPA CSRF Policy (Stage 1.2)
+AUTH_ACCESS_COOKIE_NAME = 'srilekh_access'
+AUTH_REFRESH_COOKIE_NAME = 'srilekh_refresh'
+AUTH_COOKIE_HTTPONLY = True
+AUTH_COOKIE_SECURE = env.bool('AUTH_COOKIE_SECURE', default=(not DEBUG))
+AUTH_COOKIE_SAMESITE = env('AUTH_COOKIE_SAMESITE', default='')
+
 from corsheaders.defaults import default_headers, default_methods
 
 # Cross-Origin Resource Sharing (CORS) & CSRF
@@ -272,6 +361,8 @@ _default_cors_origins = [
     'https://srilekh.com',
     'https://www.srilekh.com',
     'https://app.srilekh.com',
+    'https://staging.srilekh.com',
+    'https://api-staging.srilekh.com',
 ]
 if DEBUG or env.bool('ALLOW_LOCAL_ORIGINS', default=False):
     _default_cors_origins.extend([
@@ -323,6 +414,8 @@ CSRF_TRUSTED_ORIGINS = [
     'https://www.srilekh.com',
     'https://api.srilekh.com',
     'https://app.srilekh.com',
+    'https://staging.srilekh.com',
+    'https://api-staging.srilekh.com',
 ]
 if DEBUG or env.bool('ALLOW_LOCAL_ORIGINS', default=False):
     CSRF_TRUSTED_ORIGINS.extend([
@@ -349,7 +442,8 @@ if not DEBUG:
     # Secure Cookies over HTTPS
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
-    CSRF_COOKIE_HTTPONLY = True
+    CSRF_COOKIE_HTTPONLY = False  # Cross-domain/same-site SPA submits X-CSRFToken header paired with csrftoken cookie
+    CSRF_COOKIE_SAMESITE = env('CSRF_COOKIE_SAMESITE', default='None')
     
     # Enforce SSL Redirect in production
     SECURE_SSL_REDIRECT = env.bool('SECURE_SSL_REDIRECT', default=True)
@@ -375,10 +469,20 @@ EMAIL_PORT = env.int('EMAIL_PORT', default=587)
 EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS', default=True)
 EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
-DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='Vouch Invoicing <billing@vouchapp.in>')
+EMAIL_TIMEOUT = env.int('EMAIL_TIMEOUT', default=10)
+DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='SriLekh <admin@srilekh.com>')
 
 # Frontend URL for viral claim / invitation links
-FRONTEND_URL = env('FRONTEND_URL', default='https://vouch-pi-one.vercel.app' if not DEBUG else 'http://localhost:3000')
+EMAIL_REPLY_TO = env('EMAIL_REPLY_TO', default='support@srilekh.com')
+
+# Application URLs
+FRONTEND_URL = env('FRONTEND_URL', default='https://srilekh.com' if not DEBUG else 'http://localhost:3000')
+BACKEND_URL = env('BACKEND_URL', default='https://vouch-api-752s.onrender.com' if not DEBUG else 'http://localhost:8000')
+
+# OTP Verification Configuration
+OTP_EXPIRY_SECONDS = env.int('OTP_EXPIRY_SECONDS', default=300)
+OTP_RESEND_COOLDOWN_SECONDS = env.int('OTP_RESEND_COOLDOWN_SECONDS', default=60)
+OTP_MAX_ATTEMPTS = env.int('OTP_MAX_ATTEMPTS', default=5)
 
 
 

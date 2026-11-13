@@ -1,8 +1,8 @@
 import axios from "axios";
 import { offlineDb, SyncedVoucher, SyncedLedger, SyncedProduct } from "../db/offlineDb";
 import { LocalAnalyticsEngine } from "../analytics/analytics-engine";
-import { api, API_BASE_URL, getValidAccessToken } from "@/utils/api";
-import { getAccessToken } from "@/utils/auth";
+import { api, apiFetch, API_BASE_URL, ensureValidSession } from "@/utils/api";
+import { getAccessToken, getAuthAbortSignal, getAuthEpoch, getUser, isAuthenticated, isCapacitorNative } from "@/utils/auth";
 import { ClientOperationManager } from "../crdt/clientOperationManager";
 
 interface RawLedgerDto {
@@ -54,6 +54,7 @@ interface RawVoucherDto {
   party_ledger_id?: string | null;
   party_name?: string;
   status: "DRAFT" | "POSTED" | "CANCELLED" | "REVERSED" | "SUPERSEDED" | "CORRECTED";
+  version?: number;
   total_amount?: number | string;
   round_off?: number | string;
   roundOff?: number | string;
@@ -118,6 +119,7 @@ export interface VoucherIngestInput {
   referenceNumber?: string;
   reference_number?: string;
   status?: "DRAFT" | "POSTED" | "CANCELLED" | "REVERSED" | "SUPERSEDED" | "CORRECTED" | "PENDING_SYNC";
+  version?: number;
   paymentStatus?: "PAID" | "PARTIAL" | "UNPAID" | "ALLOCATED" | "UNALLOCATED";
   payment_status?: "PAID" | "PARTIAL" | "UNPAID" | "ALLOCATED" | "UNALLOCATED";
   paidAmount?: number | string;
@@ -172,6 +174,7 @@ let isSyncInProgress = false;
 const syncChannel = typeof window !== "undefined" && "BroadcastChannel" in window
   ? new BroadcastChannel("vouch_local_sync")
   : null;
+(syncChannel as unknown as { unref?: () => void } | null)?.unref?.();
 
 function notifySyncChannel(msg: Record<string, unknown>) {
   try {
@@ -224,7 +227,7 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
     let failedCount = 0;
 
   try {
-    // Reset any orphaned SYNCING items back to PENDING if previous sync was interrupted
+    // Reset orphaned SYNCING vouchers and orphaned IN_FLIGHT outbox rows after crash/reload
     try {
       const orphaned = await offlineDb.vouchers
         .where("status")
@@ -235,8 +238,17 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
           await offlineDb.vouchers.update(orphan.id, { status: "PENDING" });
         }
       }
+      const orphanedOutbox = await offlineDb.outboxQueue
+        .where("status")
+        .equals("IN_FLIGHT")
+        .toArray();
+      for (const orphan of orphanedOutbox) {
+        if (orphan.id) {
+          await offlineDb.outboxQueue.update(orphan.id, { status: "QUEUED" });
+        }
+      }
     } catch (_e) {
-      console.warn("Failed to reset orphaned syncing vouchers:", _e);
+      console.warn("Failed to reset orphaned syncing items:", _e);
     }
 
     const now = Date.now();
@@ -247,8 +259,13 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
       .filter((item) => !item.nextRetryAt || item.nextRetryAt <= now)
       .toArray();
 
-    const token = getAccessToken();
-    if (!token) return { processed: 0, failed: 0 };
+    if (!isAuthenticated()) return { processed: 0, failed: 0 };
+    const startEpoch = getAuthEpoch();
+    const startUserId = getUser()?.id || null;
+    const sessionOk = await ensureValidSession();
+    if (!sessionOk || !isAuthenticated() || getAuthEpoch() !== startEpoch || getUser()?.id !== startUserId) {
+      return { processed: 0, failed: 0 };
+    }
 
     // 1. Drain legacy OfflineVoucher records into authoritative CRDT operation log
     if (pending.length > 0) {
@@ -308,9 +325,14 @@ export async function executeClientOutboxSync(): Promise<{ processed: number; fa
  * and reconciles local IndexedDB records upon server confirmation.
  */
 export async function pushPendingSalesInvoices(): Promise<number> {
-  if (typeof window === "undefined" || !navigator.onLine) return 0;
-  const token = (await getValidAccessToken()) || getAccessToken();
-  if (!token) return 0;
+  if (typeof window === "undefined" || !navigator.onLine || !isAuthenticated()) return 0;
+  const startEpoch = getAuthEpoch();
+  const startUserId = getUser()?.id || null;
+  const sessionOk = await ensureValidSession();
+  if (!sessionOk || !isAuthenticated() || getAuthEpoch() !== startEpoch || getUser()?.id !== startUserId) {
+    return 0;
+  }
+  const token = getAccessToken();
 
   const queued = await offlineDb.outboxQueue
     .where("status")
@@ -319,20 +341,32 @@ export async function pushPendingSalesInvoices(): Promise<number> {
 
   if (queued.length === 0) return 0;
 
-  // Resolve current active authenticated company context
+  // Resolve current active authenticated company & user context
   const activeCompanyId = typeof localStorage !== "undefined"
     ? (localStorage.getItem("vouch_active_company_id") || localStorage.getItem("activeCompanyId") || localStorage.getItem("vouch_active_company"))
     : null;
+  const currentUserId = getUser()?.id || null;
+  if (!currentUserId || !activeCompanyId) return 0;
 
   let uploadedCount = 0;
 
   for (const item of queued) {
+    if (getAuthEpoch() !== startEpoch || !isAuthenticated() || getUser()?.id !== startUserId) {
+      break;
+    }
     if ((item.retryCount || 0) >= 10) continue;
     if (item.nextRetryAt && Date.now() < item.nextRetryAt) continue;
 
     const op = await offlineDb.operationLog.get(item.operationId);
     if (!op || !op.payload) {
       if (item.id) await offlineDb.outboxQueue.delete(item.id);
+      continue;
+    }
+
+    // STRICT USER GUARD: Never sync outbox mutations queued by a different user session
+    const ownerUserId = item.userId || op.userId;
+    if (ownerUserId && (!currentUserId || String(ownerUserId) !== String(currentUserId))) {
+      console.warn(`[User Guard] Skipping outbox item ${item.operationId}: queued by user ${ownerUserId}, current session user is ${currentUserId || "anonymous"}.`);
       continue;
     }
 
@@ -386,14 +420,27 @@ export async function pushPendingSalesInvoices(): Promise<number> {
         if (p.bank_ledger_id) postPayload.bank_ledger_id = p.bank_ledger_id;
         if (p.upi_id) postPayload.upi_id = p.upi_id;
 
+        const reqHeaders: Record<string, string> = {
+          "X-Company-ID": p.company_id,
+          "X-Idempotency-Key": item.operationId,
+        };
+        if (token) {
+          reqHeaders.Authorization = `Bearer ${token}`;
+        }
+
         const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/sales-invoice/`, postPayload, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "X-Company-ID": p.company_id,
-            "X-Idempotency-Key": item.operationId,
-          },
+          headers: reqHeaders,
+          withCredentials: !isCapacitorNative(),
+          signal: getAuthAbortSignal(),
           timeout: 10000,
         });
+
+        const latestCompanyId = typeof localStorage !== "undefined"
+          ? (localStorage.getItem("vouch_active_company_id") || localStorage.getItem("activeCompanyId") || localStorage.getItem("vouch_active_company"))
+          : null;
+        if (getAuthEpoch() !== startEpoch || !isAuthenticated() || getUser()?.id !== startUserId || latestCompanyId !== activeCompanyId) {
+          break;
+        }
 
         if (res.data?.success || res.data?.voucher_id || res.data?.voucher) {
           const vData = res.data.voucher || {};
@@ -424,6 +471,7 @@ export async function pushPendingSalesInvoices(): Promise<number> {
               partyLedgerId: p.party_ledger_id,
               partyName: p.party_name || p.buyer_name || "Customer",
               status: "POSTED",
+              version: Number(res.data.version ?? vData.version ?? 1),
               totalAmount: Number(res.data.total_amount || vData.total_amount || p.total_amount || 0),
               serverUpdatedAt: Date.now(),
               isOffline: false,
@@ -437,14 +485,16 @@ export async function pushPendingSalesInvoices(): Promise<number> {
         }
       } catch (err: any) {
         console.warn(`[Auto-Sync] Failed to post sales invoice ${item.operationId}:`, err);
-        const retryCount = (item.retryCount || 0) + 1;
+        const httpStatus = err?.response?.status;
+        const isTerminalClientReject = httpStatus === 403 || httpStatus === 409 || httpStatus === 422;
+        const retryCount = isTerminalClientReject ? 10 : (item.retryCount || 0) + 1;
         const delay = BACKOFF_DELAYS[Math.min(retryCount, BACKOFF_DELAYS.length - 1)];
         if (item.id) {
           await offlineDb.outboxQueue.update(item.id, {
             status: "FAILED",
             retryCount,
-            nextRetryAt: Date.now() + delay,
-            lastError: err.response?.data?.error || err.message,
+            nextRetryAt: isTerminalClientReject ? undefined : Date.now() + delay,
+            lastError: err?.response?.data?.error || err?.message || "Sync failed",
           });
         }
       }
@@ -496,7 +546,7 @@ export async function retryFailedVoucher(idOrLocalId: number | string) {
 }
 
 export async function triggerOutboxSync() {
-  if (typeof window === "undefined" || !navigator.onLine) return;
+  if (typeof window === "undefined" || !navigator.onLine || !isAuthenticated()) return;
 
   const now = Date.now();
   const eligiblePending = await offlineDb.vouchers
@@ -508,7 +558,12 @@ export async function triggerOutboxSync() {
 
   const outboxPending = await offlineDb.outboxQueue
     .where("status")
-    .equals("QUEUED")
+    .anyOf(["QUEUED", "IN_FLIGHT", "FAILED"])
+    .filter((item) =>
+      item.status !== "FAILED"
+        ? true
+        : (item.retryCount || 0) < 10 && (!item.nextRetryAt || item.nextRetryAt <= now)
+    )
     .count()
     .catch(() => 0);
 
@@ -539,12 +594,23 @@ export async function pullIncrementalChanges(
   onProgress?: (msg: string) => void,
   options?: { force?: boolean }
 ): Promise<{ success: boolean; totalRecords: number; error?: string }> {
-    if (!companyId || typeof window === "undefined" || !navigator.onLine) {
+    if (!companyId || typeof window === "undefined" || !navigator.onLine || !isAuthenticated()) {
       return { success: false, totalRecords: 0 };
     }
     if (isPullInProgress) {
       return { success: false, totalRecords: 0, error: "Pull already in progress" };
     }
+    const startEpoch = getAuthEpoch();
+    const startUserId = getUser()?.id || null;
+    const stillValidForCompany = () => {
+      if (getAuthEpoch() !== startEpoch || !isAuthenticated() || getUser()?.id !== startUserId) {
+        return false;
+      }
+      const activeCid = typeof localStorage !== "undefined"
+        ? (localStorage.getItem("vouch_active_company_id") || localStorage.getItem("activeCompanyId") || localStorage.getItem("vouch_active_company"))
+        : null;
+      return !activeCid || String(activeCid) === String(companyId);
+    };
 
     try {
       const metaCheck = await offlineDb.syncMeta.get(companyId);
@@ -556,8 +622,8 @@ export async function pullIncrementalChanges(
 
       isPullInProgress = true;
 
-      const token = (await getValidAccessToken()) || getAccessToken();
-      if (!token) {
+      const sessionOk = await ensureValidSession();
+      if (!sessionOk || !stillValidForCompany()) {
         return { success: false, totalRecords: 0, error: "Authentication required" };
       }
 
@@ -583,18 +649,26 @@ export async function pullIncrementalChanges(
       const allChangedVouchers: SyncedVoucher[] = [];
 
       while (hasMore) {
+        if (!stillValidForCompany()) {
+          return { success: false, totalRecords: 0, error: "Aborted due to logout or tenant switch" };
+        }
         batchIndex++;
         if (onProgress) {
           onProgress(`Synchronizing operational data (batch ${batchIndex})...`);
         }
 
-        let response = await fetch(`${API_BASE_URL}/api/v1/sync/pull/`, {
+        const pullHeaders: Record<string, string> = {
+          "Content-Type": "application/json",
+          "X-Company-ID": companyId,
+        };
+        const nativeToken = getAccessToken();
+        if (nativeToken) {
+          pullHeaders.Authorization = `Bearer ${nativeToken}`;
+        }
+
+        const response = await apiFetch(`${API_BASE_URL}/api/v1/sync/pull/`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-            "X-Company-ID": companyId,
-          },
+          headers: pullHeaders,
           body: JSON.stringify({
             company_id: companyId,
             cursor: currentCursor,
@@ -602,24 +676,9 @@ export async function pullIncrementalChanges(
           }),
         });
 
-        if (response.status === 401) {
-          const freshToken = await getValidAccessToken();
-          if (freshToken) {
-            response = await fetch(`${API_BASE_URL}/api/v1/sync/pull/`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${freshToken}`,
-                "X-Company-ID": companyId,
-              },
-              body: JSON.stringify({
-                company_id: companyId,
-                cursor: currentCursor,
-                limit: 500,
-              }),
-            });
-          }
-        }
+      if (!stillValidForCompany()) {
+        return { success: false, totalRecords: 0, error: "Aborted due to logout or tenant switch" };
+      }
 
       if (!response.ok) {
         const errText = await response.text().catch(() => "");
@@ -631,6 +690,9 @@ export async function pullIncrementalChanges(
       }
 
       const resData = await response.json();
+      if (!stillValidForCompany()) {
+        return { success: false, totalRecords: 0, error: "Aborted due to logout or tenant switch" };
+      }
       const changes = resData.changes || {};
       if (resData.snapshot_cursor) {
         snapshotCursor = resData.snapshot_cursor;
@@ -716,6 +778,7 @@ export async function pullIncrementalChanges(
           partyLedgerId: v.party_ledger_id,
           partyName: v.party_name,
           status: v.status,
+          version: v.version ?? 1,
           totalAmount: Number(v.total_amount) || 0,
           roundOff: Number(v.round_off ?? v.roundOff ?? 0),
           paymentStatus: v.payment_status || v.paymentStatus || "UNPAID",
@@ -840,6 +903,10 @@ export async function pullIncrementalChanges(
       }
     }
 
+    if (!stillValidForCompany()) {
+      return { success: false, totalRecords: 0, error: "Aborted due to logout or tenant switch" };
+    }
+
     // Update sync metadata upon complete consumption
     const updatedMeta = await offlineDb.syncMeta.get(companyId) || meta;
     await offlineDb.syncMeta.put({
@@ -894,7 +961,11 @@ export async function ingestVoucherLocally(
   companyId: string,
   voucher: VoucherIngestInput
 ): Promise<void> {
-  if (!companyId || !voucher || !voucher.id) return;
+  if (!companyId || !voucher || !voucher.id || !isAuthenticated()) return;
+  const activeCid = typeof localStorage !== "undefined"
+    ? (localStorage.getItem("vouch_active_company_id") || localStorage.getItem("activeCompanyId") || localStorage.getItem("vouch_active_company"))
+    : null;
+  if (activeCid && String(activeCid) !== String(companyId)) return;
 
   const vNum = voucher.voucherNumber || voucher.voucher_number || "";
   const vDate = voucher.voucherDate || voucher.voucher_date || voucher.date || new Date().toISOString().split("T")[0];
@@ -925,6 +996,7 @@ export async function ingestVoucherLocally(
     partyLedgerId: pLedgerId,
     partyName: pName,
     status: finalStatus,
+    version: Number(voucher.version ?? 1),
     totalAmount: totAmt,
     paymentStatus: (pStatus as SyncedVoucher["paymentStatus"]) || "UNPAID",
     paidAmount: pAmt,
@@ -950,7 +1022,7 @@ export async function ingestVoucherLocally(
 
 export async function syncCompany(companyId: string, onProgress?: (msg: string) => void) {
   return await withTabLock("vouch_sync_coordinator_lock", async () => {
-    if (typeof window === "undefined" || !navigator.onLine) return { success: false, reason: "offline" };
+    if (typeof window === "undefined" || !navigator.onLine || !isAuthenticated()) return { success: false, reason: "offline" };
     
     // 1. Push pending offline mutations
     if (onProgress) onProgress("Pushing pending offline commands...");
@@ -968,7 +1040,7 @@ export async function syncCompany(companyId: string, onProgress?: (msg: string) 
  * P0-3: Coordinated sync on reconnect / online that pushes outbox and pulls server updates.
  */
 export async function triggerFullSync(targetCompanyId?: string) {
-  if (typeof window === "undefined" || !navigator.onLine) return;
+  if (typeof window === "undefined" || !navigator.onLine || !isAuthenticated()) return;
   const cId = targetCompanyId || (typeof localStorage !== "undefined" ? (localStorage.getItem("vouch_active_company_id") || localStorage.getItem("activeCompanyId") || localStorage.getItem("vouch_active_company")) : null);
   if (cId) {
     await syncCompany(cId);

@@ -92,6 +92,7 @@ class VoucherService:
         # Real-time Deduplication Gatekeeper
         if not force_duplicate and voucher.voucher_type in ('RECEIPT', 'PAYMENT', 'SALES', 'PURCHASE'):
             from apps.accounting.services.deduplication_engine import TransactionDeduplicationEngine
+            voucher_items = list(voucher.items.select_related('product').all()) if voucher.voucher_type in ('SALES', 'PURCHASE') else None
             dup_check = TransactionDeduplicationEngine.check_duplicate_candidate(
                 company=voucher.company,
                 voucher_type=voucher.voucher_type,
@@ -99,7 +100,11 @@ class VoucherService:
                 total_amount=voucher.total_amount,
                 voucher_date=voucher.voucher_date,
                 exclude_voucher_id=voucher.id,
-                lookback_minutes=15
+                lookback_minutes=15,
+                items_data=voucher_items,
+                reference_number=voucher.reference_number,
+                voucher_number=voucher.voucher_number,
+                external_invoice_number=voucher.external_invoice_number,
             )
             if dup_check.get('is_duplicate') and dup_check.get('rule') == 'RAPID_DOUBLE_SUBMISSION':
                 raise ValidationError(dup_check.get('reason'))
@@ -214,10 +219,10 @@ class VoucherService:
                 entry.company_id = voucher.company_id
                 entry.save(update_fields=['company'])
 
-        # 4. Acquire row-level locks on all affected ledgers
-        ledger_ids = [entry.ledger_id for entry in entries]
+        # 4. Acquire row-level locks on all affected ledgers in deterministic ascending order
+        ledger_ids = sorted(list(set(entry.ledger_id for entry in entries)))
         locked_ledgers = {
-            l.id: l for l in Ledger.objects.select_for_update().filter(id__in=ledger_ids)
+            l.id: l for l in Ledger.objects.select_for_update(no_key=True).filter(id__in=ledger_ids).order_by('id')
         }
         
         for entry in entries:
@@ -249,10 +254,13 @@ class VoucherService:
             changes={"total_amount": str(voucher.total_amount), "status": "POSTED"}
         )
 
-        # 6. Automated Invoice PDF & Viral Claim Dispatch for Sales Invoices
+        # 6. Transactional Outbox & Notification Dispatch for Sales Invoices
         if voucher.voucher_type == 'SALES':
-            from apps.accounting.services.invoice_notification_service import InvoiceNotificationService
-            transaction.on_commit(lambda: InvoiceNotificationService.dispatch_invoice_on_post(voucher))
+            from apps.notifications.outbox_service import OutboxService
+            outbox_event = OutboxService.create_invoice_outbox_event(voucher)
+            if outbox_event:
+                event_id = outbox_event.id
+                transaction.on_commit(lambda: OutboxService.dispatch_outbox_event_async(event_id))
 
         # 7. Protocol Operational DAG Emitter (Transactional atomic emission)
         from apps.protocol.operation_emitter import ProtocolOperationEmitter
@@ -291,14 +299,15 @@ class VoucherService:
             Q(payment_voucher=voucher) | Q(invoice_voucher=voucher)
         ).delete()
             
-        # 3. Revert Accounting Ledgers with row-level locks
+        # 3. Revert Accounting Ledgers with row-level locks in deterministic ascending order
         entries = list(voucher.ledger_entries.select_related('ledger').all())
         ledger_ids = [entry.ledger_id for entry in entries]
         if voucher.party_ledger_id:
             ledger_ids.append(voucher.party_ledger_id)
 
+        sorted_ledger_ids = sorted(list(set(ledger_ids)))
         locked_ledgers = {
-            l.id: l for l in Ledger.objects.select_for_update().filter(id__in=set(ledger_ids))
+            l.id: l for l in Ledger.objects.select_for_update(no_key=True).filter(id__in=sorted_ledger_ids).order_by('id')
         }
 
         for entry in entries:
@@ -462,13 +471,13 @@ class VoucherService:
             except Exception:
                 pass
 
-        # 10. Resync voucher sequence counter (resets to highest remaining voucher)
+        # 10. Resync voucher sequence counter (strictly monotonic: never rolled backward or reset)
         if financial_year:
             InvoiceSequenceService.resync_sequence(
                 company=company,
                 financial_year=financial_year,
                 voucher_type=voucher_type,
-                force=True
+                force=False
             )
 
         # 11. Recalculate affected ledger balances
@@ -541,11 +550,11 @@ class VoucherService:
             reversal_voucher=voucher
         )
 
-        # 4. Generate inverse ledger entries (Credit what was debited, Debit what was credited)
+        # 4. Generate inverse ledger entries in deterministic ascending lock order
         entries = list(voucher.ledger_entries.select_related('ledger').all())
-        ledger_ids = [entry.ledger_id for entry in entries]
+        sorted_ledger_ids = sorted(list(set(entry.ledger_id for entry in entries)))
         locked_ledgers = {
-            l.id: l for l in Ledger.objects.select_for_update().filter(id__in=set(ledger_ids))
+            l.id: l for l in Ledger.objects.select_for_update(no_key=True).filter(id__in=sorted_ledger_ids).order_by('id')
         }
 
         for entry in entries:

@@ -463,6 +463,16 @@ class CodeReviewAuditFindingsTests(TestCase):
             status="POSTED",
             created_by=self.user1
         )
+        from apps.accounting.models import VoucherItem
+        VoucherItem.objects.create(
+            voucher=sales_inv,
+            product=prod,
+            quantity=Decimal("1.00"),
+            rate=Decimal("1000.00"),
+            taxable_amount=Decimal("1000.00"),
+            total_amount=Decimal("1180.00"),
+            gst_rate=Decimal("18.00")
+        )
 
         items_data = [{
             "product_id": str(prod.id),

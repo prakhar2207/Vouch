@@ -158,8 +158,25 @@
       if (msg) statusEl.textContent = msg;
     }
 
-    function navigateToApp() {
-      const hasAuth = localStorage.getItem("vouch_access_token") || localStorage.getItem("access_token");
+    async function navigateToApp() {
+      let hasAuth = false;
+      try {
+        const metaRaw = localStorage.getItem("vouch_session_meta");
+        if (metaRaw) {
+          const meta = JSON.parse(metaRaw);
+          if (meta && (meta.mode === "token" || meta.userId)) {
+            hasAuth = true;
+          }
+        }
+      } catch {}
+      if (!hasAuth && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Preferences) {
+        try {
+          const res = await window.Capacitor.Plugins.Preferences.get({ key: "vouch_access_token" });
+          if (res && res.value && res.value !== "undefined" && res.value !== "null") {
+            hasAuth = true;
+          }
+        } catch {}
+      }
 
       // If user has already signed in once, proceed directly to Dashboard!
       // Even in Airplane mode, Android WebView will load the cached dashboard and local IndexedDB data.

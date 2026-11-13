@@ -7,7 +7,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { useHotkeys } from "react-hotkeys-hook";
 import { ThemeToggle } from "./ThemeToggle";
 import { NotificationBell } from "./NotificationBell";
-import { removeTokens } from "@/utils/auth";
+import { performLogout } from "@/utils/api";
+import LogoutConfirmModal from "./modals/LogoutConfirmModal";
 import CommandPalette from "./CommandPalette";
 import { VouchLogo } from "./VouchLogo";
 import { useShortcuts } from "@/context/ShortcutContext";
@@ -61,6 +62,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [isUniversalNewOpen, setIsUniversalNewOpen] = useState(false);
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
 
   // Simplified Navigation Dropdown States: Sales, Reports and More
   const [isSalesOpen, setIsSalesOpen] = useState(false);
@@ -107,7 +109,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { setIsHelpOpen, setIsDateOpen, workingDate, startTour, isCalculatorOpen, setIsCalculatorOpen } = useShortcuts();
   const { activeFY, availableFYs, setActiveFY, isReadOnly, setIsClosingModalOpen } = useFinancialYear();
   const { displayPeriod, shortDisplayPeriod, isCustomPeriod, resetToCurrentFY, setIsPeriodModalOpen, setIsSplitModalOpen } = useAccountingPeriod();
-  const { activeCompany, availableCompanies, setActiveCompany } = useCompany();
+  const { activeCompany, availableCompanies, switchCompany } = useCompany();
   const { user, role, isAdmin, isOwner, isCA, isEmployee, isViewer, canManageSettings } = useRole();
 
   // Superadmin isolation: platform superadmin only sees the Superadmin Command Center, never company dashboards
@@ -169,17 +171,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     };
   }, []);
 
-  const handleLogout = async () => {
-    try {
-      await safePurgeTenantData();
-      if (typeof window !== "undefined" && "caches" in window) {
-        caches.delete("srilekh-pages-cache").catch(() => {});
-      }
-      if (typeof navigator !== "undefined" && "serviceWorker" in navigator && navigator.serviceWorker.controller) {
-        navigator.serviceWorker.controller.postMessage({ type: "CLEAR_SESSION_CACHES" });
-      }
-    } catch {}
-    removeTokens();
+  const handleLogout = () => {
+    setIsUserMenuOpen(false);
+    setIsMobileNavOpen(false);
+    setIsLogoutModalOpen(true);
+  };
+
+  const confirmLogout = async ({ wipeLocalDeviceData }: { wipeLocalDeviceData: boolean }) => {
+    await performLogout({ wipeLocalDeviceData });
+    setIsLogoutModalOpen(false);
     if (typeof window !== "undefined") {
       window.location.replace("/login");
     } else {
@@ -828,8 +828,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       {availableCompanies.map((comp) => (
                         <button
                           key={comp.id}
-                          onClick={() => {
-                            setActiveCompany(comp);
+                          onClick={async () => {
+                            await switchCompany(comp);
                             setIsCompanyDropdownOpen(false);
                             window.location.reload();
                           }}
@@ -1155,10 +1155,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </label>
                 <select
                   value={activeCompany?.id || ""}
-                  onChange={(e) => {
+                  onChange={async (e) => {
                     const found = availableCompanies.find(c => c.id === e.target.value);
                     if (found) {
-                      setActiveCompany(found);
+                      await switchCompany(found);
                       window.location.reload();
                     }
                   }}
@@ -1544,6 +1544,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <UniversalNewModal
         isOpen={isUniversalNewOpen}
         onClose={() => setIsUniversalNewOpen(false)}
+      />
+
+      {/* Ordinary vs Secure Shared-Device Logout Confirmation Modal */}
+      <LogoutConfirmModal
+        isOpen={isLogoutModalOpen}
+        onClose={() => setIsLogoutModalOpen(false)}
+        onConfirmLogout={confirmLogout}
       />
     </div>
   );

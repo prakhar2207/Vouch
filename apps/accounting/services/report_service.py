@@ -4,6 +4,7 @@ from decimal import Decimal
 from apps.companies.models import Company
 from apps.ledgers.models import Ledger, LedgerGroup
 from apps.accounting.models import LedgerEntry
+from apps.accounting.services.effective_voucher_service import EffectiveVoucherService
 
 logger = logging.getLogger(__name__)
 
@@ -30,20 +31,20 @@ class ReportService:
             .order_by('group__nature', 'name')
         )
 
-        # Batch 1: Identify which ledgers have posted OPENING vouchers
+        # Batch 1: Identify which ledgers have accounted OPENING vouchers
         ledgers_with_opening = set(
             LedgerEntry.objects.filter(
                 voucher__company=company,
-                voucher__status='POSTED',
+                voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES,
                 voucher__voucher_type__in=['OPENING', 'OPENING_INVOICE', 'OPENING_BILL']
             ).values_list('ledger_id', flat=True).distinct()
         )
 
-        # Batch 2: Aggregate posted ledger entries
+        # Batch 2: Aggregate accounted ledger entries (POSTED + REVERSED originals/counter-reversals + CORRECTED)
         # If date filters are provided, filter by voucher_date range
         entry_qs = LedgerEntry.objects.filter(
             voucher__company=company,
-            voucher__status='POSTED'
+            voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES
         )
         if from_date:
             entry_qs = entry_qs.filter(voucher__voucher_date__gte=from_date)

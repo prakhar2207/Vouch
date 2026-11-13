@@ -1,5 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import Dexie, { type Table } from "dexie";
+import Dexie, { type DBCore, type DBCoreTable, type Table } from "dexie";
+import { shouldPurgeCacheOnLogout } from "@/lib/pwa/sw-cache-policy";
+import {
+  OfflineCryptoManager,
+  decryptRecordForTable,
+  encryptBatchForTable,
+  encryptRecordForTable,
+  isEncryptedEnvelope,
+  isEncryptedTable,
+} from "@/lib/db/offlineCrypto";
 
 export interface OfflineVoucher {
   id?: number;
@@ -181,6 +190,8 @@ export interface SyncedPaymentAllocation {
 export interface ClientAccountingOperation {
   operationId: string;
   transactionId: string;
+  companyId?: string | null;
+  userId?: string | null;
   replicaId: string;
   operationType: string;
   operationClass?: string;
@@ -197,6 +208,8 @@ export interface OutboxItem {
   id?: number;
   operationId: string;
   transactionId: string;
+  companyId?: string | null;
+  userId?: string | null;
   status: "QUEUED" | "IN_FLIGHT" | "FAILED" | "COMPLETED";
   retryCount: number;
   lastError?: string;
@@ -324,6 +337,273 @@ export class VouchOfflineDB extends Dexie {
       inboxQueue: "++id, operationId, transactionId, status, receivedAt",
       syncCursors: "transactionId, lastSyncedAt"
     });
+    this.version(9).stores({
+      vouchers: "++id, localId, voucherType, status, createdAt",
+      masters: "key, updatedAt",
+      ocrCache: "fileHash, cachedAt",
+      syncedVouchers: "id, companyId, voucherType, voucherDate, dueDate, status, partyLedgerId, serverUpdatedAt, [companyId+voucherDate], [companyId+status], [companyId+voucherType]",
+      syncedLedgers: "id, companyId, ledgerType, name, [companyId+ledgerType]",
+      syncedProducts: "id, companyId, sku, [companyId+currentStock]",
+      syncMeta: "companyId, lastSyncAt, syncStatus",
+      analyticsDaily: "id, companyId, date, [companyId+date]",
+      analyticsParty: "id, companyId, partyId, [companyId+partyId]",
+      syncedBankTransactions: "id, companyId, bankLedgerId, status, transactionDate, serverUpdatedAt, [companyId+status], [companyId+bankLedgerId]",
+      syncedPaymentAllocations: "id, companyId, paymentVoucherId, invoiceVoucherId, [companyId+paymentVoucherId], [companyId+invoiceVoucherId]",
+      operationLog: "operationId, transactionId, companyId, userId, replicaId, operationType, logicalTimestamp, status, [transactionId+logicalTimestamp]",
+      outboxQueue: "++id, operationId, transactionId, companyId, userId, status, retryCount, nextRetryAt",
+      inboxQueue: "++id, operationId, transactionId, status, receivedAt",
+      syncCursors: "transactionId, lastSyncedAt"
+    });
+
+    this.installEncryptionLayer();
+  }
+
+  private installEncryptionLayer(): void {
+    // 1. Pre-seal sensitive fields before Dexie opens an IndexedDB write transaction
+    //    to avoid Chromium IDB TransactionInactiveError during async WebCrypto awaits.
+    const applyObjectChanges = (target: Record<string, any>, changes: Record<string, any>): void => {
+      for (const [keyPath, val] of Object.entries(changes)) {
+        if (!keyPath.includes(".")) {
+          if (val === undefined) {
+            delete target[keyPath];
+          } else {
+            target[keyPath] = val;
+          }
+          continue;
+        }
+        const parts = keyPath.split(".");
+        let cursor: Record<string, any> = target;
+        for (let i = 0; i < parts.length - 1; i += 1) {
+          const part = parts[i];
+          if (!cursor[part] || typeof cursor[part] !== "object") {
+            cursor[part] = {};
+          }
+          cursor = cursor[part];
+        }
+        const leaf = parts[parts.length - 1];
+        if (val === undefined) {
+          delete cursor[leaf];
+        } else {
+          cursor[leaf] = val;
+        }
+      }
+    };
+
+    const wrappedTableMap = new Map<string, Table<any, any>>();
+    const origGetTable = this.table.bind(this);
+    (this as any).table = (tableName: string) => {
+      return wrappedTableMap.get(tableName) ?? origGetTable(tableName);
+    };
+
+    for (const tRef of this.tables) {
+      if (!isEncryptedTable(tRef.name)) continue;
+      const table: Table<any, any> = (this as any)[tRef.name] ?? origGetTable(tRef.name);
+      wrappedTableMap.set(tRef.name, table);
+
+      const origPut = table.put.bind(table);
+      const origAdd = table.add.bind(table);
+      const origBulkPut = table.bulkPut.bind(table);
+      const origBulkAdd = table.bulkAdd.bind(table);
+      const origUpdate = table.update.bind(table);
+      const tableName = tRef.name;
+
+      (table as any).put = async (item: any, key?: any) => {
+        const sealed = await encryptRecordForTable(tableName, item);
+        return key !== undefined ? origPut(sealed, key) : origPut(sealed);
+      };
+
+      (table as any).add = async (item: any, key?: any) => {
+        const sealed = await encryptRecordForTable(tableName, item);
+        return key !== undefined ? origAdd(sealed, key) : origAdd(sealed);
+      };
+
+      (table as any).bulkPut = async (items: readonly any[], keysOrOptions?: any, options?: any) => {
+        const sealed = await encryptBatchForTable(tableName, items);
+        if (options !== undefined) return origBulkPut(sealed, keysOrOptions, options);
+        if (keysOrOptions !== undefined) return origBulkPut(sealed, keysOrOptions);
+        return origBulkPut(sealed);
+      };
+
+      (table as any).bulkAdd = async (items: readonly any[], keysOrOptions?: any, options?: any) => {
+        const sealed = await encryptBatchForTable(tableName, items);
+        if (options !== undefined) return origBulkAdd(sealed, keysOrOptions, options);
+        if (keysOrOptions !== undefined) return origBulkAdd(sealed, keysOrOptions);
+        return origBulkAdd(sealed);
+      };
+
+      (table as any).update = async (keyOrObject: any, changes: any) => {
+        if (Dexie.currentTransaction) {
+          return origUpdate(keyOrObject, changes);
+        }
+        const pkName = table.schema.primKey.keyPath;
+        const lookupKey =
+          typeof pkName === "string" && keyOrObject && typeof keyOrObject === "object"
+            ? keyOrObject[pkName]
+            : keyOrObject;
+        if (lookupKey === undefined) {
+          return origUpdate(keyOrObject, changes);
+        }
+        const existing = await table.get(lookupKey);
+        if (!existing) return 0;
+        const clone: Record<string, any> = { ...existing };
+        if (typeof changes === "function") {
+          const ctx = { value: clone, primKey: lookupKey };
+          const res = changes(clone, ctx);
+          if (res === false) return 0;
+          if (res && typeof res === "object") {
+            Object.assign(clone, res);
+          }
+        } else if (changes && typeof changes === "object") {
+          applyObjectChanges(clone, changes);
+        }
+        if (typeof pkName === "string" && clone[pkName] === undefined) {
+          clone[pkName] = lookupKey;
+        }
+        const sealed = await encryptRecordForTable(tableName, clone);
+        await origPut(sealed);
+        return 1;
+      };
+
+      const decryptIfSealed = async (row: any) =>
+        row && typeof row === "object" && isEncryptedEnvelope(row.__enc)
+          ? decryptRecordForTable(tableName, row)
+          : row;
+
+      const wrapCollection = (col: any): any => {
+        if (!col || col.__vouchEncryptedWrapped) return col;
+        col.__vouchEncryptedWrapped = true;
+        const colChainMethods = ["and", "or", "reverse", "limit", "offset", "distinct", "filter", "until"];
+        for (const m of colChainMethods) {
+          if (typeof col[m] === "function") {
+            const origFn = col[m].bind(col);
+            col[m] = (...args: any[]) => wrapCollection(origFn(...args));
+          }
+        }
+        if (typeof col.toArray === "function") {
+          const origToArray = col.toArray.bind(col);
+          col.toArray = async (cb?: any) => {
+            const rows = await origToArray();
+            const decrypted = await Promise.all(rows.map(decryptIfSealed));
+            return cb ? cb(decrypted) : decrypted;
+          };
+        }
+        if (typeof col.first === "function") {
+          const origFirst = col.first.bind(col);
+          col.first = async (cb?: any) => {
+            const row = await origFirst();
+            const decrypted = await decryptIfSealed(row);
+            return cb ? cb(decrypted) : decrypted;
+          };
+        }
+        if (typeof col.last === "function") {
+          const origLast = col.last.bind(col);
+          col.last = async (cb?: any) => {
+            const row = await origLast();
+            const decrypted = await decryptIfSealed(row);
+            return cb ? cb(decrypted) : decrypted;
+          };
+        }
+        if (typeof col.sortBy === "function") {
+          col.sortBy = async (keyPath: string, cb?: any) => {
+            const rows = await col.toArray();
+            rows.sort((a: any, b: any) => {
+              const av = a?.[keyPath];
+              const bv = b?.[keyPath];
+              return av < bv ? -1 : av > bv ? 1 : 0;
+            });
+            return cb ? cb(rows) : rows;
+          };
+        }
+        return col;
+      };
+
+      const wrapWhereClause = (wc: any): any => {
+        if (!wc || wc.__vouchEncryptedWrapped) return wc;
+        wc.__vouchEncryptedWrapped = true;
+        const wcMethods = [
+          "equals", "equalsIgnoreCase", "anyOf", "anyOfIgnoreCase",
+          "startsWith", "startsWithIgnoreCase", "startsWithAnyOf", "startsWithAnyOfIgnoreCase",
+          "between", "above", "aboveOrEqual", "below", "belowOrEqual",
+          "notEqual", "noneOf", "inAnyRange",
+        ];
+        for (const m of wcMethods) {
+          if (typeof wc[m] === "function") {
+            const origWcFn = wc[m].bind(wc);
+            wc[m] = (...args: any[]) => wrapCollection(origWcFn(...args));
+          }
+        }
+        return wc;
+      };
+
+      const origWhere = table.where.bind(table);
+      (table as any).where = (...args: any[]) => {
+        const res = origWhere(...(args as [any]));
+        if (args.length === 1 && typeof args[0] === "object" && !Array.isArray(args[0])) {
+          return wrapCollection(res);
+        }
+        return wrapWhereClause(res);
+      };
+      for (const m of ["toCollection", "orderBy", "reverse", "limit", "offset", "filter"] as const) {
+        const origColFn = (table as any)[m].bind(table);
+        (table as any)[m] = (...args: any[]) => wrapCollection(origColFn(...args));
+      }
+      const origTableToArray = table.toArray.bind(table);
+      (table as any).toArray = async (cb?: any) => {
+        const rows = await origTableToArray();
+        const decrypted = await Promise.all(rows.map(decryptIfSealed));
+        return cb ? cb(decrypted) : decrypted;
+      };
+    }
+
+    // 2. DBCore read-decryption & defense-in-depth middleware
+    this.use({
+      stack: "dbcore",
+      name: "OfflineAesGcmEncryption",
+      create(downlevelDatabase: DBCore): DBCore {
+        return {
+          ...downlevelDatabase,
+          table(tableName: string): DBCoreTable {
+            const downlevelTable = downlevelDatabase.table(tableName);
+            if (!isEncryptedTable(tableName)) {
+              return downlevelTable;
+            }
+
+            return {
+              ...downlevelTable,
+              mutate(req) {
+                // Keep mutate() synchronous before downlevelTable.mutate(req) so
+                // Dexie's active IndexedDB transaction never auto-commits mid-microtask.
+                return downlevelTable.mutate(req);
+              },
+              get(req) {
+                return downlevelTable.get(req).then((raw) =>
+                  raw ? decryptRecordForTable(tableName, raw) : raw
+                );
+              },
+              getMany(req) {
+                return downlevelTable.getMany(req).then((rows) =>
+                  rows.length
+                    ? Promise.all(rows.map((r) => decryptRecordForTable(tableName, r)))
+                    : rows
+                );
+              },
+              query(req) {
+                const resPromise = downlevelTable.query(req);
+                if (req.values === false) {
+                  return resPromise;
+                }
+                return resPromise.then((res) => {
+                  if (!res.result?.length) return res;
+                  return Promise.all(
+                    res.result.map((r) => decryptRecordForTable(tableName, r))
+                  ).then((decrypted) => ({ ...res, result: decrypted }));
+                });
+              },
+            };
+          },
+        };
+      },
+    });
   }
 }
 
@@ -337,6 +617,7 @@ let coordinationChannel: BroadcastChannel | null = null;
 if (typeof window !== "undefined" && "BroadcastChannel" in window) {
   try {
     coordinationChannel = new BroadcastChannel("vouch_offline_coordination");
+    (coordinationChannel as unknown as { unref?: () => void }).unref?.();
     coordinationChannel.onmessage = async (event) => {
       const data = event.data;
       if (data?.type === "CLOSE_DB_CONNECTION") {
@@ -371,19 +652,120 @@ export async function ensureDbOpen(): Promise<void> {
  * - If targetCompanyId is omitted (logout): performs complete purge across all tables, closes connections,
  *   coordinates with open tabs, and attempts resilient database reset without blocking if another tab is active.
  */
-export async function safePurgeTenantData(targetCompanyId?: string | null): Promise<void> {
+export interface PendingOfflineSummary {
+  currentUserCount: number;
+  totalPendingCount: number;
+  companyIds: string[];
+}
+
+export async function getPendingOfflineSummary(userId?: string | null): Promise<PendingOfflineSummary> {
+  if (typeof window === "undefined") {
+    return { currentUserCount: 0, totalPendingCount: 0, companyIds: [] };
+  }
+  try {
+    if (!offlineDb.isOpen()) {
+      await offlineDb.open().catch(() => {});
+    }
+    const pendingOutbox = await offlineDb.outboxQueue
+      .where("status")
+      .anyOf(["QUEUED", "IN_FLIGHT", "FAILED"])
+      .toArray();
+    const pendingLegacy = await offlineDb.vouchers
+      .where("status")
+      .anyOf(["PENDING", "SYNCING", "FAILED"])
+      .toArray();
+
+    let currentUserCount = 0;
+    const companyIds = new Set<string>();
+
+    for (const item of pendingOutbox) {
+      let ownerUid = item.userId || null;
+      let cid = item.companyId || "";
+      if (!ownerUid || !cid) {
+        const op = await offlineDb.operationLog.get(item.operationId).catch(() => undefined);
+        ownerUid = ownerUid || op?.userId || null;
+        cid = cid || String(op?.companyId || op?.payload?.company_id || op?.payload?.company || "");
+      }
+      if (cid) companyIds.add(String(cid));
+      if (userId && ownerUid && String(ownerUid) === String(userId)) {
+        currentUserCount += 1;
+      }
+    }
+
+    for (const v of pendingLegacy) {
+      const cid = String(v.payload?.company_id || v.payload?.company || "");
+      const ownerUid = v.payload?.user_id ? String(v.payload.user_id) : null;
+      if (cid) companyIds.add(cid);
+      if (userId && (!ownerUid || ownerUid === String(userId))) {
+        currentUserCount += 1;
+      }
+    }
+
+    return {
+      currentUserCount,
+      totalPendingCount: pendingOutbox.length + pendingLegacy.length,
+      companyIds: Array.from(companyIds),
+    };
+  } catch {
+    return { currentUserCount: 0, totalPendingCount: 0, companyIds: [] };
+  }
+}
+
+export async function hasPendingOfflineTransactions(companyId?: string, userId?: string | null): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  try {
+    if (!offlineDb.isOpen()) {
+      await offlineDb.open().catch(() => {});
+    }
+    const pendingOutbox = await offlineDb.outboxQueue
+      .where("status")
+      .anyOf(["QUEUED", "IN_FLIGHT", "FAILED"])
+      .toArray();
+    if (companyId) {
+      for (const item of pendingOutbox) {
+        const op = (!item.companyId || !item.userId)
+          ? await offlineDb.operationLog.get(item.operationId).catch(() => undefined)
+          : undefined;
+        const resolvedCompanyId = String(item.companyId || op?.companyId || op?.payload?.company_id || "");
+        const resolvedUserId = item.userId || op?.userId || null;
+        if (resolvedCompanyId !== companyId) continue;
+        if (userId && resolvedUserId && String(resolvedUserId) !== String(userId)) continue;
+        return true;
+      }
+      const pendingLegacy = await offlineDb.vouchers
+        .where("status")
+        .anyOf(["PENDING", "SYNCING", "FAILED"])
+        .toArray();
+      return pendingLegacy.some((v) => {
+        const matchesCompany = String(v.payload?.company_id || v.payload?.company || "") === companyId;
+        if (!matchesCompany) return false;
+        if (userId && v.payload?.user_id && String(v.payload.user_id) !== String(userId)) return false;
+        return true;
+      });
+    }
+    const summary = await getPendingOfflineSummary(userId);
+    return userId ? summary.currentUserCount > 0 : summary.totalPendingCount > 0;
+  } catch {
+    return false;
+  }
+}
+
+export async function safePurgeTenantData(
+  targetCompanyId?: string | null,
+  options?: { forceDestroyAll?: boolean }
+): Promise<void> {
   if (typeof window === "undefined") return;
 
   try {
-    // 1. Notify other open tabs to close their Dexie connections
-    if (coordinationChannel) {
+    // 1. Notify other open tabs to close their Dexie connections cleanly on full destroy
+    if (!targetCompanyId && options?.forceDestroyAll && coordinationChannel) {
       try {
         coordinationChannel.postMessage({ type: "CLOSE_DB_CONNECTION", targetCompanyId });
       } catch {}
     }
 
-    // 2. Ensure db is open before clearing tables
-    if (!offlineDb.isOpen()) {
+    // 2. Ensure db is open only when selectively clearing tables (avoid reopening before full deleteDatabase)
+    if (!options?.forceDestroyAll && !offlineDb.isOpen()) {
       await offlineDb.open().catch(() => {});
     }
 
@@ -401,70 +783,88 @@ export async function safePurgeTenantData(targetCompanyId?: string | null): Prom
         offlineDb.masters.where("key").startsWith(`company_${targetCompanyId}`).delete(),
       ]);
 
-      // DEF-DATA-01 Architectural Fix: PRESERVE offline outboxQueue and operationLog across tenant switches!
-      // Unsynced financial transactions (QUEUED, IN_PROGRESS, RETRY, FAILED) MUST NOT be deleted when switching companies.
-      // They remain isolated by company_id and are resumed only when the user returns to this authorized company.
-      // Cache tables (vouchers, ledgers, products, analytics) were purged above to prevent cross-tenant UI leakage.
-    } else {
-      // Complete global purge on logout: clear all tables immediately
-      // This is 100% resilient and NEVER hangs even if other tabs are holding db locks
-      await Promise.allSettled(offlineDb.tables.map((table) => table.clear().catch(() => {})));
-
-      // Close Dexie and attempt clean deleteDatabase with a strict 2-second fallback timeout
+      // PRESERVE offline outboxQueue and operationLog across tenant switches!
+      // Unsynced financial transactions (QUEUED, IN_FLIGHT, FAILED) remain isolated by companyId & userId
+      // and are resumed only when an authorized session returns to this company.
+    } else if (options?.forceDestroyAll) {
+      // Explicit full wipe requested
+      if (offlineDb.isOpen()) {
+        await Promise.allSettled(offlineDb.tables.map((table) => table.clear().catch(() => {})));
+      }
       try {
         offlineDb.close();
       } catch {}
-
-      await new Promise<void>((resolve) => {
-        let finished = false;
-        const timer = setTimeout(() => {
-          if (!finished) {
-            finished = true;
-            resolve();
+      const deleteIdb = (dbName: string) =>
+        new Promise<void>((resolve) => {
+          let finished = false;
+          const timer = setTimeout(() => {
+            if (!finished) {
+              finished = true;
+              resolve();
+            }
+          }, 2000);
+          (timer as unknown as { unref?: () => void }).unref?.();
+          try {
+            const req = indexedDB.deleteDatabase(dbName);
+            req.onsuccess = req.onerror = req.onblocked = () => {
+              if (!finished) {
+                finished = true;
+                clearTimeout(timer);
+                resolve();
+              }
+            };
+          } catch {
+            if (!finished) {
+              finished = true;
+              clearTimeout(timer);
+              resolve();
+            }
           }
-        }, 2000);
+        });
+      OfflineCryptoManager.clearInMemoryCache();
+      try {
+        const { ClientKeyManager } = await import("@/lib/crdt/clientKeyManager");
+        await ClientKeyManager.closeAndResetVault();
+      } catch {}
+      await Promise.all([deleteIdb("VouchOfflineDB"), deleteIdb("VouchSecurityVault")]);
+    } else {
+      // Stage 4.12 Phase B: Safe Logout Purge
+      // Purge all tenant read caches, inbox, cursors, and masters so no PII/accounting view leaks to the next user,
+      // while PRESERVING unacknowledged financial mutations (QUEUED, IN_FLIGHT, FAILED) tagged by userId & companyId.
+      await Promise.allSettled([
+        offlineDb.syncedVouchers.clear().catch(() => {}),
+        offlineDb.syncedLedgers.clear().catch(() => {}),
+        offlineDb.syncedProducts.clear().catch(() => {}),
+        offlineDb.syncedBankTransactions.clear().catch(() => {}),
+        offlineDb.syncedPaymentAllocations.clear().catch(() => {}),
+        offlineDb.analyticsDaily.clear().catch(() => {}),
+        offlineDb.analyticsParty.clear().catch(() => {}),
+        offlineDb.syncMeta.clear().catch(() => {}),
+        offlineDb.masters.clear().catch(() => {}),
+        offlineDb.ocrCache.clear().catch(() => {}),
+        offlineDb.inboxQueue.clear().catch(() => {}),
+        offlineDb.syncCursors.clear().catch(() => {}),
+        offlineDb.vouchers.where("status").equals("SYNCED").delete().catch(() => {}),
+        offlineDb.outboxQueue.where("status").equals("COMPLETED").delete().catch(() => {}),
+      ]);
 
-        try {
-          const req = indexedDB.deleteDatabase("VouchOfflineDB");
-          req.onsuccess = () => {
-            if (!finished) {
-              finished = true;
-              clearTimeout(timer);
-              resolve();
-            }
-          };
-          req.onerror = () => {
-            if (!finished) {
-              finished = true;
-              clearTimeout(timer);
-              resolve();
-            }
-          };
-          req.onblocked = () => {
-            // Another tab has not closed yet; fallback to resolve without blocking UI
-            console.warn("[IndexedDB] Database deletion blocked by another tab; tables were already cleared.");
-            if (!finished) {
-              finished = true;
-              clearTimeout(timer);
-              resolve();
-            }
-          };
-        } catch {
-          if (!finished) {
-            finished = true;
-            clearTimeout(timer);
-            resolve();
-          }
-        }
-      });
+      const remainingOutbox = await offlineDb.outboxQueue.toArray().catch(() => []);
+      const activeOpIds = new Set(remainingOutbox.map((item) => item.operationId));
+      const allOps = await offlineDb.operationLog.toArray().catch(() => []);
+      const opsToDelete = allOps
+        .filter((op) => !activeOpIds.has(op.operationId) && op.status !== "PENDING")
+        .map((op) => op.operationId);
+      if (opsToDelete.length > 0) {
+        await offlineDb.operationLog.bulkDelete(opsToDelete).catch(() => {});
+      }
     }
 
-    // 3. Purge Service Worker and CacheStorage caches
+    // 3. Purge Service Worker and CacheStorage caches (including legacy cross-origin / api caches)
     if ("caches" in window) {
       try {
         const cacheNames = await caches.keys().catch(() => []);
         for (const name of cacheNames) {
-          if (name.includes("srilekh") || name.includes("vouch") || name.includes("pages")) {
+          if (shouldPurgeCacheOnLogout(name)) {
             await caches.delete(name).catch(() => {});
           }
         }

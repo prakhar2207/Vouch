@@ -184,7 +184,7 @@ class LocalFirstQueriesAndTransferReductionTests(APITestCase):
 
         with CaptureQueriesContext(connection) as ctx:
             resp = self.client.get(
-                f"/api/v1/accounting/banking/transactions/?company_id={self.company.id}&status=MATCHED"
+                f"/api/v1/accounting/banking/transactions/?company_id={self.company.id}&status=NEEDS_REVIEW"
             )
 
         self.assertEqual(resp.status_code, status.HTTP_200_OK)

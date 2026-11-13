@@ -87,8 +87,9 @@ class FindingFixExecuteAPIView(APIView):
         """
         company = get_authorized_company(request)
         finding = get_object_or_404(AccountingFinding, id=pk, company=company)
+        client_key = request.data.get('client_key') or request.data.get('idempotency_key') or request.headers.get('X-Idempotency-Key')
         try:
-            res = FindingFixService.execute_fix(finding, user=request.user)
+            res = FindingFixService.execute_fix(finding, user=request.user, client_key=client_key)
             return Response(res, status=status.HTTP_200_OK)
         except ValidationError as e:
             return Response({"error": str(e.message if hasattr(e, 'message') else e)}, status=status.HTTP_400_BAD_REQUEST)

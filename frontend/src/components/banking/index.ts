@@ -7,3 +7,4 @@ export { default as ReconciliationStatsBar } from "./ReconciliationStatsBar";
 export { default as BankTransactionCard } from "./BankTransactionCard";
 export { default as InlineMatchTray } from "./InlineMatchTray";
 export { default as BankingModalsContainer } from "./BankingModalsContainer";
+export { ReconciliationStateBadge } from "./ReconciliationStateBadge";

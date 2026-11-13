@@ -96,7 +96,7 @@ class CrossPlatformArchitectureTests(TestCase):
         self.assertEqual(res1.status_code, 201)
         data1 = json.loads(res1.content)
         self.assertEqual(data1["call_count"], 1)
-        self.assertIsNone(res1.get('X-Idempotent-Replay'))
+        self.assertEqual(res1.get('X-Idempotent-Replay'), 'false')
 
         # 2nd request with same idempotency key (simulating offline queue network retry)
         res2 = middleware(request)

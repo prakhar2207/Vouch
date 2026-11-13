@@ -1,0 +1,30 @@
+New Tax Invoice Issued — SriLekh
+
+{{ seller_name }} has issued a tax invoice to {{ recipient_name }}.
+
+Invoice Details:
+- Invoice Number: {{ invoice_number }}
+- Invoice Date: {{ invoice_date }}
+{% if due_date %}- Due Date: {{ due_date }}
+{% endif %}{% if seller_gstin %}- Seller GSTIN: {{ seller_gstin }}
+{% endif %}{% if recipient_gstin %}- Recipient GSTIN: {{ recipient_gstin }}
+{% endif %}- Taxable Amount: INR {{ taxable_amount }}
+{% if cgst_amount %}- CGST: INR {{ cgst_amount }}
+{% endif %}{% if sgst_amount %}- SGST: INR {{ sgst_amount }}
+{% endif %}{% if igst_amount %}- IGST: INR {{ igst_amount }}
+{% endif %}- Total Invoice Value: INR {{ total_amount }}
+
+{% if secure_view_url %}View / Download Invoice:
+{{ secure_view_url }}
+{% endif %}
+Issuer Information:
+{{ seller_name }}
+{% if seller_address %}{{ seller_address }}
+{% endif %}{% if seller_phone %}Phone: {{ seller_phone }}
+{% endif %}{% if seller_email %}Email: {{ seller_email }}
+{% endif %}
+--
+SriLekh Technologies
+https://srilekh.com
+Support: support@srilekh.com
+Sender: admin@srilekh.com

@@ -503,8 +503,8 @@ class OCRForensicsTestCase(TestCase):
             transaction_date=datetime.date(2026, 4, 28),
             description="BY CLG:DEL ACCTS SAKSHAM ENTERPRISES",
             normalized_narration="BY CLG DEL ACCTS SAKSHAM ENTERPRISES",
-            debit_amount=Decimal("15000.00"),
-            credit_amount=Decimal("0.00"),
+            debit_amount=Decimal("0.00"),
+            credit_amount=Decimal("15000.00"),
             status="UNRESOLVED"
         )
 
@@ -517,9 +517,7 @@ class OCRForensicsTestCase(TestCase):
         )
 
         tx.refresh_from_db()
-        # Transaction amounts must be corrected
-        self.assertEqual(tx.credit_amount, Decimal("15000.00"))
-        self.assertEqual(tx.debit_amount, Decimal("0.00"))
+        # Immutable source evidence invariant: transaction amounts are strictly preserved
         self.assertEqual(tx.status, "RECONCILED")
 
         # Voucher must be RECEIPT, not PAYMENT

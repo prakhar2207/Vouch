@@ -190,6 +190,7 @@ class AccountingLifecycleStressTestSuite(TestCase):
 
         # Step 5: Cancel Invoice & Verify Clean Rollback
         VoucherService.cancel_voucher(v_inv, user=self.user)
+        v_inv.refresh_from_db()
         self.assertEqual(v_inv.status, 'CANCELLED')
         # Allocations linked to v_inv must be removed
         allocs = PaymentAllocation.objects.filter(invoice_voucher=v_inv).count()

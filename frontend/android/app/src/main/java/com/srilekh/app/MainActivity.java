@@ -14,6 +14,7 @@ import android.webkit.URLUtil;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.widget.Toast;
+import androidx.activity.OnBackPressedCallback;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
@@ -26,7 +27,7 @@ public class MainActivity extends BridgeActivity {
             WebSettings settings = webView.getSettings();
             settings.setDomStorageEnabled(true);
             settings.setDatabaseEnabled(true);
-            settings.setAllowFileAccess(true);
+            settings.setAllowFileAccess(false);
             settings.setAllowContentAccess(true);
             
             // Enable offline disk cache
@@ -86,6 +87,18 @@ public class MainActivity extends BridgeActivity {
                         } catch (Exception ex) {
                             Toast.makeText(getApplicationContext(), "Failed to download file.", Toast.LENGTH_SHORT).show();
                         }
+                    }
+                }
+            });
+
+            getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+                @Override
+                public void handleOnBackPressed() {
+                    if (webView.canGoBack()) {
+                        webView.goBack();
+                    } else {
+                        setEnabled(false);
+                        getOnBackPressedDispatcher().onBackPressed();
                     }
                 }
             });

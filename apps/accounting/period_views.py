@@ -9,6 +9,7 @@ from django.core.exceptions import ValidationError
 from apps.companies.models import Company
 from apps.ledgers.models import Ledger
 from apps.accounting.models import LedgerEntry
+from apps.accounting.services.effective_voucher_service import EffectiveVoucherService
 from .services.period_service import PeriodBalanceService
 from .services.split_company_service import SplitCompanyService
 
@@ -44,7 +45,7 @@ class PeriodLedgerStatementAPIView(APIView):
             voucher__company=company,
             voucher__voucher_date__gte=d_from,
             voucher__voucher_date__lte=d_to,
-            voucher__status='POSTED'
+            voucher__status__in=EffectiveVoucherService.ACCOUNTING_STATUSES
         ).select_related('voucher').order_by('voucher__voucher_date', 'created_at')
 
         running = (op_bal if op_type == 'DR' else -op_bal)

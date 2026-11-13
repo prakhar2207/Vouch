@@ -254,6 +254,10 @@ export default function HealthPage() {
         if (previewFinding.evidence?.duplicate_category_id) {
           await offlineDb.masters.delete(`category_products_${previewFinding.evidence.duplicate_category_id}`);
         }
+        if (previewFinding.evidence?.duplicate_voucher_id) {
+          await offlineDb.syncedVouchers.delete(previewFinding.evidence.duplicate_voucher_id);
+          await offlineDb.syncedLedgers.clear();
+        }
         await offlineDb.masters.delete('categories');
         await offlineDb.masters.delete('inventory_summary');
         await offlineDb.syncedProducts.clear();

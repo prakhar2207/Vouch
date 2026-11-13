@@ -262,143 +262,170 @@ class ITCReconciliationService:
         Ingests GSTR-2B standard Excel workbook downloaded from the GST Portal.
         Parses sheets such as 'B2B', 'B2BA', 'CDNR'.
         """
+        import io
         import openpyxl
-
-        wb = openpyxl.load_workbook(file_obj, data_only=True)
-        fp = return_period or datetime.now().strftime('%m%Y')
-        fy = ''
-        if len(fp) == 6:
-            m = int(fp[:2])
-            y = int(fp[2:])
-            fy = f"{y}-{str(y+1)[2:]}" if m >= 4 else f"{y-1}-{str(y)[2:]}"
-
-        import_batch = GSTR2BImport.objects.create(
-            company=company,
-            return_period=fp,
-            financial_year=fy,
-            file_format='EXCEL',
-            file_name=file_name or f"gstr2b_{fp}.xlsx",
-            uploaded_by=user,
-            status='PROCESSING'
+        from apps.accounting.services.upload_security import (
+            MAX_IMPORT_FILE_SIZE,
+            MAX_IMPORT_ROWS,
+            UploadValidationError,
+            validate_xlsx_zip_bytes,
         )
 
-        records_to_create = []
-        total_invoices = 0
-        total_taxable = Decimal('0.00')
-        total_itc = Decimal('0.00')
+        if hasattr(file_obj, "seek"):
+            file_obj.seek(0)
+        raw_bytes = file_obj.read(MAX_IMPORT_FILE_SIZE + 1)
+        if not raw_bytes:
+            raise UploadValidationError("Uploaded GSTR-2B workbook is empty.")
+        if len(raw_bytes) > MAX_IMPORT_FILE_SIZE:
+            raise UploadValidationError("Uploaded GSTR-2B file exceeds the 15MB maximum limit.")
+        validate_xlsx_zip_bytes(raw_bytes)
 
-        # Check standard sheets
-        target_sheets = [s for s in wb.sheetnames if s.strip().upper() in ['B2B', 'B2BA', 'CDNR']]
-        if not target_sheets:
-            # Fall back to active sheet if standard names not found
-            target_sheets = [wb.active.title]
+        wb = openpyxl.load_workbook(io.BytesIO(raw_bytes), read_only=True, data_only=True)
+        try:
+            fp = return_period or datetime.now().strftime('%m%Y')
+            fy = ''
+            if len(fp) == 6:
+                m = int(fp[:2])
+                y = int(fp[2:])
+                fy = f"{y}-{str(y+1)[2:]}" if m >= 4 else f"{y-1}-{str(y)[2:]}"
 
-        for sheet_name in target_sheets:
-            ws = wb[sheet_name]
-            header_row_idx = None
-            headers = {}
+            import_batch = GSTR2BImport.objects.create(
+                company=company,
+                return_period=fp,
+                financial_year=fy,
+                file_format='EXCEL',
+                file_name=file_name or f"gstr2b_{fp}.xlsx",
+                uploaded_by=user,
+                status='PROCESSING'
+            )
 
-            # Locate header row (search first 10 rows for 'GSTIN' or 'Invoice Number')
-            for r in range(1, min(15, ws.max_row + 1)):
-                row_vals = [str(ws.cell(row=r, column=c).value or '').strip().lower() for c in range(1, ws.max_column + 1)]
-                if any('gstin' in v for v in row_vals) and any('invoice' in v or 'inv' in v or 'number' in v for v in row_vals):
-                    header_row_idx = r
-                    for c_idx, val in enumerate(row_vals, start=1):
-                        headers[val] = c_idx
-                    break
+            records_to_create = []
+            total_invoices = 0
+            total_taxable = Decimal('0.00')
+            total_itc = Decimal('0.00')
 
-            if not header_row_idx:
-                continue
+            target_sheets = [s for s in wb.sheetnames if s.strip().upper() in ['B2B', 'B2BA', 'CDNR']]
+            if not target_sheets and wb.sheetnames:
+                target_sheets = [wb.sheetnames[0]]
 
-            def get_col(candidates):
-                for cand in candidates:
-                    for h_text, c_num in headers.items():
-                        if cand in h_text:
-                            return c_num
-                return None
+            for sheet_name in target_sheets:
+                ws = wb[sheet_name]
+                row_iter = ws.iter_rows(values_only=True)
+                headers = {}
+                header_found = False
 
-            c_gstin = get_col(['gstin of supplier', 'gstin'])
-            c_name = get_col(['legal name', 'trade name', 'supplier name', 'name'])
-            c_inum = get_col(['invoice number', 'inv no', 'document number', 'note number'])
-            c_date = get_col(['invoice date', 'inv dt', 'document date', 'note date'])
-            c_val = get_col(['invoice value', 'inv val', 'document value', 'note value'])
-            c_pos = get_col(['place of supply', 'pos'])
-            c_rev = get_col(['reverse charge', 'rev chg'])
-            c_txval = get_col(['taxable value', 'taxable'])
-            c_iamt = get_col(['integrated tax', 'igst'])
-            c_camt = get_col(['central tax', 'cgst'])
-            c_samt = get_col(['state/ut tax', 'sgst', 'state tax'])
-            c_csamt = get_col(['cess'])
-            c_itc = get_col(['itc availability', 'itc available', 'itc'])
+                # Locate header row (search first 15 rows for GSTIN + Invoice/Number)
+                for r_idx, raw_row in enumerate(row_iter, start=1):
+                    if r_idx > 15:
+                        break
+                    row_vals = [str(v or '').strip().lower() for v in raw_row]
+                    if any('gstin' in v for v in row_vals) and any('invoice' in v or 'inv' in v or 'number' in v for v in row_vals):
+                        header_found = True
+                        for c_idx, val in enumerate(row_vals):
+                            headers[val] = c_idx
+                        break
 
-            for r in range(header_row_idx + 1, ws.max_row + 1):
-                raw_gstin = ws.cell(row=r, column=c_gstin).value if c_gstin else ''
-                if not raw_gstin:
-                    continue
-                gstin = str(raw_gstin).strip().upper()
-                if len(gstin) < 10:
-                    continue
-
-                inum = str(ws.cell(row=r, column=c_inum).value or '').strip() if c_inum else ''
-                if not inum:
+                if not header_found:
                     continue
 
-                name = str(ws.cell(row=r, column=c_name).value or '').strip() if c_name else ''
-                raw_dt = ws.cell(row=r, column=c_date).value if c_date else None
-                dt = cls.parse_date(raw_dt) or timezone.now().date()
+                def get_col(candidates):
+                    for cand in candidates:
+                        for h_text, c_idx in headers.items():
+                            if cand in h_text:
+                                return c_idx
+                    return None
 
-                val = Decimal(str(ws.cell(row=r, column=c_val).value or '0').replace(',', '').strip() or '0') if c_val else Decimal('0.00')
-                txval = Decimal(str(ws.cell(row=r, column=c_txval).value or '0').replace(',', '').strip() or '0') if c_txval else Decimal('0.00')
-                iamt = Decimal(str(ws.cell(row=r, column=c_iamt).value or '0').replace(',', '').strip() or '0') if c_iamt else Decimal('0.00')
-                camt = Decimal(str(ws.cell(row=r, column=c_camt).value or '0').replace(',', '').strip() or '0') if c_camt else Decimal('0.00')
-                samt = Decimal(str(ws.cell(row=r, column=c_samt).value or '0').replace(',', '').strip() or '0') if c_samt else Decimal('0.00')
-                csamt = Decimal(str(ws.cell(row=r, column=c_csamt).value or '0').replace(',', '').strip() or '0') if c_csamt else Decimal('0.00')
+                def cell_at(row_tuple, idx):
+                    if idx is None or idx >= len(row_tuple):
+                        return None
+                    return row_tuple[idx]
 
-                pos = str(ws.cell(row=r, column=c_pos).value or '').strip() if c_pos else ''
-                rev = str(ws.cell(row=r, column=c_rev).value or 'N').strip().upper() if c_rev else 'N'
-                itc_val = str(ws.cell(row=r, column=c_itc).value or 'Y').strip().upper() if c_itc else 'Y'
-                itcavl = itc_val in ['Y', 'YES', 'AVAILABLE', 'TRUE']
+                c_gstin = get_col(['gstin of supplier', 'gstin'])
+                c_name = get_col(['legal name', 'trade name', 'supplier name', 'name'])
+                c_inum = get_col(['invoice number', 'inv no', 'document number', 'note number'])
+                c_date = get_col(['invoice date', 'inv dt', 'document date', 'note date'])
+                c_val = get_col(['invoice value', 'inv val', 'document value', 'note value'])
+                c_pos = get_col(['place of supply', 'pos'])
+                c_rev = get_col(['reverse charge', 'rev chg'])
+                c_txval = get_col(['taxable value', 'taxable'])
+                c_iamt = get_col(['integrated tax', 'igst'])
+                c_camt = get_col(['central tax', 'cgst'])
+                c_samt = get_col(['state/ut tax', 'sgst', 'state tax'])
+                c_csamt = get_col(['cess'])
+                c_itc = get_col(['itc availability', 'itc available', 'itc'])
 
-                if txval == 0 and val > 0:
-                    txval = val
+                for row_tuple in row_iter:
+                    if total_invoices >= MAX_IMPORT_ROWS:
+                        raise UploadValidationError(f"GSTR-2B workbook exceeds maximum allowed {MAX_IMPORT_ROWS} invoices.")
+                    raw_gstin = cell_at(row_tuple, c_gstin) or ''
+                    if not raw_gstin:
+                        continue
+                    gstin = str(raw_gstin).strip().upper()
+                    if len(gstin) < 10:
+                        continue
 
-                rec_itc = (iamt + camt + samt + csamt) if itcavl else Decimal('0.00')
+                    inum = str(cell_at(row_tuple, c_inum) or '').strip()
+                    if not inum:
+                        continue
 
-                record = GSTR2BRecord(
-                    import_batch=import_batch,
-                    company=company,
-                    supplier_gstin=gstin,
-                    supplier_name=name,
-                    invoice_number=inum,
-                    normalized_invoice_number=cls.normalize_invoice_number(inum),
-                    invoice_type='R',
-                    invoice_date=dt,
-                    invoice_value=val,
-                    taxable_value=txval,
-                    igst_amount=iamt,
-                    cgst_amount=camt,
-                    sgst_amount=samt,
-                    cess_amount=csamt,
-                    place_of_supply=pos,
-                    reverse_charge=rev,
-                    itc_available=itcavl,
-                    match_status='MISSING_IN_BOOKS'
-                )
-                records_to_create.append(record)
-                total_invoices += 1
-                total_taxable += txval
-                total_itc += rec_itc
+                    name = str(cell_at(row_tuple, c_name) or '').strip()
+                    raw_dt = cell_at(row_tuple, c_date)
+                    dt = cls.parse_date(raw_dt) or timezone.now().date()
 
-        GSTR2BRecord.objects.bulk_create(records_to_create, batch_size=500)
+                    val = Decimal(str(cell_at(row_tuple, c_val) or '0').replace(',', '').strip() or '0') if c_val is not None else Decimal('0.00')
+                    txval = Decimal(str(cell_at(row_tuple, c_txval) or '0').replace(',', '').strip() or '0') if c_txval is not None else Decimal('0.00')
+                    iamt = Decimal(str(cell_at(row_tuple, c_iamt) or '0').replace(',', '').strip() or '0') if c_iamt is not None else Decimal('0.00')
+                    camt = Decimal(str(cell_at(row_tuple, c_camt) or '0').replace(',', '').strip() or '0') if c_camt is not None else Decimal('0.00')
+                    samt = Decimal(str(cell_at(row_tuple, c_samt) or '0').replace(',', '').strip() or '0') if c_samt is not None else Decimal('0.00')
+                    csamt = Decimal(str(cell_at(row_tuple, c_csamt) or '0').replace(',', '').strip() or '0') if c_csamt is not None else Decimal('0.00')
 
-        import_batch.total_invoices_count = total_invoices
-        import_batch.total_taxable_amount = total_taxable
-        import_batch.total_itc_available = total_itc
-        import_batch.status = 'PROCESSED'
-        import_batch.save(update_fields=['total_invoices_count', 'total_taxable_amount', 'total_itc_available', 'status'])
+                    pos = str(cell_at(row_tuple, c_pos) or '').strip()
+                    rev = str(cell_at(row_tuple, c_rev) or 'N').strip().upper() if c_rev is not None else 'N'
+                    itc_val = str(cell_at(row_tuple, c_itc) or 'Y').strip().upper() if c_itc is not None else 'Y'
+                    itcavl = itc_val in ['Y', 'YES', 'AVAILABLE', 'TRUE']
 
-        cls.reconcile_period(company, return_period=fp)
-        return import_batch
+                    if txval == 0 and val > 0:
+                        txval = val
+
+                    rec_itc = (iamt + camt + samt + csamt) if itcavl else Decimal('0.00')
+
+                    record = GSTR2BRecord(
+                        import_batch=import_batch,
+                        company=company,
+                        supplier_gstin=gstin,
+                        supplier_name=name,
+                        invoice_number=inum,
+                        normalized_invoice_number=cls.normalize_invoice_number(inum),
+                        invoice_type='R',
+                        invoice_date=dt,
+                        invoice_value=val,
+                        taxable_value=txval,
+                        igst_amount=iamt,
+                        cgst_amount=camt,
+                        sgst_amount=samt,
+                        cess_amount=csamt,
+                        place_of_supply=pos,
+                        reverse_charge=rev,
+                        itc_available=itcavl,
+                        match_status='MISSING_IN_BOOKS'
+                    )
+                    records_to_create.append(record)
+                    total_invoices += 1
+                    total_taxable += txval
+                    total_itc += rec_itc
+
+            GSTR2BRecord.objects.bulk_create(records_to_create, batch_size=500)
+
+            import_batch.total_invoices_count = total_invoices
+            import_batch.total_taxable_amount = total_taxable
+            import_batch.total_itc_available = total_itc
+            import_batch.status = 'PROCESSED'
+            import_batch.save(update_fields=['total_invoices_count', 'total_taxable_amount', 'total_itc_available', 'status'])
+
+            cls.reconcile_period(company, return_period=fp)
+            return import_batch
+        finally:
+            wb.close()
 
     @classmethod
     @transaction.atomic

@@ -3,7 +3,7 @@
 import React, { useState, useEffect, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import axios from "axios";
-import { setTokens, isAuthenticated, getAccessToken } from "@/utils/auth";
+import { isCapacitorNative, setAuthenticatedSession, isAuthenticated, getAccessToken } from "@/utils/auth";
 import Link from "next/link";
 import { API_BASE_URL } from "@/utils/api";
 import {
@@ -142,14 +142,11 @@ function ClaimContent() {
     try {
       const tokenStr = getAccessToken();
       const activeCompId = typeof window !== 'undefined' ? localStorage.getItem("vouch_active_company_id") || "" : "";
+      const headers: Record<string, string> = { "X-Company-ID": activeCompId };
+      if (tokenStr) headers.Authorization = `Bearer ${tokenStr}`;
       const res = await axios.get(
         `${API_BASE_URL}/api/v1/accounting/vouchers/${voucherId}/recipient-status/`,
-        {
-          headers: {
-            Authorization: `Bearer ${tokenStr}`,
-            "X-Company-ID": activeCompId,
-          },
-        }
+        { headers }
       );
       setRecipientStatus(res.data);
       if (res.data.already_added) {
@@ -177,16 +174,31 @@ function ClaimContent() {
     setSubmitError(null);
 
     try {
-      const res = await axios.post(`${API_BASE_URL}/api/v1/accounting/vouchers/claim-register/`, {
-        token,
-        company_name: companyName,
-        gstin,
-        email,
-        password,
-      });
+      const native = isCapacitorNative();
+      const res = await axios.post(
+        `${API_BASE_URL}/api/v1/accounting/vouchers/claim-register/`,
+        {
+          token,
+          company_name: companyName,
+          gstin,
+          email,
+          password,
+        },
+        {
+          withCredentials: !native,
+          headers: { "X-Client-Type": native ? "capacitor" : "web" },
+        }
+      );
 
-      const { access, refresh, company, redirect_url } = res.data;
-      setTokens(access, refresh);
+      const { access, refresh, user, csrf_token, expires_at, refresh_expires_at, company, redirect_url } = res.data;
+      setAuthenticatedSession({
+        user,
+        csrfToken: csrf_token,
+        expiresAt: expires_at,
+        refreshExpiresAt: refresh_expires_at,
+        access,
+        refresh,
+      });
 
       if (company && company.id) {
         localStorage.setItem("vouch_active_company_id", company.id);

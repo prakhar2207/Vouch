@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import { Bell, CheckCircle2, AlertCircle } from "lucide-react";
-import axios from "axios";
-import { API_BASE_URL } from "@/utils/api";
+import api from "@/utils/api";
+import { isAuthenticated } from "@/utils/auth";
 import { useToast } from "@/context/ToastContext";
 
 const urlBase64ToUint8Array = (base64String: string) => {
@@ -48,11 +48,8 @@ export function NotificationBell() {
 
   const fetchNotifications = async () => {
     try {
-      const token = localStorage.getItem("access_token");
-      if (!token) return;
-      const res = await axios.get(`${API_BASE_URL}/api/v1/notifications/`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      if (!isAuthenticated()) return;
+      const res = await api.get(`/api/v1/notifications/`);
       setNotifications(res.data);
       setUnreadCount(res.data.filter((n: any) => !n.is_read).length);
     } catch (e) {
@@ -62,10 +59,8 @@ export function NotificationBell() {
 
   const markAllRead = async () => {
     try {
-      const token = localStorage.getItem("access_token");
-      await axios.post(`${API_BASE_URL}/api/v1/notifications/mark-read/`, {}, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      if (!isAuthenticated()) return;
+      await api.post(`/api/v1/notifications/mark-read/`, {});
       fetchNotifications();
     } catch (e) {
       console.error(e);
@@ -74,10 +69,8 @@ export function NotificationBell() {
 
   const markRead = async (id: number) => {
     try {
-      const token = localStorage.getItem("access_token");
-      await axios.post(`${API_BASE_URL}/api/v1/notifications/${id}/mark-read/`, {}, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      if (!isAuthenticated()) return;
+      await api.post(`/api/v1/notifications/${id}/mark-read/`, {});
       fetchNotifications();
     } catch (e) {
       console.error(e);
@@ -100,10 +93,7 @@ export function NotificationBell() {
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
       });
 
-      const token = localStorage.getItem("access_token");
-      await axios.post(`${API_BASE_URL}/api/v1/notifications/subscribe/`, subscription.toJSON(), {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      await api.post(`/api/v1/notifications/subscribe/`, subscription.toJSON());
       setPushEnabled(true);
       toast.success("Push notifications enabled!");
     } catch (e) {

@@ -119,10 +119,15 @@ class FinancialStatementsService:
         d_to = cls.parse_date(to_date) or datetime.date.today()
         d_from = cls.parse_date(from_date) or cls.get_fiscal_year_start(d_to)
 
-        ledgers = Ledger.objects.filter(
-            company=company,
-            is_active=True
-        ).select_related('group').order_by('group__name', 'name')
+        ledgers = list(
+            Ledger.objects.filter(
+                company=company,
+                is_active=True
+            ).select_related('group').order_by('group__name', 'name')
+        )
+        balances_by_ledger = PeriodBalanceService.calculate_all_ledger_period_balances(
+            company, d_from, d_to, ledgers=ledgers
+        )
 
         direct_income_rows: List[Dict[str, Any]] = []
         direct_expense_rows: List[Dict[str, Any]] = []
@@ -142,14 +147,14 @@ class FinancialStatementsService:
             l_name = ledger.name.upper()
 
             if 'STOCK' in grp_name or 'STOCK IN HAND' in l_name or 'STOCK-IN-HAND' in l_name:
-                bal_data = PeriodBalanceService.calculate_ledger_period_balance(ledger, d_from, d_to)
+                bal_data = balances_by_ledger[ledger.id]
                 stock_in_hand_ledger_val += Decimal(bal_data['closing_balance'])
                 continue
 
             if nature not in ('INCOME', 'EXPENSE'):
                 continue
 
-            bal_data = PeriodBalanceService.calculate_ledger_period_balance(ledger, d_from, d_to)
+            bal_data = balances_by_ledger[ledger.id]
             p_dr = Decimal(bal_data['period_debit'])
             p_cr = Decimal(bal_data['period_credit'])
             net_flow = abs(p_cr - p_dr)
@@ -273,10 +278,15 @@ class FinancialStatementsService:
         net_profit = Decimal(pl_data['profit_and_loss']['net_profit'])
         opening_stock = Decimal(pl_data['trading_account']['opening_stock'])
 
-        ledgers = Ledger.objects.filter(
-            company=company,
-            is_active=True
-        ).select_related('group').order_by('group__nature', 'name')
+        ledgers = list(
+            Ledger.objects.filter(
+                company=company,
+                is_active=True
+            ).select_related('group').order_by('group__nature', 'name')
+        )
+        balances_by_ledger = PeriodBalanceService.calculate_all_ledger_period_balances(
+            company, None, d_as_of, ledgers=ledgers
+        )
 
         capital_rows: List[Dict[str, Any]] = []
         loan_liability_rows: List[Dict[str, Any]] = []
@@ -305,7 +315,7 @@ class FinancialStatementsService:
             if nature in ('INCOME', 'EXPENSE'):
                 continue
 
-            bal_data = PeriodBalanceService.calculate_ledger_period_balance(ledger, None, d_as_of)
+            bal_data = balances_by_ledger[ledger.id]
             cl_bal = Decimal(bal_data['closing_balance'])
             cl_type = bal_data['closing_type']
 

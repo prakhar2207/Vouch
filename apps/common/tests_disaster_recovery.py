@@ -42,11 +42,14 @@ class DisasterRecoveryBackupRestoreTestCase(TestCase):
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_backup_encryption_checksum_and_restore(self):
-        # 1. Execute Backup
+        # 1. Execute company-scoped Backup so TestCase transaction uncommitted rows
+        # (Company, ProductCategory, Product) are serialized and restored safely
+        # without an external pg_restore --clean subprocess deadlocking on TestCase locks.
         backup_res = DatabaseBackupService.perform_backup(
             upload_s3=False,
             encrypt=True,
-            output_dir=self.temp_dir
+            output_dir=self.temp_dir,
+            company_id=str(self.company.id),
         )
         self.assertTrue(backup_res["success"], f"Backup failed: {backup_res.get('error')}")
         self.assertTrue(backup_res["is_encrypted"])

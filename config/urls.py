@@ -52,7 +52,7 @@ def root_health_view(request):
         "service": "SriLekh ERP Backend API",
         "version": "1.0.2",
         "commit": commit_sha if settings.DEBUG else "protected",
-        "environment": "production" if not settings.DEBUG else "development",
+        "environment": getattr(settings, "ENVIRONMENT", "production" if not settings.DEBUG else "development"),
         "endpoints": {
             "auth": "/api/v1/auth/",
             "companies": "/api/v1/companies/",
@@ -60,13 +60,20 @@ def root_health_view(request):
             "vouchers": "/api/vouchers/",
             "ocr": "/api/ocr/extract/",
             "b2b": "/api/b2b/inbox/",
-            "tally_export": "/api/export/tally/xml/"
+            "tally_export": "/api/export/tally/xml/",
+            "environment": "/api/v1/health/environment/"
         }
     })
+
+def environment_identity_view(request):
+    from config.environment_guard import get_environment_identity_metadata
+    return JsonResponse(get_environment_identity_metadata(settings))
 
 urlpatterns = [
     path('', root_health_view, name='root_health'),
     path('api/health/', root_health_view, name='api_health'),
+    path('api/health/environment/', environment_identity_view, name='api_environment_identity'),
+    path('api/v1/health/environment/', environment_identity_view, name='api_v1_environment_identity'),
     path('admin/', admin.site.urls),
     # Top-Level Direct API Endpoints
     path('api/vouchers/', UniversalVoucherAPIView.as_view(), name='api_vouchers_root'),
@@ -108,6 +115,7 @@ urlpatterns = [
     path('api/v1/documents/', include('apps.documents.urls')),
     path('api/v1/superadmin/', include('apps.superadmin.urls')),
     path('api/v1/notifications/', include('apps.notifications.urls')),
+    path('api/v1/invoices/public/view/', apps.notifications.views.SecureInvoicePublicView.as_view(), name='api_v1_invoice_public_view'),
     path('api/v1/protocol/', include('apps.protocol.urls')),
 
     # Offline-First Batch Sync Endpoints
