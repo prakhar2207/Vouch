@@ -3,18 +3,20 @@ from .views import (
     SuperadminMetricsView,
     SuperadminCompaniesView,
     SuperadminCompanyToggleStatusView,
+    SuperadminCompaniesBulkDeleteView,
+    SuperadminCompanyDeleteView,
     SuperadminUsersView,
     SuperadminUserToggleStaffView,
     SuperadminUserToggleActiveView,
     SuperadminAuditLogsView,
     SuperadminImpersonateCompanyView,
-    SuperadminCompanyDeleteView,
     SuperadminUserDeleteView
 )
 
 urlpatterns = [
     path('metrics/', SuperadminMetricsView.as_view(), name='superadmin_metrics'),
     path('companies/', SuperadminCompaniesView.as_view(), name='superadmin_companies'),
+    path('companies/bulk-delete/', SuperadminCompaniesBulkDeleteView.as_view(), name='superadmin_companies_bulk_delete'),
     path('companies/<uuid:pk>/', SuperadminCompanyDeleteView.as_view(), name='superadmin_company_delete'),
     path('companies/<uuid:pk>/delete/', SuperadminCompanyDeleteView.as_view(), name='superadmin_company_delete_alias'),
     path('companies/<uuid:pk>/toggle-status/', SuperadminCompanyToggleStatusView.as_view(), name='superadmin_company_toggle_status'),

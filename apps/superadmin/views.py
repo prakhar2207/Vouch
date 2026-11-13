@@ -379,153 +379,190 @@ class SuperadminImpersonateCompanyView(APIView):
         )
 
 
+PROTECTED_COMPANY_IDS = {
+    '5d2e5dea-ff86-4871-b2af-fe1c5a05c03c',  # Maa Annapurna Belting Store (Protected Production Tenant)
+    '4e62863a-08f9-4e99-b0bd-64873acfdd33',  # Apex Belting & Industrial Store (Demo Sandbox Tenant)
+}
+
+
+def perform_company_cascade_delete(company, user=None):
+    """
+    Safely and permanently deletes a company and all associated records
+    across accounting, inventory, GST, banking, EDI, protocol, and audit logs.
+    """
+    from django.db import transaction
+    from apps.companies.models import Company, UserCompany, CompanySettings
+    from apps.accounting.models import (
+        Voucher, VoucherItem, LedgerEntry, PaymentAllocation, PaymentAllocationTask,
+        BankStatementImport, BankTransaction, InwardVoucherRequest, FinancialYear,
+        VoucherSequence, LedgerBalance, PartyMapping, AccountingFinding, SyncEvent,
+        OfflineCommand, InterCompanyEntry, IdempotencyRecord
+    )
+    from apps.accounting.models_proforma import ProformaInvoice, ProformaItem
+    from apps.inventory.models import (
+        InventoryEntry, Product, ProductCategory, Warehouse,
+        PriceListImportJob, PriceHistory
+    )
+    from apps.ledgers.models import Ledger, LedgerGroup
+    from apps.gst.models import (
+        CompanyGSTConfig, EWayBillRecord, EInvoiceRecord,
+        GSTR2BImport, GSTR2BRecord, GSTFilingRecord
+    )
+    from apps.documents.models import DocumentAuditEvent, DocumentSnapshot, EDIDocument, EDIExchange
+    from apps.protocol.models import AuthorizedDevice, DeviceKeyRotationAudit
+    from apps.analytics.models import CashCycleSnapshot
+    from apps.notifications.models import TransactionalOutboxEvent, EmailDeliveryLog
+    from apps.audit.models import AuditLog
+
+    company_id = str(company.id)
+    company_name = company.name
+
+    if company_id in PROTECTED_COMPANY_IDS:
+        raise PermissionError(f"Cannot delete protected tenant '{company_name}' ({company_id}).")
+
+    with transaction.atomic():
+        # 1. Audit logs: RAW DELETE so no Python delete() or signal is triggered
+        try:
+            AuditLog.objects.filter(company=company)._raw_delete(using='default')
+        except Exception:
+            pass
+
+        # 2. Protocol models
+        try:
+            devices = AuthorizedDevice.objects.filter(company=company)
+            DeviceKeyRotationAudit.objects.filter(device__in=devices).delete()
+            devices.delete()
+        except Exception:
+            pass
+
+        # 3. EDI, GST, and Documents records
+        try:
+            EDIExchange.objects.filter(target_company=company).delete()
+            EDIDocument.objects.filter(sender_company=company).delete()
+            InwardVoucherRequest.objects.filter(source_company=company).delete()
+            InwardVoucherRequest.objects.filter(target_company=company).delete()
+            DocumentAuditEvent.objects.filter(company=company).delete()
+            DocumentSnapshot.objects.filter(company=company).delete()
+            EWayBillRecord.objects.filter(company=company).delete()
+            EInvoiceRecord.objects.filter(company=company).delete()
+            GSTR2BRecord.objects.filter(company=company).delete()
+            GSTR2BImport.objects.filter(company=company).delete()
+            GSTFilingRecord.objects.filter(company=company).delete()
+            CompanyGSTConfig.objects.filter(company=company).delete()
+        except Exception:
+            pass
+
+        # 4. Bank, mappings, tasks, sync, intercompany, idempotency, analytics, notifications
+        try:
+            BankTransaction.objects.filter(company=company).delete()
+            BankStatementImport.objects.filter(company=company).delete()
+            PartyMapping.objects.filter(company=company).delete()
+            AccountingFinding.objects.filter(company=company).delete()
+            SyncEvent.objects.filter(company=company).delete()
+            PaymentAllocationTask.objects.filter(company=company).delete()
+            OfflineCommand.objects.filter(company=company).delete()
+            InterCompanyEntry.objects.filter(Q(source_company=company) | Q(target_company=company)).delete()
+            IdempotencyRecord.objects.filter(company=company).delete()
+            CashCycleSnapshot.objects.filter(company=company).delete()
+            TransactionalOutboxEvent.objects.filter(company=company).delete()
+            EmailDeliveryLog.objects.filter(company=company).delete()
+        except Exception:
+            pass
+
+        # 5. Payment allocations
+        try:
+            PaymentAllocation.objects.filter(company=company).delete()
+        except Exception:
+            pass
+
+        # 6. Proformas and Proforma items
+        try:
+            ProformaItem.objects.filter(proforma__company=company).delete()
+            ProformaInvoice.objects.filter(company=company).delete()
+        except Exception:
+            pass
+
+        # 7. Voucher Items, Ledger Entries, and Vouchers (nullify revision chains first)
+        try:
+            VoucherItem.objects.filter(voucher__company=company).delete()
+            LedgerEntry.objects.filter(voucher__company=company).delete()
+            Voucher.objects.filter(company=company).update(revision_of=None)
+            Voucher.objects.filter(company=company).delete()
+        except Exception:
+            pass
+
+        # 8. Inventory: Entries, Products, Categories, Warehouses, Price histories
+        try:
+            PriceHistory.objects.filter(company=company).delete()
+            PriceListImportJob.objects.filter(company=company).delete()
+            InventoryEntry.objects.filter(company=company).delete()
+            InventoryEntry.objects.filter(product__company=company).delete()
+            Product.objects.filter(company=company).delete()
+            ProductCategory.objects.filter(company=company).delete()
+            Warehouse.objects.filter(company=company).delete()
+        except Exception:
+            pass
+
+        # 9. Ledger balances, Sequences, Ledgers, and Groups
+        try:
+            LedgerBalance.objects.filter(ledger__company=company).delete()
+            VoucherSequence.objects.filter(company=company).delete()
+            Ledger.objects.filter(company=company).delete()
+            LedgerGroup.objects.filter(company=company).delete()
+        except Exception:
+            pass
+
+        # 10. Financial Years
+        try:
+            FinancialYear.objects.filter(company=company).delete()
+        except Exception:
+            pass
+
+        # 11. User memberships & Settings
+        try:
+            UserCompany.objects.filter(company=company).delete()
+            CompanySettings.objects.filter(company=company).delete()
+        except Exception:
+            pass
+
+        # 12. Delete the Company record
+        company.delete()
+
+        # Safe platform audit logging
+        if user:
+            try:
+                AuditLog.objects.create(
+                    user=user,
+                    action='DELETE',
+                    model_name='Company',
+                    record_id=company_id,
+                    changes={'deleted_company_name': company_name}
+                )
+            except Exception:
+                pass
+
+    return company_name, company_id
+
+
 class SuperadminCompanyDeleteView(APIView):
     """
-    Permanently delete a company and all associated records (vouchers, items, ledgers, products).
+    Permanently delete a single company and all associated records.
     """
     permission_classes = [IsSuperAdminOrStaff]
 
     def delete(self, request, pk):
-        from django.db import transaction
-        from apps.companies.models import Company, UserCompany, CompanySettings
-        from apps.accounting.models import (
-            Voucher, VoucherItem, LedgerEntry, PaymentAllocation, PaymentAllocationTask,
-            BankStatementImport, BankTransaction, InwardVoucherRequest, FinancialYear,
-            VoucherSequence, LedgerBalance, PartyMapping, AccountingFinding, SyncEvent,
-            OfflineCommand
-        )
-        from apps.accounting.models_proforma import ProformaInvoice, ProformaItem
-        from apps.inventory.models import InventoryEntry, Product, ProductCategory, Warehouse
-        from apps.ledgers.models import Ledger, LedgerGroup
-        from apps.gst.models import (
-            CompanyGSTConfig, EWayBillRecord, EInvoiceRecord,
-            GSTR2BImport, GSTR2BRecord, GSTFilingRecord
-        )
-        from apps.documents.models import DocumentAuditEvent, DocumentSnapshot, EDIDocument, EDIExchange
-        from apps.protocol.models import AuthorizedDevice, DeviceKeyRotationAudit
-        from apps.audit.models import AuditLog
-
         company = Company.objects.filter(id=pk).first()
         if not company:
             return Response({"error": "Company not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        company_name = company.name
-        company_id = str(company.id)
+        if str(company.id) in PROTECTED_COMPANY_IDS:
+            return Response(
+                {"error": f"Cannot delete protected tenant '{company.name}' ({company.id})."},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
         try:
-            with transaction.atomic():
-                # 1. Audit logs: RAW DELETE so no Python delete() or signal is triggered
-                try:
-                    AuditLog.objects.filter(company=company)._raw_delete(using='default')
-                except Exception:
-                    pass
-
-                # 2. Protocol models
-                try:
-                    devices = AuthorizedDevice.objects.filter(company=company)
-                    DeviceKeyRotationAudit.objects.filter(device__in=devices).delete()
-                    devices.delete()
-                except Exception:
-                    pass
-
-                # 3. EDI, GST, and Documents records
-                try:
-                    EDIExchange.objects.filter(target_company=company).delete()
-                    EDIDocument.objects.filter(sender_company=company).delete()
-                    InwardVoucherRequest.objects.filter(source_company=company).delete()
-                    InwardVoucherRequest.objects.filter(target_company=company).delete()
-                    DocumentAuditEvent.objects.filter(company=company).delete()
-                    DocumentSnapshot.objects.filter(company=company).delete()
-                    EWayBillRecord.objects.filter(company=company).delete()
-                    EInvoiceRecord.objects.filter(company=company).delete()
-                    GSTR2BRecord.objects.filter(company=company).delete()
-                    GSTR2BImport.objects.filter(company=company).delete()
-                    GSTFilingRecord.objects.filter(company=company).delete()
-                    CompanyGSTConfig.objects.filter(company=company).delete()
-                except Exception:
-                    pass
-
-                # 4. Bank transactions, imports, party mappings, findings, sync events, tasks, offline commands
-                try:
-                    BankTransaction.objects.filter(company=company).delete()
-                    BankStatementImport.objects.filter(company=company).delete()
-                    PartyMapping.objects.filter(company=company).delete()
-                    AccountingFinding.objects.filter(company=company).delete()
-                    SyncEvent.objects.filter(company=company).delete()
-                    PaymentAllocationTask.objects.filter(company=company).delete()
-                    OfflineCommand.objects.filter(company=company).delete()
-                except Exception:
-                    pass
-
-                # 5. Payment allocations
-                try:
-                    PaymentAllocation.objects.filter(company=company).delete()
-                except Exception:
-                    pass
-
-                # 6. Proformas and Proforma items
-                try:
-                    ProformaItem.objects.filter(proforma__company=company).delete()
-                    ProformaInvoice.objects.filter(company=company).delete()
-                except Exception:
-                    pass
-
-                # 7. Voucher Items, Ledger Entries, and Vouchers (nullify revision chains first)
-                try:
-                    VoucherItem.objects.filter(voucher__company=company).delete()
-                    LedgerEntry.objects.filter(voucher__company=company).delete()
-                    Voucher.objects.filter(company=company).update(revision_of=None)
-                    Voucher.objects.filter(company=company).delete()
-                except Exception:
-                    pass
-
-                # 8. Inventory: Entries, Products, Categories, Warehouses
-                try:
-                    InventoryEntry.objects.filter(company=company).delete()
-                    InventoryEntry.objects.filter(product__company=company).delete()
-                    Product.objects.filter(company=company).delete()
-                    ProductCategory.objects.filter(company=company).delete()
-                    Warehouse.objects.filter(company=company).delete()
-                except Exception:
-                    pass
-
-                # 9. Ledger balances, Sequences, Ledgers, and Groups
-                try:
-                    LedgerBalance.objects.filter(ledger__company=company).delete()
-                    VoucherSequence.objects.filter(company=company).delete()
-                    Ledger.objects.filter(company=company).delete()
-                    LedgerGroup.objects.filter(company=company).delete()
-                except Exception:
-                    pass
-
-                # 10. Financial Years
-                try:
-                    FinancialYear.objects.filter(company=company).delete()
-                except Exception:
-                    pass
-
-                # 11. User memberships & Settings
-                try:
-                    UserCompany.objects.filter(company=company).delete()
-                    CompanySettings.objects.filter(company=company).delete()
-                except Exception:
-                    pass
-
-                # 12. Delete the Company record
-                company.delete()
-
-                # Safe platform audit logging
-                try:
-                    AuditLog.objects.create(
-                        user=request.user,
-                        action='DELETE',
-                        model_name='Company',
-                        record_id=company_id,
-                        changes={'deleted_company_name': company_name}
-                    )
-                except Exception:
-                    pass
-
+            company_name, company_id = perform_company_cascade_delete(company, request.user)
             return Response({
                 "success": True,
                 "message": f"Company '{company_name}' ({company_id[:8]}...) was permanently deleted.",
@@ -536,6 +573,73 @@ class SuperadminCompanyDeleteView(APIView):
                 {"error": f"Failed to delete company: {str(e)}", "detail": str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+
+class SuperadminCompaniesBulkDeleteView(APIView):
+    """
+    Permanently delete multiple company tenants and all their associated records in batch.
+    """
+    permission_classes = [IsSuperAdminOrStaff]
+
+    def post(self, request):
+        company_ids = request.data.get('company_ids')
+        if not company_ids or not isinstance(company_ids, list):
+            return Response(
+                {"error": "Please provide a non-empty 'company_ids' list."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        deleted = []
+        skipped = []
+        errors = []
+
+        for cid in company_ids:
+            cid_str = str(cid).strip()
+            if not cid_str:
+                continue
+
+            if cid_str in PROTECTED_COMPANY_IDS:
+                skipped.append({
+                    "id": cid_str,
+                    "reason": "Protected production or benchmark sandbox tenant cannot be deleted."
+                })
+                continue
+
+            company = Company.objects.filter(id=cid_str).first()
+            if not company:
+                skipped.append({
+                    "id": cid_str,
+                    "reason": "Company not found or already deleted."
+                })
+                continue
+
+            try:
+                cname, cid_deleted = perform_company_cascade_delete(company, request.user)
+                deleted.append({
+                    "id": cid_deleted,
+                    "name": cname
+                })
+            except Exception as e:
+                errors.append({
+                    "id": cid_str,
+                    "name": company.name if company else cid_str,
+                    "error": str(e)
+                })
+
+        summary_msg = f"Successfully deleted {len(deleted)} company tenant(s)."
+        if skipped:
+            summary_msg += f" {len(skipped)} skipped (protected or not found)."
+        if errors:
+            summary_msg += f" {len(errors)} encountered errors."
+
+        return Response({
+            "success": True,
+            "message": summary_msg,
+            "deleted_count": len(deleted),
+            "deleted": deleted,
+            "skipped": skipped,
+            "errors": errors
+        })
 
 
 class SuperadminUserDeleteView(APIView):
