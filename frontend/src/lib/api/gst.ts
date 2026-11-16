@@ -33,6 +33,25 @@ export interface GSTTaxpayerDetails {
   error?: string;
 }
 
+export interface GSTRegistration {
+  id: string;
+  company: string;
+  gstin: string;
+  state_code: string;
+  legal_name: string;
+  trade_name: string;
+  address: string;
+  pincode: string;
+  taxpayer_type: string;
+  is_primary: boolean;
+  is_active: boolean;
+  has_auth_token: boolean;
+  has_einvoice_credentials: boolean;
+  has_eway_credentials: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface EWayBillData {
   id?: string;
   eway_bill_number: string;
@@ -58,9 +77,263 @@ export interface EWayBillData {
 
 export type EWayBillDetails = EWayBillData;
 
+export interface EInvoiceData {
+  id: string;
+  irn: string;
+  ack_number: string;
+  ack_date: string;
+  signed_qr_code?: string;
+  status: 'GENERATED' | 'CANCELLED' | 'FAILED';
+  cancel_reason?: string;
+  cancel_remarks?: string;
+  cancelled_at?: string;
+}
+
+export interface GSTR2BRecordItem {
+  id: string;
+  supplier_gstin: string;
+  supplier_trade_name: string;
+  invoice_number: string;
+  invoice_date: string;
+  invoice_value: string;
+  taxable_value: string;
+  igst_amount: string;
+  cgst_amount: string;
+  sgst_amount: string;
+  cess_amount: string;
+  itc_availability: string;
+  match_category: string;
+  is_reconciled: boolean;
+  review_status: string;
+  mismatch_explanation: string;
+  review_notes?: string;
+}
+
+export interface GSTAuditLogItem {
+  id: string;
+  action: string;
+  gstin: string;
+  status: 'SUCCESS' | 'FAILURE' | 'PENDING';
+  error_message?: string;
+  created_at: string;
+}
+
 export const gstApi = {
   /**
-   * Looks up taxpayer details by GSTIN from the GST portal (or local cache).
+   * Unified GSTIN Verification against Sandbox / Cache with Luhn check and enrichment preview
+   */
+  async verifyGSTIN(gstin: string, partyId?: string, companyId?: string) {
+    const url = `${API_BASE_URL}/api/v1/gst/gstin/verify/`;
+    const res = await axios.post(url, { gstin, party_id: partyId }, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  /**
+   * Applies verified taxpayer data to an existing party ledger record
+   */
+  async applyPartyEnrichment(payload: {
+    party_id: string;
+    apply_legal_name?: boolean;
+    apply_trade_name?: boolean;
+    apply_state?: boolean;
+    apply_address?: boolean;
+    verified_data?: any;
+  }, companyId?: string) {
+    const url = `${API_BASE_URL}/api/v1/gst/parties/enrich/`;
+    const res = await axios.post(url, payload, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  /**
+   * List GST Registrations (multi-state/multi-GSTIN)
+   */
+  async getRegistrations(companyId?: string): Promise<GSTRegistration[]> {
+    const url = `${API_BASE_URL}/api/v1/gst/registrations/`;
+    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    return res.data?.data || res.data || [];
+  },
+
+  /**
+   * Create a new GST Registration
+   */
+  async createRegistration(data: Partial<GSTRegistration>, companyId?: string) {
+    const url = `${API_BASE_URL}/api/v1/gst/registrations/`;
+    const res = await axios.post(url, data, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  /**
+   * GST Workspace Overview
+   */
+  async getOverview(registrationId?: string, companyId?: string) {
+    const params = registrationId ? `?registration_id=${registrationId}` : '';
+    const url = `${API_BASE_URL}/api/v1/gst/overview/${params}`;
+    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  /**
+   * GSTR-1 Workspace data
+   */
+  async getGSTR1Workspace(period?: string, registrationId?: string, companyId?: string) {
+    const query = new URLSearchParams();
+    if (period) query.set('period', period);
+    if (registrationId) query.set('registration_id', registrationId);
+    const url = `${API_BASE_URL}/api/v1/gst/returns/gstr1/workspace/?${query.toString()}`;
+    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  /**
+   * Submit GSTR-1 return to Sandbox
+   */
+  async submitGSTR1(payload: {
+    period: string;
+    registration_id?: string;
+    tables: Record<string, any>;
+  }, companyId?: string) {
+    const url = `${API_BASE_URL}/api/v1/gst/returns/gstr1/submit/`;
+    const res = await axios.post(url, payload, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  /**
+   * GSTR-3B Workspace summary
+   */
+  async getGSTR3BWorkspace(period?: string, registrationId?: string, companyId?: string) {
+    const query = new URLSearchParams();
+    if (period) query.set('period', period);
+    if (registrationId) query.set('registration_id', registrationId);
+    const url = `${API_BASE_URL}/api/v1/gst/returns/gstr3b/workspace/?${query.toString()}`;
+    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  /**
+   * GSTR-2B Reconciliation list with 11 categories filter
+   */
+  async getGSTR2BReconciliation(params?: {
+    registration_id?: string;
+    return_period?: string;
+    match_category?: string;
+    search?: string;
+  }, companyId?: string) {
+    const query = new URLSearchParams(params as Record<string, string>);
+    const url = `${API_BASE_URL}/api/v1/gst/reconciliation/gstr2b/?${query.toString()}`;
+    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  /**
+   * Sync GSTR-2B directly from Sandbox
+   */
+  async syncGSTR2BFromSandbox(payload: {
+    year: string | number;
+    month: string | number;
+    registration_id?: string;
+  }, companyId?: string) {
+    const url = `${API_BASE_URL}/api/v1/gst/reconciliation/gstr2b/sync/`;
+    const res = await axios.post(url, payload, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  /**
+   * Review a GSTR-2B record (ACCEPT, REJECT, DISPUTE)
+   */
+  async reviewGSTR2BRecord(recordId: string, action: string, notes?: string, companyId?: string) {
+    const url = `${API_BASE_URL}/api/v1/gst/reconciliation/gstr2b/records/${recordId}/review/`;
+    const res = await axios.post(url, { action, notes }, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  /**
+   * Generate IRN (e-Invoice)
+   */
+  async generateEInvoice(voucherId: string, registrationId?: string, companyId?: string) {
+    const url = `${API_BASE_URL}/api/v1/gst/einvoice/generate/`;
+    const res = await axios.post(url, { voucher_id: voucherId, registration_id: registrationId }, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  /**
+   * Cancel e-Invoice (within statutory 24 hours)
+   */
+  async cancelEInvoice(irn: string, reason: string, remarks?: string, companyId?: string) {
+    const url = `${API_BASE_URL}/api/v1/gst/einvoice/cancel/`;
+    const res = await axios.post(url, { irn, reason, remarks }, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  /**
+   * Get e-Invoice details for a voucher
+   */
+  async getEInvoiceDetail(voucherId: string, companyId?: string) {
+    const url = `${API_BASE_URL}/api/v1/gst/einvoice/${voucherId}/`;
+    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  /**
+   * Generate E-Way Bill V2
+   */
+  async generateEWayBillV2(payload: {
+    voucher_id: string;
+    trans_mode?: string;
+    distance_km: number;
+    vehicle_number?: string;
+    vehicle_type?: string;
+    transporter_id?: string;
+    transporter_name?: string;
+    registration_id?: string;
+  }, companyId?: string) {
+    const url = `${API_BASE_URL}/api/v1/gst/ewaybill/generate/`;
+    const res = await axios.post(url, payload, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  /**
+   * Update E-Way Bill Vehicle Part-B V2
+   */
+  async updateVehicleV2(payload: {
+    ewb_number: string;
+    vehicle_number: string;
+    reason?: string;
+    remarks?: string;
+    from_place?: string;
+    from_state_code?: number;
+    registration_id?: string;
+  }, companyId?: string) {
+    const url = `${API_BASE_URL}/api/v1/gst/ewaybill/vehicle-update/`;
+    const res = await axios.post(url, payload, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  /**
+   * Cancel E-Way Bill V2
+   */
+  async cancelEWayBillV2(payload: {
+    ewb_number: string;
+    cancel_reason: string;
+    cancel_remarks?: string;
+    registration_id?: string;
+  }, companyId?: string) {
+    const url = `${API_BASE_URL}/api/v1/gst/ewaybill/cancel/`;
+    const res = await axios.post(url, payload, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  /**
+   * Fetch GST compliance audit logs
+   */
+  async getAuditLogs(params?: { gstin?: string; action?: string }, companyId?: string) {
+    const query = new URLSearchParams(params as Record<string, string>);
+    const url = `${API_BASE_URL}/api/v1/gst/audit-logs/?${query.toString()}`;
+    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  /**
+   * Legacy lookup compatibility
    */
   async lookupGSTIN(gstin: string, companyId?: string): Promise<GSTTaxpayerDetails> {
     const clean = gstin.trim().toUpperCase();
@@ -69,124 +342,36 @@ export const gstApi = {
     return res.data;
   },
 
-  /**
-   * Retrieves company GST configuration.
-   */
   async getCompanyGSTConfig(companyId: string) {
     const url = `${API_BASE_URL}/api/v1/gst/config/${companyId}/`;
     const res = await axios.get(url, { headers: getHeaders(companyId) });
     return res.data;
   },
 
-  /**
-   * Updates company GST configuration.
-   */
   async updateCompanyGSTConfig(companyId: string, data: any) {
     const url = `${API_BASE_URL}/api/v1/gst/config/${companyId}/`;
     const res = await axios.post(url, data, { headers: getHeaders(companyId) });
     return res.data;
   },
 
-  /**
-   * Generates a new E-Way Bill for a voucher.
-   */
-  async generateEWayBill(payload: {
-    voucher_id: string;
-    transport_mode?: string;
-    trans_mode?: string;
-    distance_km: number;
-    vehicle_number?: string;
-    vehicle_no?: string;
-    vehicle_type?: string;
-    transporter_id?: string;
-    transporter_name?: string;
-    transporter_doc_no?: string;
-    trans_doc_no?: string;
-    transporter_doc_date?: string;
-    sub_supply_type?: string;
-  }) {
+  async generateEWayBill(payload: any) {
     const url = `${API_BASE_URL}/api/v1/gst/eway-bill/generate/`;
-    const formatted = {
-      voucher_id: payload.voucher_id,
-      transport_mode: payload.transport_mode || payload.trans_mode || '1',
-      distance_km: payload.distance_km,
-      vehicle_number: payload.vehicle_number || payload.vehicle_no || '',
-      vehicle_type: payload.vehicle_type || 'R',
-      transporter_id: payload.transporter_id,
-      transporter_name: payload.transporter_name,
-      transporter_doc_no: payload.transporter_doc_no || payload.trans_doc_no,
-      transporter_doc_date: payload.transporter_doc_date,
-    };
-    const res = await axios.post(url, formatted, { headers: getHeaders() });
-    if (res.data?.data) {
-      res.data.data.eway_bill_number = res.data.data.ewb_number || res.data.data.eway_bill_number;
-      res.data.data.valid_upto = res.data.data.valid_until || res.data.data.valid_upto;
-      res.data.data.vehicle_no = res.data.data.vehicle_number || res.data.data.vehicle_no;
-    }
+    const res = await axios.post(url, payload, { headers: getHeaders() });
     return res.data;
   },
 
-  /**
-   * Updates Part-B vehicle number for an active E-Way bill.
-   */
-  async updateVehicle(payload: {
-    ewb_number?: string;
-    eway_bill_number?: string;
-    vehicle_number?: string;
-    vehicle_no?: string;
-    from_place?: string;
-    from_state?: string;
-    reason?: string;
-    reason_code?: string;
-    remarks?: string;
-    reason_remarks?: string;
-    trans_doc_no?: string;
-  }) {
+  async updateVehicle(payload: any) {
     const url = `${API_BASE_URL}/api/v1/gst/eway-bill/update-vehicle/`;
-    const formatted = {
-      ewb_number: payload.ewb_number || payload.eway_bill_number || '',
-      vehicle_number: payload.vehicle_number || payload.vehicle_no || '',
-      reason: payload.reason || payload.reason_remarks || payload.reason_code || 'Breakdown',
-      remarks: payload.remarks || payload.reason_remarks || '',
-    };
-    const res = await axios.post(url, formatted, { headers: getHeaders() });
-    if (res.data?.data) {
-      res.data.data.eway_bill_number = res.data.data.ewb_number || res.data.data.eway_bill_number;
-      res.data.data.valid_upto = res.data.data.valid_until || res.data.data.valid_upto;
-      res.data.data.vehicle_no = res.data.data.vehicle_number || res.data.data.vehicle_no;
-    }
+    const res = await axios.post(url, payload, { headers: getHeaders() });
     return res.data;
   },
 
-  /**
-   * Cancels an active E-Way bill.
-   */
-  async cancelEWayBill(payload: {
-    ewb_number?: string;
-    eway_bill_number?: string;
-    reason?: string;
-    cancel_reason_code?: string;
-    remarks?: string;
-    cancel_remarks?: string;
-  }) {
+  async cancelEWayBill(payload: any) {
     const url = `${API_BASE_URL}/api/v1/gst/eway-bill/cancel/`;
-    const formatted = {
-      ewb_number: payload.ewb_number || payload.eway_bill_number || '',
-      reason: payload.reason || payload.cancel_reason_code || '1',
-      remarks: payload.remarks || payload.cancel_remarks || 'Cancelled by user',
-    };
-    const res = await axios.post(url, formatted, { headers: getHeaders() });
-    if (res.data?.data) {
-      res.data.data.eway_bill_number = res.data.data.ewb_number || res.data.data.eway_bill_number;
-      res.data.data.valid_upto = res.data.data.valid_until || res.data.data.valid_upto;
-      res.data.data.vehicle_no = res.data.data.vehicle_number || res.data.data.vehicle_no;
-    }
+    const res = await axios.post(url, payload, { headers: getHeaders() });
     return res.data;
   },
 
-  /**
-   * Fetches E-Way bills generated for a voucher.
-   */
   async getVoucherEWayBills(voucherId: string): Promise<EWayBillData[]> {
     const url = `${API_BASE_URL}/api/v1/gst/eway-bill/voucher/${voucherId}/`;
     const res = await axios.get(url, { headers: getHeaders() });
@@ -198,9 +383,6 @@ export const gstApi = {
     }));
   },
 
-  /**
-   * Fetches primary E-Way bill for a voucher.
-   */
   async getEWayBillForVoucher(voucherId: string): Promise<{ success: boolean; data?: EWayBillData | null; eway_bills?: EWayBillData[]; error?: string }> {
     const url = `${API_BASE_URL}/api/v1/gst/eway-bill/voucher/${voucherId}/`;
     const res = await axios.get(url, { headers: getHeaders() });
@@ -217,18 +399,12 @@ export const gstApi = {
     };
   },
 
-  /**
-   * Fetches GSTR-1 payload JSON or downloads it.
-   */
   async getGSTR1Report(companyId: string, startDate: string, endDate: string) {
     const url = `${API_BASE_URL}/api/v1/gst/reports/gstr1/${companyId}/?start_date=${startDate}&end_date=${endDate}`;
     const res = await axios.get(url, { headers: getHeaders(companyId) });
     return res.data;
   },
 
-  /**
-   * Fetches GSTR-3B tax liability vs eligible ITC summary.
-   */
   async getGSTR3BSummary(companyId: string, startDate: string, endDate: string) {
     const url = `${API_BASE_URL}/api/v1/gst/reports/gstr3b/${companyId}/?start_date=${startDate}&end_date=${endDate}`;
     const res = await axios.get(url, { headers: getHeaders(companyId) });

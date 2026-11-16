@@ -509,3 +509,593 @@ class GSTRDirectPortalStatusAPIView(APIView):
         return Response(result)
 
 
+
+
+# ==============================================================================
+# PHASE 2 & 3: MULTI-GSTIN, SANDBOX PROVIDER & RECONCILIATION WORKSPACES
+# ==============================================================================
+
+from apps.gst.models import GSTRegistration, GSTAuditLog, EInvoiceRecord
+from apps.gst.serializers import (
+    GSTRegistrationSerializer,
+    GSTRegistrationWriteSerializer,
+    EInvoiceRecordSerializer,
+    EWayBillRecordSerializer,
+    GSTR2BRecordSerializer,
+    GSTAuditLogSerializer
+)
+from apps.gst.permissions import HasGSTPermission
+from apps.gst.services.sandbox_client import SandboxGSTClient
+from apps.gst.services.gstin_service import GSTINService
+from apps.gst.services.returns_service import GSTReturnsService
+from apps.gst.services.reconciliation_service import GSTReconciliationService
+from apps.gst.services.einvoice_service import EInvoiceService
+from apps.gst.services.ewaybill_service import EWayBillService as EWayBillServiceV2
+
+
+class GSTRegistrationListCreateAPIView(APIView):
+    """
+    GET /api/v1/gst/registrations/<uuid:company_id>/
+    POST /api/v1/gst/registrations/<uuid:company_id>/
+    Manages multi-state / multi-GSTIN registrations for a company.
+    """
+    permission_classes = [IsAuthenticated, HasGSTPermission]
+
+    def get(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        registrations = GSTRegistration.objects.filter(company=company)
+        serializer = GSTRegistrationSerializer(registrations, many=True)
+        return Response({"success": True, "registrations": serializer.data})
+
+    def post(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        data = request.data.copy()
+        data['company'] = str(company.id)
+
+        serializer = GSTRegistrationWriteSerializer(data=data)
+        if not serializer.is_valid():
+            return Response({"success": False, "errors": serializer.errors}, status=400)
+
+        reg = serializer.save()
+        return Response({
+            "success": True,
+            "message": f"GST registration for '{reg.gstin}' ({reg.state_name}) created successfully.",
+            "registration": GSTRegistrationSerializer(reg).data
+        }, status=201)
+
+
+class GSTRegistrationDetailAPIView(APIView):
+    """
+    GET/PUT/DELETE /api/v1/gst/registrations/<uuid:company_id>/<uuid:pk>/
+    """
+    permission_classes = [IsAuthenticated, HasGSTPermission]
+
+    def get(self, request, company_id, pk):
+        company = get_company_or_404(request.user, company_id)
+        try:
+            reg = GSTRegistration.objects.get(id=pk, company=company)
+        except GSTRegistration.DoesNotExist:
+            return Response({"success": False, "error": "GST registration not found."}, status=404)
+
+        return Response({"success": True, "registration": GSTRegistrationSerializer(reg).data})
+
+    def put(self, request, company_id, pk):
+        company = get_company_or_404(request.user, company_id)
+        try:
+            reg = GSTRegistration.objects.get(id=pk, company=company)
+        except GSTRegistration.DoesNotExist:
+            return Response({"success": False, "error": "GST registration not found."}, status=404)
+
+        serializer = GSTRegistrationWriteSerializer(reg, data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response({"success": False, "errors": serializer.errors}, status=400)
+
+        updated_reg = serializer.save()
+        return Response({
+            "success": True,
+            "message": "GST registration updated successfully.",
+            "registration": GSTRegistrationSerializer(updated_reg).data
+        })
+
+    def delete(self, request, company_id, pk):
+        company = get_company_or_404(request.user, company_id)
+        try:
+            reg = GSTRegistration.objects.get(id=pk, company=company)
+        except GSTRegistration.DoesNotExist:
+            return Response({"success": False, "error": "GST registration not found."}, status=404)
+
+        reg.delete()
+        return Response({"success": True, "message": "GST registration deleted successfully."})
+
+
+class UnifiedGSTINVerifyAPIView(APIView):
+    """
+    POST /api/v1/gst/verify-gstin/
+    Validates format locally and queries Sandbox GST API.
+    Optionally compares with an existing party for pre-update diff preview.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        gstin = request.data.get('gstin', '')
+        company_id = request.data.get('company_id')
+        party_id = request.data.get('party_id')
+        force_refresh = bool(request.data.get('force_refresh', False))
+
+        company = None
+        if company_id:
+            try:
+                company = get_company_or_404(request.user, company_id)
+            except Exception:
+                company = None
+
+        result = GSTINService.verify_gstin(
+            gstin=gstin,
+            company=company,
+            force_refresh=force_refresh,
+            user=request.user
+        )
+
+        # If party_id provided, generate diff preview
+        if result.get('success') and party_id and company:
+            from apps.ledgers.models import Ledger
+            party = Ledger.objects.filter(id=party_id, company=company).first()
+            if party:
+                diff_preview = GSTINService.preview_party_enrichment(party, result)
+                result['party_enrichment_preview'] = diff_preview
+
+        status_code = 200 if result.get('success') else 400
+        return Response(result, status=status_code)
+
+
+class PartyEnrichmentApplyAPIView(APIView):
+    """
+    POST /api/v1/gst/party/enrich/
+    Applies user-selected verified fields to party ledger.
+    INVARIANT: Never silently corrupts or overwrites party without explicit field selections.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        company_id = request.data.get('company_id')
+        party_id = request.data.get('party_id')
+        fields_to_update = request.data.get('fields_to_update', {})  # dict of {field_name: value}
+
+        if not company_id or not party_id or not fields_to_update:
+            return Response({"success": False, "error": "company_id, party_id, and fields_to_update are required."}, status=400)
+
+        company = get_company_or_404(request.user, company_id)
+        from apps.ledgers.models import Ledger
+        try:
+            party = Ledger.objects.get(id=party_id, company=company)
+        except Ledger.DoesNotExist:
+            return Response({"success": False, "error": "Party ledger not found."}, status=404)
+
+        allowed_fields = {'legal_name', 'trade_name', 'gstin', 'state_code', 'address', 'pincode'}
+        updated_fields = []
+
+        for field, value in fields_to_update.items():
+            if field in allowed_fields and hasattr(party, field):
+                setattr(party, field, value)
+                updated_fields.append(field)
+
+        if updated_fields:
+            party.save(update_fields=updated_fields)
+
+        return Response({
+            "success": True,
+            "message": f"Successfully updated {len(updated_fields)} field(s) on party '{party.name}'.",
+            "updated_fields": updated_fields
+        })
+
+
+class GSTOverviewAPIView(APIView):
+    """
+    GET /api/v1/gst/overview/<uuid:company_id>/
+    Aggregates filing status, registrations, recent e-invoices, e-way bills, and ITC metrics.
+    """
+    permission_classes = [IsAuthenticated, CanViewGST]
+
+    def get(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        client = SandboxGSTClient(company=company)
+
+        registrations_count = GSTRegistration.objects.filter(company=company).count()
+        recent_einvoices = EInvoiceRecord.objects.filter(company=company).order_by('-created_at')[:5]
+        recent_ewaybills = EWayBillRecord.objects.filter(company=company).order_by('-created_at')[:5]
+        recent_filings = GSTFilingRecord.objects.filter(company=company).order_by('-submitted_at')[:5]
+
+        # Recent reconciliation metrics
+        latest_import = GSTR2BImport.objects.filter(company=company).order_by('-created_at').first()
+        matched_count = GSTR2BRecord.objects.filter(company=company, match_status='MATCHED').count()
+        mismatched_count = GSTR2BRecord.objects.filter(company=company).exclude(match_status='MATCHED').count()
+
+        return Response({
+            "success": True,
+            "company_name": company.name,
+            "gateway_configured": client.is_configured(),
+            "gateway_provider": "Sandbox by Quicko (api.sandbox.co.in)",
+            "registrations_count": registrations_count,
+            "itc_reconciliation": {
+                "latest_period": latest_import.return_period if latest_import else None,
+                "matched_records": matched_count,
+                "mismatched_records": mismatched_count,
+            },
+            "recent_einvoices": EInvoiceRecordSerializer(recent_einvoices, many=True).data,
+            "recent_ewaybills": EWayBillRecordSerializer(recent_ewaybills, many=True).data,
+            "recent_filings": [
+                {
+                    "return_type": f.return_type,
+                    "return_period": f.return_period,
+                    "status": f.status,
+                    "arn": f.arn,
+                    "submitted_at": f.submitted_at.isoformat()
+                } for f in recent_filings
+            ]
+        })
+
+
+class GSTR1WorkspaceAPIView(APIView):
+    """
+    GET /api/v1/gst/returns/gstr1/<uuid:company_id>/
+    Prepares GSTR-1 outward supply data and official JSON schema.
+    """
+    permission_classes = [IsAuthenticated, CanPrepareGST]
+
+    def get(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        period = request.query_params.get('period', '082026')
+        reg_id = request.query_params.get('registration_id')
+
+        registration = None
+        if reg_id:
+            registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
+
+        result = GSTReturnsService.prepare_gstr1(
+            company=company,
+            registration=registration,
+            return_period=period
+        )
+        return Response({"success": True, "data": result})
+
+
+class GSTR1SubmitAPIView(APIView):
+    """
+    POST /api/v1/gst/returns/gstr1/submit/<uuid:company_id>/
+    Submits GSTR-1 to Sandbox / GST Portal after explicit user confirmation.
+    """
+    permission_classes = [IsAuthenticated, CanFileGST]
+
+    def post(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        period = request.data.get('period', '082026')
+        reg_id = request.data.get('registration_id')
+        confirmed = bool(request.data.get('confirmed', False))
+
+        if not confirmed:
+            return Response({
+                "success": False,
+                "error": "Explicit user confirmation is required to submit returns to the GST portal."
+            }, status=400)
+
+        registration = None
+        if reg_id:
+            registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
+
+        data = GSTReturnsService.prepare_gstr1(company, registration, period)
+        official_json = data["official_gstr1_json"]
+
+        client = SandboxGSTClient(company=company, registration=registration)
+        session_token = registration.auth_token if registration else None
+
+        if not client.is_configured():
+            return Response({
+                "success": False,
+                "error": "Sandbox GST API is not configured. Supply API credentials."
+            }, status=503)
+
+        res = client.save_gstr1(payload=official_json, session_token=session_token, user=request.user)
+        if not res.get("success"):
+            return Response(res, status=400)
+
+        # Record filing state
+        filing_rec = GSTReturnsService.record_filing(
+            company=company,
+            registration=registration,
+            return_type='GSTR1',
+            return_period=period,
+            arn=res.get("data", {}).get("ref_id", ""),
+            status='SUBMITTED',
+            payload=official_json,
+            response=res.get("data"),
+            user=request.user
+        )
+
+        return Response({
+            "success": True,
+            "message": f"GSTR-1 for period {period} submitted successfully.",
+            "filing_id": str(filing_rec.id),
+            "ref_id": filing_rec.arn,
+            "status": filing_rec.status
+        })
+
+
+class GSTR3BWorkspaceAPIView(APIView):
+    """
+    GET /api/v1/gst/returns/gstr3b/<uuid:company_id>/
+    Computes GSTR-3B monthly summary (Table 3.1 outward liabilities, Table 4 eligible ITC, Net Payable).
+    """
+    permission_classes = [IsAuthenticated, CanPrepareGST]
+
+    def get(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        period = request.query_params.get('period', '082026')
+        reg_id = request.query_params.get('registration_id')
+
+        registration = None
+        if reg_id:
+            registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
+
+        result = GSTReturnsService.prepare_gstr3b(company, registration, period)
+        return Response({"success": True, "data": result})
+
+
+class GSTR2BReconciliationAPIView(APIView):
+    """
+    GET /api/v1/gst/reconciliation/gstr2b/<uuid:company_id>/
+    Returns 11-category reconciliation breakdown and individual record diffs.
+    """
+    permission_classes = [IsAuthenticated, CanReconcileGST]
+
+    def get(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        period = request.query_params.get('period')
+        status_filter = request.query_params.get('match_status')
+
+        summary = GSTReconciliationService.reconcile_period(
+            company=company,
+            return_period=period
+        )
+
+        records_qs = GSTR2BRecord.objects.filter(company=company).order_by('-invoice_date')
+        if period:
+            records_qs = records_qs.filter(import_batch__return_period=period)
+        if status_filter:
+            records_qs = records_qs.filter(match_status=status_filter)
+
+        page_records = records_qs[:100]
+        serializer = GSTR2BRecordSerializer(page_records, many=True)
+
+        return Response({
+            "success": True,
+            "summary": summary,
+            "records": serializer.data
+        })
+
+
+class GSTR2BSyncFromSandboxAPIView(APIView):
+    """
+    POST /api/v1/gst/reconciliation/gstr2b/sync/<uuid:company_id>/
+    Fetches GSTR-2B data directly from Sandbox and executes reconciliation.
+    """
+    permission_classes = [IsAuthenticated, CanReconcileGST]
+
+    def post(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        period = request.data.get('period', '082026')
+        reg_id = request.data.get('registration_id')
+
+        registration = None
+        if reg_id:
+            registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
+
+        res = GSTReconciliationService.fetch_and_ingest_from_sandbox(
+            company=company,
+            registration=registration,
+            return_period=period,
+            user=request.user
+        )
+        status_code = 200 if res.get("success") else 400
+        return Response(res, status=status_code)
+
+
+class GSTR2BReviewRecordAPIView(APIView):
+    """
+    POST /api/v1/gst/reconciliation/gstr2b/review/<uuid:record_id>/
+    Allows user to mark discrepancy as reviewed/resolved with notes.
+    """
+    permission_classes = [IsAuthenticated, CanReconcileGST]
+
+    def post(self, request, record_id):
+        try:
+            record = GSTR2BRecord.objects.get(id=record_id)
+        except GSTR2BRecord.DoesNotExist:
+            return Response({"success": False, "error": "GSTR-2B record not found."}, status=404)
+
+        # Tenant authorization
+        company = get_company_or_404(request.user, record.company.id)
+
+        notes = request.data.get('review_notes', '')
+        is_reviewed = bool(request.data.get('is_reviewed', True))
+
+        record.is_reviewed = is_reviewed
+        record.reviewed_at = timezone.now() if is_reviewed else None
+        record.reviewed_by = request.user if is_reviewed else None
+        record.review_notes = notes
+        record.save(update_fields=['is_reviewed', 'reviewed_at', 'reviewed_by', 'review_notes'])
+
+        return Response({
+            "success": True,
+            "message": "Record review status updated successfully.",
+            "record": GSTR2BRecordSerializer(record).data
+        })
+
+
+class EInvoiceGenerateAPIView(APIView):
+    """
+    POST /api/v1/gst/einvoice/generate/<uuid:voucher_id>/
+    Generates IRN & Signed QR Code for an eligible sales voucher.
+    """
+    permission_classes = [IsAuthenticated, CanGenerateEInvoice]
+
+    def post(self, request, voucher_id):
+        try:
+            voucher = Voucher.objects.get(id=voucher_id)
+        except Voucher.DoesNotExist:
+            return Response({"success": False, "error": "Voucher not found."}, status=404)
+
+        company = get_company_or_404(request.user, voucher.company.id)
+        reg_id = request.data.get('registration_id')
+
+        registration = None
+        if reg_id:
+            registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
+
+        try:
+            res = EInvoiceService.generate_irn(voucher, registration=registration, user=request.user)
+            return Response(res)
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=400)
+
+
+class EInvoiceCancelAPIView(APIView):
+    """
+    POST /api/v1/gst/einvoice/cancel/<uuid:voucher_id>/
+    Cancels an active IRN within the statutory 24-hour window.
+    """
+    permission_classes = [IsAuthenticated, CanGenerateEInvoice]
+
+    def post(self, request, voucher_id):
+        try:
+            voucher = Voucher.objects.get(id=voucher_id)
+        except Voucher.DoesNotExist:
+            return Response({"success": False, "error": "Voucher not found."}, status=404)
+
+        company = get_company_or_404(request.user, voucher.company.id)
+        reason = request.data.get('cancel_reason', '1')
+        remarks = request.data.get('cancel_remarks', 'Order cancelled')
+
+        res = EInvoiceService.cancel_irn(voucher, cancel_reason=reason, cancel_remarks=remarks, user=request.user)
+        status_code = 200 if res.get("success") else 400
+        return Response(res, status=status_code)
+
+
+class EInvoiceDetailAPIView(APIView):
+    """
+    GET /api/v1/gst/einvoice/voucher/<uuid:voucher_id>/
+    Returns active IRN and QR code for printing on invoice layout.
+    """
+    permission_classes = [IsAuthenticated, CanViewGST]
+
+    def get(self, request, voucher_id):
+        try:
+            voucher = Voucher.objects.get(id=voucher_id)
+        except Voucher.DoesNotExist:
+            return Response({"success": False, "error": "Voucher not found."}, status=404)
+
+        company = get_company_or_404(request.user, voucher.company.id)
+        record = EInvoiceRecord.objects.filter(voucher=voucher).first()
+        if not record:
+            return Response({"success": False, "error": "No e-Invoice record found for this voucher."}, status=404)
+
+        return Response({"success": True, "einvoice": EInvoiceRecordSerializer(record).data})
+
+
+class EWayBillGenerateV2APIView(APIView):
+    """
+    POST /api/v1/gst/ewaybill/generate/<uuid:voucher_id>/
+    Generates E-Way Bill for a voucher via Sandbox.
+    """
+    permission_classes = [IsAuthenticated, CanGenerateEWayBill]
+
+    def post(self, request, voucher_id):
+        try:
+            voucher = Voucher.objects.get(id=voucher_id)
+        except Voucher.DoesNotExist:
+            return Response({"success": False, "error": "Voucher not found."}, status=404)
+
+        company = get_company_or_404(request.user, voucher.company.id)
+        reg_id = request.data.get('registration_id')
+
+        registration = None
+        if reg_id:
+            registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
+
+        try:
+            res = EWayBillServiceV2.generate_ewaybill(
+                voucher=voucher,
+                trans_mode=request.data.get('trans_mode', '1'),
+                distance_km=int(request.data.get('distance_km', 10)),
+                transporter_id=request.data.get('transporter_id', ''),
+                transporter_name=request.data.get('transporter_name', ''),
+                vehicle_number=request.data.get('vehicle_number', ''),
+                vehicle_type=request.data.get('vehicle_type', 'R'),
+                registration=registration,
+                user=request.user
+            )
+            return Response(res)
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=400)
+
+
+class EWayBillVehicleUpdateAPIView(APIView):
+    """
+    POST /api/v1/gst/ewaybill/update-vehicle/<uuid:ewaybill_id>/
+    Updates Part-B Vehicle Details on an active E-Way Bill.
+    """
+    permission_classes = [IsAuthenticated, CanGenerateEWayBill]
+
+    def post(self, request, ewaybill_id):
+        try:
+            ewaybill = EWayBillRecord.objects.get(id=ewaybill_id)
+        except EWayBillRecord.DoesNotExist:
+            return Response({"success": False, "error": "E-Way Bill not found."}, status=404)
+
+        company = get_company_or_404(request.user, ewaybill.company.id)
+        res = EWayBillServiceV2.update_vehicle(
+            eway_bill=ewaybill,
+            vehicle_number=request.data.get('vehicle_number', ''),
+            from_place=request.data.get('from_place', company.city or 'City'),
+            from_state=request.data.get('from_state', company.state_code or '09'),
+            reason_code=request.data.get('reason_code', '1'),
+            remarks=request.data.get('remarks', ''),
+            user=request.user
+        )
+        status_code = 200 if res.get("success") else 400
+        return Response(res, status=status_code)
+
+
+class EWayBillCancelV2APIView(APIView):
+    """
+    POST /api/v1/gst/ewaybill/cancel/<uuid:ewaybill_id>/
+    Cancels an active E-Way Bill within 24 hours.
+    """
+    permission_classes = [IsAuthenticated, CanCancelEWayBill]
+
+    def post(self, request, ewaybill_id):
+        try:
+            ewaybill = EWayBillRecord.objects.get(id=ewaybill_id)
+        except EWayBillRecord.DoesNotExist:
+            return Response({"success": False, "error": "E-Way Bill not found."}, status=404)
+
+        company = get_company_or_404(request.user, ewaybill.company.id)
+        reason = request.data.get('cancel_reason', '1')
+        remarks = request.data.get('cancel_remarks', 'Order cancelled')
+
+        res = EWayBillServiceV2.cancel_ewaybill(ewaybill, cancel_reason=reason, cancel_remarks=remarks, user=request.user)
+        status_code = 200 if res.get("success") else 400
+        return Response(res, status=status_code)
+
+
+class GSTAuditLogsAPIView(APIView):
+    """
+    GET /api/v1/gst/audit-logs/<uuid:company_id>/
+    Returns redacted audit log entries for all outbound GST Sandbox interactions.
+    """
+    permission_classes = [IsAuthenticated, CanViewGST]
+
+    def get(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        logs = GSTAuditLog.objects.filter(company=company).order_by('-created_at')[:100]
+        serializer = GSTAuditLogSerializer(logs, many=True)
+        return Response({"success": True, "logs": serializer.data})
