@@ -74,6 +74,17 @@ class GSTRegistration(models.Model):
         ('INACTIVE', 'Inactive'),
     )
 
+    VERIFICATION_STATUS_CHOICES = (
+        ('NOT_VERIFIED', 'Not Verified'),
+        ('PENDING', 'Verification Pending'),
+        ('VERIFIED', 'Verified'),
+        ('INVALID', 'Invalid GSTIN'),
+        ('INACTIVE', 'Inactive Registration'),
+        ('FAILED', 'Verification Failed'),
+        ('PROVIDER_UNAVAILABLE', 'Provider Unavailable'),
+        ('EXPIRED', 'Verification Expired'),
+    )
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='gst_registrations')
     
@@ -91,6 +102,16 @@ class GSTRegistration(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='ACTIVE')
     registration_date = models.DateField(null=True, blank=True)
     
+    # Verification details
+    verification_status = models.CharField(
+        max_length=30,
+        choices=VERIFICATION_STATUS_CHOICES,
+        default='NOT_VERIFIED',
+        db_index=True
+    )
+    last_verified_at = models.DateTimeField(null=True, blank=True)
+    provider_reference_id = models.CharField(max_length=100, blank=True, default='')
+
     is_primary = models.BooleanField(default=False)
     
     # Portal compliance / OTP username & cached session token

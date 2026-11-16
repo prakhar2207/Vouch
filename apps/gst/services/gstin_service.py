@@ -306,3 +306,47 @@ class GSTINService:
             "verified_taxpayer_type": verified_data.get('taxpayer_type', 'Regular'),
             "verified_status": verified_data.get('status', 'Active'),
         }
+
+    @classmethod
+    def apply_party_enrichment(
+        cls,
+        ledger_id: Any,
+        verified_data: Dict[str, Any],
+        apply_legal_name: bool = True,
+        apply_trade_name: bool = True,
+        apply_state: bool = True,
+        apply_address: bool = True,
+        user: Any = None
+    ) -> Any:
+        from apps.ledgers.models import Ledger
+        from apps.gst.services.audit_service import GSTAuditService
+
+        party = Ledger.objects.get(id=ledger_id)
+        updated_fields = []
+
+        if apply_legal_name and verified_data.get('legal_name'):
+            party.name = verified_data['legal_name'][:255]
+            updated_fields.append('name')
+        if apply_state and verified_data.get('state_code'):
+            party.state_code = verified_data['state_code'][:2]
+            updated_fields.append('state_code')
+        if apply_address and verified_data.get('address'):
+            party.address = verified_data['address']
+            updated_fields.append('address')
+        if verified_data.get('gstin'):
+            party.gstin = verified_data['gstin'].strip().upper()
+            updated_fields.append('gstin')
+
+        if updated_fields:
+            party.save(update_fields=updated_fields)
+
+        GSTAuditService.log_action(
+            company=party.company,
+            action="PARTY_ENRICH",
+            endpoint="/party/enrich/",
+            status_code=200,
+            is_success=True,
+            request_summary={"ledger_id": str(party.id), "updated_fields": updated_fields},
+            user=user
+        )
+        return party

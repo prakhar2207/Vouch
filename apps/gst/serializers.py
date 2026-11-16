@@ -26,7 +26,8 @@ class GSTRegistrationSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'company', 'gstin', 'legal_name', 'trade_name',
             'state_code', 'state_name', 'address', 'pincode',
-            'taxpayer_type', 'status', 'registration_date', 'is_primary',
+            'taxpayer_type', 'status', 'verification_status', 'last_verified_at',
+            'provider_reference_id', 'registration_date', 'is_primary',
             'taxpayer_username', 'einvoice_username', 'eway_username',
             'has_portal_auth', 'has_einvoice_auth', 'has_eway_auth',
             'created_at', 'updated_at'
@@ -55,8 +56,8 @@ class GSTRegistrationWriteSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'company', 'gstin', 'legal_name', 'trade_name',
             'state_code', 'state_name', 'address', 'pincode',
-            'taxpayer_type', 'status', 'registration_date', 'is_primary',
-            'taxpayer_username', 'einvoice_username', 'einvoice_password',
+            'taxpayer_type', 'status', 'verification_status', 'registration_date',
+            'is_primary', 'taxpayer_username', 'einvoice_username', 'einvoice_password',
             'eway_username', 'eway_password'
         ]
 

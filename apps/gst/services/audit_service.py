@@ -45,8 +45,8 @@ class GSTAuditService:
         cls,
         company: Company,
         action: str,
-        correlation_id: str,
-        endpoint: str,
+        correlation_id: str = '',
+        endpoint: str = '',
         http_method: str = 'POST',
         gst_registration: Optional[GSTRegistration] = None,
         status_code: Optional[int] = None,
@@ -57,6 +57,9 @@ class GSTAuditService:
         user: Any = None,
         ip_address: Optional[str] = None
     ) -> GSTAuditLog:
+        if not correlation_id:
+            import uuid
+            correlation_id = f"AUD-{uuid.uuid4().hex[:12].upper()}"
         cleaned_req = redact_sensitive_payload(request_summary or {})
         cleaned_res = redact_sensitive_payload(response_summary or {})
 

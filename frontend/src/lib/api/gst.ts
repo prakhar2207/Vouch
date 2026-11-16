@@ -38,16 +38,20 @@ export interface GSTRegistration {
   company: string;
   gstin: string;
   state_code: string;
+  state_name?: string;
   legal_name: string;
   trade_name: string;
   address: string;
   pincode: string;
   taxpayer_type: string;
+  status: 'ACTIVE' | 'SUSPENDED' | 'CANCELLED' | 'INACTIVE';
+  verification_status: 'NOT_VERIFIED' | 'PENDING' | 'VERIFIED' | 'INVALID' | 'INACTIVE' | 'FAILED' | 'PROVIDER_UNAVAILABLE' | 'EXPIRED';
+  last_verified_at?: string;
+  provider_reference_id?: string;
   is_primary: boolean;
-  is_active: boolean;
-  has_auth_token: boolean;
-  has_einvoice_credentials: boolean;
-  has_eway_credentials: boolean;
+  has_portal_auth?: boolean;
+  has_einvoice_auth?: boolean;
+  has_eway_auth?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -123,8 +127,8 @@ export const gstApi = {
    * Unified GSTIN Verification against Sandbox / Cache with Luhn check and enrichment preview
    */
   async verifyGSTIN(gstin: string, partyId?: string, companyId?: string) {
-    const url = `${API_BASE_URL}/api/v1/gst/gstin/verify/`;
-    const res = await axios.post(url, { gstin, party_id: partyId }, { headers: getHeaders(companyId) });
+    const url = `${API_BASE_URL}/api/v1/gst/verify-gstin/`;
+    const res = await axios.post(url, { gstin, party_id: partyId, company_id: companyId }, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -139,7 +143,7 @@ export const gstApi = {
     apply_address?: boolean;
     verified_data?: any;
   }, companyId?: string) {
-    const url = `${API_BASE_URL}/api/v1/gst/parties/enrich/`;
+    const url = `${API_BASE_URL}/api/v1/gst/party/enrich/`;
     const res = await axios.post(url, payload, { headers: getHeaders(companyId) });
     return res.data;
   },
@@ -147,18 +151,63 @@ export const gstApi = {
   /**
    * List GST Registrations (multi-state/multi-GSTIN)
    */
-  async getRegistrations(companyId?: string): Promise<GSTRegistration[]> {
-    const url = `${API_BASE_URL}/api/v1/gst/registrations/`;
+  async getRegistrations(companyId: string): Promise<GSTRegistration[]> {
+    const url = `${API_BASE_URL}/api/v1/gst/registrations/${companyId}/`;
     const res = await axios.get(url, { headers: getHeaders(companyId) });
-    return res.data?.data || res.data || [];
+    return res.data?.registrations || res.data?.data || res.data || [];
+  },
+
+  /**
+   * Pre-check / Preview GSTIN details before creating a registration
+   */
+  async verifyRegistrationPreview(companyId: string, gstin: string) {
+    const url = `${API_BASE_URL}/api/v1/gst/registrations/${companyId}/verify-preview/`;
+    const res = await axios.post(url, { gstin }, { headers: getHeaders(companyId) });
+    return res.data;
   },
 
   /**
    * Create a new GST Registration
    */
-  async createRegistration(data: Partial<GSTRegistration>, companyId?: string) {
-    const url = `${API_BASE_URL}/api/v1/gst/registrations/`;
+  async createRegistration(companyId: string, data: Partial<GSTRegistration> & { auto_verify?: boolean }) {
+    const url = `${API_BASE_URL}/api/v1/gst/registrations/${companyId}/`;
     const res = await axios.post(url, data, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  /**
+   * Re-verify an existing GST Registration against Sandbox
+   */
+  async verifyRegistration(companyId: string, registrationId: string, forceRefresh: boolean = true) {
+    const url = `${API_BASE_URL}/api/v1/gst/registrations/${companyId}/${registrationId}/verify/`;
+    const res = await axios.post(url, { force_refresh: forceRefresh }, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  /**
+   * Update metadata on an existing GST Registration
+   */
+  async updateRegistration(companyId: string, registrationId: string, data: Partial<GSTRegistration>) {
+    const url = `${API_BASE_URL}/api/v1/gst/registrations/${companyId}/${registrationId}/`;
+    const res = await axios.put(url, data, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  /**
+   * Mark a GST Registration as INACTIVE
+   */
+  async deactivateRegistration(companyId: string, registrationId: string) {
+    const url = `${API_BASE_URL}/api/v1/gst/registrations/${companyId}/${registrationId}/deactivate/`;
+    const res = await axios.post(url, {}, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  /**
+   * Reactivate an inactive GST Registration
+   */
+  async reactivateRegistration(companyId: string, registrationId: string) {
+    const url = `${API_BASE_URL}/api/v1/gst/registrations/${companyId}/${registrationId}/reactivate/`;
+    const res = await axios.post(url, {}, { headers: getHeaders(companyId) });
     return res.data;
   },
 

@@ -16,6 +16,7 @@ import { useToast } from '@/context/ToastContext';
 import { getDeviceCounterCode, setDeviceCounterCode } from '@/lib/sync/sequence-service';
 import ProformaDocumentSheet from '@/components/documents/ProformaDocumentSheet';
 import { BillingSettingsView } from '@/components/billing/BillingSettingsView';
+import GSTRegistrationsView from '@/components/settings/GSTRegistrationsView';
 import {
   Users,
   ShieldCheck,
@@ -1027,6 +1028,7 @@ export default function SettingsPage() {
               <div className="space-y-0.5 pt-1">
                 {[
                   { id: 'firm-profile', label: 'Firm Details & Profile', icon: Building },
+                  { id: 'gst-registrations', label: 'GST Registrations (Multi-GSTIN)', icon: ShieldCheck },
                   { id: 'branding', label: 'Document Branding', icon: Palette },
                   { id: 'invoicing-inventory', label: 'Invoicing & Inventory', icon: Sliders },
                   { id: 'gst-portal', label: 'GST Portal Direct Connect', icon: Globe },
@@ -2164,6 +2166,11 @@ export default function SettingsPage() {
                   </div>
                 </div>
               </div>
+            )}
+
+            {/* TAB: GST REGISTRATIONS (MULTI-GSTIN) */}
+            {activeTab === 'gst-registrations' && company && (
+              <GSTRegistrationsView companyId={company.id} companyName={company.name} />
             )}
 
             {/* TAB 6: GOVERNMENT GST PORTAL INTEGRATION (COMPANY SETTINGS) */}

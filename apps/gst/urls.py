@@ -18,6 +18,10 @@ from .views import (
     # Phase 2 & 3 Sandbox by Quicko Integration Views
     GSTRegistrationListCreateAPIView,
     GSTRegistrationDetailAPIView,
+    GSTRegistrationVerifyPreviewAPIView,
+    GSTRegistrationVerifyAPIView,
+    GSTRegistrationDeactivateAPIView,
+    GSTRegistrationReactivateAPIView,
     UnifiedGSTINVerifyAPIView,
     PartyEnrichmentApplyAPIView,
     GSTOverviewAPIView,
@@ -48,7 +52,11 @@ from .itc_views import (
 urlpatterns = [
     # 1. Multi-GSTIN Registrations
     path('registrations/<uuid:company_id>/', GSTRegistrationListCreateAPIView.as_view(), name='gst_registrations_list_create'),
+    path('registrations/<uuid:company_id>/verify-preview/', GSTRegistrationVerifyPreviewAPIView.as_view(), name='gst_registration_verify_preview'),
     path('registrations/<uuid:company_id>/<uuid:pk>/', GSTRegistrationDetailAPIView.as_view(), name='gst_registration_detail'),
+    path('registrations/<uuid:company_id>/<uuid:pk>/verify/', GSTRegistrationVerifyAPIView.as_view(), name='gst_registration_verify'),
+    path('registrations/<uuid:company_id>/<uuid:pk>/deactivate/', GSTRegistrationDeactivateAPIView.as_view(), name='gst_registration_deactivate'),
+    path('registrations/<uuid:company_id>/<uuid:pk>/reactivate/', GSTRegistrationReactivateAPIView.as_view(), name='gst_registration_reactivate'),
 
     # 2. Unified GSTIN Verification & Party Auto-fill
     path('verify-gstin/', UnifiedGSTINVerifyAPIView.as_view(), name='gst_unified_verify'),

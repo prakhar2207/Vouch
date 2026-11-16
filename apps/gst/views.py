@@ -533,6 +533,10 @@ from apps.gst.services.einvoice_service import EInvoiceService
 from apps.gst.services.ewaybill_service import EWayBillService as EWayBillServiceV2
 
 
+from apps.gst.services.registration_service import GSTRegistrationService
+from apps.gst.exceptions import GSTINValidationError, DuplicateSubmissionError, GSTRegistrationAccessDenied
+
+
 class GSTRegistrationListCreateAPIView(APIView):
     """
     GET /api/v1/gst/registrations/<uuid:company_id>/
@@ -543,25 +547,46 @@ class GSTRegistrationListCreateAPIView(APIView):
 
     def get(self, request, company_id):
         company = get_company_or_404(request.user, company_id)
-        registrations = GSTRegistration.objects.filter(company=company)
+        registrations = GSTRegistrationService.list_registrations(company)
         serializer = GSTRegistrationSerializer(registrations, many=True)
         return Response({"success": True, "registrations": serializer.data})
 
     def post(self, request, company_id):
         company = get_company_or_404(request.user, company_id)
-        data = request.data.copy()
-        data['company'] = str(company.id)
+        gstin = request.data.get('gstin', '')
+        state_code = request.data.get('state_code')
+        legal_name = request.data.get('legal_name')
+        trade_name = request.data.get('trade_name')
+        address = request.data.get('address')
+        pincode = request.data.get('pincode')
+        taxpayer_type = request.data.get('taxpayer_type', 'REGULAR')
+        is_primary = bool(request.data.get('is_primary', False))
+        auto_verify = bool(request.data.get('auto_verify', True))
 
-        serializer = GSTRegistrationWriteSerializer(data=data)
-        if not serializer.is_valid():
-            return Response({"success": False, "errors": serializer.errors}, status=400)
-
-        reg = serializer.save()
-        return Response({
-            "success": True,
-            "message": f"GST registration for '{reg.gstin}' ({reg.state_name}) created successfully.",
-            "registration": GSTRegistrationSerializer(reg).data
-        }, status=201)
+        try:
+            reg = GSTRegistrationService.create_registration(
+                company=company,
+                gstin=gstin,
+                state_code=state_code,
+                legal_name=legal_name,
+                trade_name=trade_name,
+                address=address,
+                pincode=pincode,
+                taxpayer_type=taxpayer_type,
+                is_primary=is_primary,
+                auto_verify=auto_verify,
+                user=request.user
+            )
+            return Response({
+                "success": True,
+                "message": f"GST registration for '{reg.gstin}' ({reg.state_name}) created successfully.",
+                "registration": GSTRegistrationSerializer(reg).data
+            }, status=201)
+        except (GSTINValidationError, DuplicateSubmissionError) as e:
+            return Response({"success": False, "error": str(e)}, status=400)
+        except Exception as e:
+            logger.exception(f"Error creating GST registration: {e}")
+            return Response({"success": False, "error": f"Failed to create registration: {str(e)}"}, status=500)
 
 
 class GSTRegistrationDetailAPIView(APIView):
@@ -573,8 +598,8 @@ class GSTRegistrationDetailAPIView(APIView):
     def get(self, request, company_id, pk):
         company = get_company_or_404(request.user, company_id)
         try:
-            reg = GSTRegistration.objects.get(id=pk, company=company)
-        except GSTRegistration.DoesNotExist:
+            reg = GSTRegistrationService.get_registration(company, pk)
+        except GSTRegistrationAccessDenied:
             return Response({"success": False, "error": "GST registration not found."}, status=404)
 
         return Response({"success": True, "registration": GSTRegistrationSerializer(reg).data})
@@ -582,30 +607,124 @@ class GSTRegistrationDetailAPIView(APIView):
     def put(self, request, company_id, pk):
         company = get_company_or_404(request.user, company_id)
         try:
-            reg = GSTRegistration.objects.get(id=pk, company=company)
-        except GSTRegistration.DoesNotExist:
+            updated_reg = GSTRegistrationService.update_registration(
+                company=company,
+                registration_id=pk,
+                data=request.data,
+                user=request.user
+            )
+            return Response({
+                "success": True,
+                "message": "GST registration updated successfully.",
+                "registration": GSTRegistrationSerializer(updated_reg).data
+            })
+        except GSTRegistrationAccessDenied:
             return Response({"success": False, "error": "GST registration not found."}, status=404)
-
-        serializer = GSTRegistrationWriteSerializer(reg, data=request.data, partial=True)
-        if not serializer.is_valid():
-            return Response({"success": False, "errors": serializer.errors}, status=400)
-
-        updated_reg = serializer.save()
-        return Response({
-            "success": True,
-            "message": "GST registration updated successfully.",
-            "registration": GSTRegistrationSerializer(updated_reg).data
-        })
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=400)
 
     def delete(self, request, company_id, pk):
         company = get_company_or_404(request.user, company_id)
+        hard_delete = request.query_params.get('hard_delete', 'false').lower() == 'true'
         try:
-            reg = GSTRegistration.objects.get(id=pk, company=company)
-        except GSTRegistration.DoesNotExist:
+            reg = GSTRegistrationService.get_registration(company, pk)
+            if hard_delete:
+                # Only hard delete if zero vouchers reference it
+                from apps.accounting.models import Voucher
+                if Voucher.objects.filter(company=company).filter(buyer_gstin=reg.gstin).exists():
+                    reg.status = 'INACTIVE'
+                    reg.save(update_fields=['status'])
+                    return Response({
+                        "success": True,
+                        "message": "Historical vouchers exist; registration marked as INACTIVE."
+                    })
+                reg.delete()
+                return Response({"success": True, "message": "GST registration deleted successfully."})
+            else:
+                GSTRegistrationService.deactivate_registration(company, pk, user=request.user)
+                return Response({"success": True, "message": "GST registration deactivated successfully."})
+        except GSTRegistrationAccessDenied:
             return Response({"success": False, "error": "GST registration not found."}, status=404)
 
-        reg.delete()
-        return Response({"success": True, "message": "GST registration deleted successfully."})
+
+class GSTRegistrationVerifyPreviewAPIView(APIView):
+    """
+    POST /api/v1/gst/registrations/<uuid:company_id>/verify-preview/
+    Pre-validates a GSTIN with Luhn check and Sandbox search for user review before registration creation.
+    """
+    permission_classes = [IsAuthenticated, HasGSTPermission]
+
+    def post(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        gstin = request.data.get('gstin', '')
+        result = GSTRegistrationService.verify_preview(company, gstin, user=request.user)
+        status_code = 200 if result.get('success') else 400
+        return Response(result, status=status_code)
+
+
+class GSTRegistrationVerifyAPIView(APIView):
+    """
+    POST /api/v1/gst/registrations/<uuid:company_id>/<uuid:pk>/verify/
+    Re-verifies an existing registration with Sandbox and updates verification status.
+    """
+    permission_classes = [IsAuthenticated, HasGSTPermission]
+
+    def post(self, request, company_id, pk):
+        company = get_company_or_404(request.user, company_id)
+        force_refresh = bool(request.data.get('force_refresh', True))
+        try:
+            res = GSTRegistrationService.verify_existing_registration(
+                company=company,
+                registration_id=pk,
+                force_refresh=force_refresh,
+                user=request.user
+            )
+            return Response(res, status=200 if res.get('success') else 400)
+        except GSTRegistrationAccessDenied:
+            return Response({"success": False, "error": "GST registration not found."}, status=404)
+
+
+class GSTRegistrationDeactivateAPIView(APIView):
+    """
+    POST /api/v1/gst/registrations/<uuid:company_id>/<uuid:pk>/deactivate/
+    """
+    permission_classes = [IsAuthenticated, HasGSTPermission]
+
+    def post(self, request, company_id, pk):
+        company = get_company_or_404(request.user, company_id)
+        try:
+            reg = GSTRegistrationService.deactivate_registration(company, pk, user=request.user)
+            return Response({
+                "success": True,
+                "message": f"Registration '{reg.gstin}' is now INACTIVE.",
+                "registration": GSTRegistrationSerializer(reg).data
+            })
+        except GSTRegistrationAccessDenied:
+            return Response({"success": False, "error": "GST registration not found."}, status=404)
+
+
+class GSTRegistrationReactivateAPIView(APIView):
+    """
+    POST /api/v1/gst/registrations/<uuid:company_id>/<uuid:pk>/reactivate/
+    """
+    permission_classes = [IsAuthenticated, HasGSTPermission]
+
+    def post(self, request, company_id, pk):
+        company = get_company_or_404(request.user, company_id)
+        try:
+            reg = GSTRegistrationService.update_registration(
+                company=company,
+                registration_id=pk,
+                data={'status': 'ACTIVE'},
+                user=request.user
+            )
+            return Response({
+                "success": True,
+                "message": f"Registration '{reg.gstin}' reactivated.",
+                "registration": GSTRegistrationSerializer(reg).data
+            })
+        except GSTRegistrationAccessDenied:
+            return Response({"success": False, "error": "GST registration not found."}, status=404)
 
 
 class UnifiedGSTINVerifyAPIView(APIView):
