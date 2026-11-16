@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class EmailService:
     """
     Centralized Transactional Email Service for SriLekh.
-    All transactional emails originate from SriLekh <admin@srilekh.com> with reply-to support@srilekh.com.
+    All transactional emails originate from SriLekh <admin@srilekh.com> with reply-to admin@srilekh.com.
     Guarantees idempotency, audit trail logging, non-blocking financial operations, and responsive HTML/text rendering.
     """
 
@@ -26,7 +26,7 @@ class EmailService:
 
     @classmethod
     def get_default_reply_to(cls) -> List[str]:
-        reply_to = getattr(settings, 'EMAIL_REPLY_TO', 'support@srilekh.com')
+        reply_to = getattr(settings, 'EMAIL_REPLY_TO', 'admin@srilekh.com')
         return [reply_to] if reply_to else []
 
     @classmethod

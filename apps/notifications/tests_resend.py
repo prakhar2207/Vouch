@@ -26,9 +26,9 @@ class ResendEmailBackendTests(SimpleTestCase):
         msg = EmailMultiAlternatives(
             subject="Test OTP Code",
             body="Your OTP code is 654321",
-            from_email="SriLekh Support <support@srilekh.com>",
+            from_email="SriLekh Support <admin@srilekh.com>",
             to=["user@example.com"],
-            reply_to=["support@srilekh.com"],
+            reply_to=["admin@srilekh.com"],
         )
         msg.attach_alternative("<p>Your OTP code is <b>654321</b></p>", "text/html")
         msg.attach("invoice.txt", b"Hello invoice", "text/plain")
@@ -44,7 +44,7 @@ class ResendEmailBackendTests(SimpleTestCase):
         self.assertEqual(req.headers["Content-type"], "application/json")
 
         payload = json.loads(req.data.decode("utf-8"))
-        self.assertEqual(payload["from"], "SriLekh Support <support@srilekh.com>")
+        self.assertEqual(payload["from"], "SriLekh Support <admin@srilekh.com>")
         self.assertEqual(payload["to"], ["user@example.com"])
         self.assertEqual(payload["subject"], "Test OTP Code")
         self.assertEqual(payload["text"], "Your OTP code is 654321")

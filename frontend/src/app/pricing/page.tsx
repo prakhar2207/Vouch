@@ -245,7 +245,7 @@ const faqs = [
   {
     question: "How does the 7-day money-back guarantee work?",
     answer:
-      "All SriLekh annual subscriptions include a 7-day money-back guarantee. If you are not satisfied with the software for any reason within 7 days of purchase, email support@srilekh.com. We will initiate a 100% refund via Razorpay back to your original payment method within 5–7 business days.",
+      "All SriLekh annual subscriptions include a 7-day money-back guarantee. If you are not satisfied with the software for any reason within 7 days of purchase, email admin@srilekh.com. We will initiate a 100% refund via Razorpay back to your original payment method within 5–7 business days.",
   },
   {
     question: "Do all plans include multi-device access?",

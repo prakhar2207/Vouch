@@ -96,7 +96,7 @@ class NotificationSystemTests(TestCase):
     # =========================================================================
 
     def test_email_service_dispatches_with_verified_sender_and_reply_to(self):
-        """EmailService: Sends from SriLekh <admin@srilekh.com> with support@srilekh.com reply-to."""
+        """EmailService: Sends from SriLekh <admin@srilekh.com> with admin@srilekh.com reply-to."""
         success, log, err = EmailService.send_email(
             to_email="customer@destination.local",
             subject="Test SriLekh Notification",
@@ -109,7 +109,7 @@ class NotificationSystemTests(TestCase):
 
         sent = mail.outbox[0]
         self.assertEqual(sent.from_email, "SriLekh <admin@srilekh.com>")
-        self.assertEqual(sent.reply_to, ["support@srilekh.com"])
+        self.assertEqual(sent.reply_to, ["admin@srilekh.com"])
         self.assertEqual(sent.to, ["customer@destination.local"])
         self.assertIn("654321", sent.body)
 

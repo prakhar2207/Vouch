@@ -74,7 +74,7 @@ class EmailAuthOtpTests(TestCase):
         self.assertIn(self.test_email, sent_email.to)
         self.assertIn("SriLekh <admin@srilekh.com>", sent_email.from_email)
         self.assertIn("Verify your email address", sent_email.subject)
-        self.assertEqual(sent_email.reply_to, ["support@srilekh.com"])
+        self.assertEqual(sent_email.reply_to, ["admin@srilekh.com"])
 
         # 4. Verify EmailDeliveryLog
         log = EmailDeliveryLog.objects.filter(recipient_email=self.test_email, email_type='REGISTRATION_OTP').first()

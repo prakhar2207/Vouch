@@ -479,7 +479,7 @@ EMAIL_TIMEOUT = env.int('EMAIL_TIMEOUT', default=10)
 DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='SriLekh <admin@srilekh.com>')
 
 # Frontend URL for viral claim / invitation links
-EMAIL_REPLY_TO = env('EMAIL_REPLY_TO', default='support@srilekh.com')
+EMAIL_REPLY_TO = env('EMAIL_REPLY_TO', default='admin@srilekh.com')
 
 # Application URLs
 FRONTEND_URL = env('FRONTEND_URL', default='https://srilekh.com' if not DEBUG else 'http://localhost:3000')

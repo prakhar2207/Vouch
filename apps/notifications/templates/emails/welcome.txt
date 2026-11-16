@@ -13,10 +13,10 @@ You now have full access to SriLekh's connected invoicing network, automated GST
 Login to your dashboard: {{ login_url|default:'https://srilekh.com/login' }}
 
 Need help setting up opening balances, inventory items, or Tally migration?
-Reach our support team at support@srilekh.com.
+Reach our support team at admin@srilekh.com.
 
 --
 SriLekh Technologies
 https://srilekh.com
-Support: support@srilekh.com
+Support: admin@srilekh.com
 Sender: admin@srilekh.com
