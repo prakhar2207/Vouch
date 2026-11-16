@@ -15,6 +15,7 @@ import { useAccountingPeriod } from '@/context/PeriodContext';
 import { useToast } from '@/context/ToastContext';
 import { getDeviceCounterCode, setDeviceCounterCode } from '@/lib/sync/sequence-service';
 import ProformaDocumentSheet from '@/components/documents/ProformaDocumentSheet';
+import { BillingSettingsView } from '@/components/billing/BillingSettingsView';
 import {
   Users,
   ShieldCheck,
@@ -1031,6 +1032,7 @@ export default function SettingsPage() {
                   { id: 'gst-portal', label: 'GST Portal Direct Connect', icon: Globe },
                   { id: 'team', label: 'Team & Roles (RBAC)', icon: Users },
                   { id: 'financial-years', label: 'Financial Year & Period', icon: Calendar },
+                  { id: 'billing', label: 'Billing & Subscriptions', icon: CreditCard },
                   { id: 'maintenance', label: 'Diagnostics & Balancing', icon: Wrench },
                   { id: 'danger-zone', label: 'Danger Zone', icon: AlertTriangle, danger: true },
                 ].map((item) => {
@@ -2510,6 +2512,13 @@ export default function SettingsPage() {
                     </div>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* TAB: BILLING & SUBSCRIPTIONS */}
+            {activeTab === 'billing' && company && (
+              <div className="space-y-6 animate-in fade-in duration-200">
+                <BillingSettingsView />
               </div>
             )}
 
