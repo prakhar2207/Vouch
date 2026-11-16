@@ -5,9 +5,17 @@ const rootDir = path.resolve(__dirname, '..');
 const frontendDir = path.join(rootDir, 'frontend');
 const sharp = require(path.join(frontendDir, 'node_modules', 'sharp'));
 
-// User's custom HD logos
-const hdLogoDark = path.join(rootDir, 'ShriLekh-icon-for-dark-bg-HD-2048.png');
-const hdLogoFinal = path.join(rootDir, 'ShriLekh-final-logo-HD-2400.png');
+// User's custom HD logos (assets/branding/ or root fallback)
+const hdLogoDarkCandidates = [
+  path.join(rootDir, 'assets', 'branding', 'ShriLekh-icon-for-dark-bg-HD-2048.png'),
+  path.join(rootDir, 'ShriLekh-icon-for-dark-bg-HD-2048.png')
+];
+const hdLogoFinalCandidates = [
+  path.join(rootDir, 'assets', 'branding', 'ShriLekh-final-logo-HD-2400.png'),
+  path.join(rootDir, 'ShriLekh-final-logo-HD-2400.png')
+];
+const hdLogoDark = hdLogoDarkCandidates.find(p => fs.existsSync(p)) || hdLogoDarkCandidates[0];
+const hdLogoFinal = hdLogoFinalCandidates.find(p => fs.existsSync(p)) || hdLogoFinalCandidates[0];
 const fallbackLogo = path.join(frontendDir, 'public', 'logo-mark.png');
 
 const primaryLogo = fs.existsSync(hdLogoFinal) ? hdLogoFinal : (fs.existsSync(hdLogoDark) ? hdLogoDark : fallbackLogo);

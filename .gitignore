@@ -75,7 +75,13 @@ implementation_plan*.md
 !docs/trust-flexibility/*.md
 .system_generated/
 scratch/
+scripts/archive/
 backups/
 *.sql
 *.enc
+.pytest_cache/
+.coverage
+htmlcov/
+*.tsbuildinfo
+desktop_err.log
 
