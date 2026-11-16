@@ -464,3 +464,106 @@ class GSTRound1FoundationTests(TestCase):
         self.assertEqual(party_bal_before, party.current_balance)
         self.assertEqual(voucher.total_amount, Decimal('1180.00'))
         self.assertEqual(voucher.status, 'POSTED')
+
+    # =========================================================================
+    # SECTION G: ROUND 1.2 ENCRYPTION HARDENING & CACHE BEHAVIOR
+    # =========================================================================
+    def test_dedicated_encryption_key_enforcement_in_staging(self):
+        """
+        Verifies that staging and production strictly require GST_ENCRYPTION_KEY
+        and refuse to silently fall back to Django SECRET_KEY.
+        """
+        from apps.gst.encryption import get_gst_credential_fernet, CredentialEncryptionError
+        from unittest.mock import patch
+
+        with patch('django.conf.settings.ENVIRONMENT', 'staging'):
+            with patch('django.conf.settings.TESTING', False):
+                with patch('sys.argv', ['manage.py', 'runserver']):
+                    with patch.dict('os.environ', {'GST_ENCRYPTION_KEY': '', 'GST_CREDENTIAL_KEY': ''}, clear=False):
+                        with patch('django.conf.settings.GST_ENCRYPTION_KEY', ''):
+                            with patch('django.conf.settings.GST_CREDENTIAL_KEY', ''):
+                                with self.assertRaises(CredentialEncryptionError) as ctx:
+                                    get_gst_credential_fernet()
+                                self.assertIn("Dedicated GST encryption key", str(ctx.exception))
+
+    def test_encryption_roundtrip_with_direct_and_derived_keys(self):
+        """
+        Verifies backward-compatible encryption and decryption supporting both
+        direct 44-character Fernet keys and SHA-256 derived passphrases.
+        """
+        from apps.gst.encryption import encrypt_gst_credential, decrypt_gst_credential
+        from cryptography.fernet import Fernet
+        from unittest.mock import patch
+
+        # 1. Test with direct 44-char Fernet key
+        direct_key = Fernet.generate_key().decode('utf-8')
+        with patch('django.conf.settings.GST_ENCRYPTION_KEY', direct_key):
+            secret_text = "test_sandbox_secret_key_direct_98765"
+            ciphertext = encrypt_gst_credential(secret_text)
+            self.assertTrue(ciphertext.startswith("enc:v1:"))
+            decrypted = decrypt_gst_credential(ciphertext)
+            self.assertEqual(decrypted, secret_text)
+
+        # 2. Test with passphrase derived key
+        passphrase_key = "secure_passphrase_for_derived_key"
+        with patch('django.conf.settings.GST_ENCRYPTION_KEY', passphrase_key):
+            secret_text2 = "test_sandbox_secret_key_derived_12345"
+            ciphertext2 = encrypt_gst_credential(secret_text2)
+            self.assertTrue(ciphertext2.startswith("enc:v1:"))
+            decrypted2 = decrypt_gst_credential(ciphertext2)
+            self.assertEqual(decrypted2, secret_text2)
+
+    def test_taxpayer_cache_24h_expiry_and_force_refresh(self):
+        """
+        Verifies that the taxpayer cache respects the 24-hour TTL:
+        - Within 24 hours: served from cache
+        - Force refresh: bypasses cache
+        - Older than 24 hours: cache considered stale and provider is called
+        """
+        from datetime import timedelta
+        from django.utils import timezone
+        from apps.gst.models import GSTTaxpayerCache
+        from unittest.mock import patch
+
+        gstin = "27AAACA1234A1Z5"
+        # Seed cache created 25 hours ago
+        stale_time = timezone.now() - timedelta(hours=25)
+        cache_entry = GSTTaxpayerCache.objects.create(
+            gstin=gstin,
+            legal_name="Old Stale Apex Name",
+            state_code="27",
+            status="Active"
+        )
+        GSTTaxpayerCache.objects.filter(id=cache_entry.id).update(updated_at=stale_time)
+
+        # Mock client to return fresh name
+        mock_provider_res = {
+            "success": True,
+            "legal_name": "Fresh Apex Belting Ltd",
+            "trade_name": "Apex Belting",
+            "status": "Active",
+            "state_code": "27"
+        }
+
+        with patch.object(SandboxGSTClient, 'is_configured', return_value=True):
+            with patch.object(SandboxGSTClient, 'search_taxpayer', return_value=mock_provider_res):
+                # 1. Lookup with stale cache should query provider
+                res = GSTINService.verify_gstin(gstin, company=self.company_a)
+                self.assertTrue(res.get("success"))
+                self.assertEqual(res.get("legal_name"), "Fresh Apex Belting Ltd")
+
+                # 2. Lookup within 24 hours should hit cache
+                res_cached = GSTINService.verify_gstin(gstin, company=self.company_a)
+                self.assertTrue(res_cached.get("is_cached"))
+                self.assertEqual(res_cached.get("source"), "local_cache")
+
+                # 3. Force refresh should bypass cache
+                with patch.object(SandboxGSTClient, 'search_taxpayer', return_value={
+                    "success": True,
+                    "legal_name": "Forced Refresh Apex Ltd",
+                    "status": "Active",
+                    "state_code": "27"
+                }):
+                    res_forced = GSTINService.verify_gstin(gstin, company=self.company_a, force_refresh=True)
+                    self.assertFalse(res_forced.get("is_cached", False))
+                    self.assertEqual(res_forced.get("legal_name"), "Forced Refresh Apex Ltd")
