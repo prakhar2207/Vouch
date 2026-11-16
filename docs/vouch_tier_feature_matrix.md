@@ -1,6 +1,6 @@
 # SriLekh (Vouch ERP) — Official Tier-Wise Feature & Pricing Matrix
 
-**Strategic Model:** "Open B2B Network Viral Loop with High-Value Automation Gated to Pro & Enterprise"  
+**Strategic Model:** "Open B2B Network, Full Multi-Device Access & Daily AI OCR for All; Hero Automation Gated to Pro & Enterprise"  
 **Tax Baseline:** All listed prices are Base Annual Subscription *(+ 18% GST)*.
 
 ---
@@ -10,13 +10,13 @@
 | Feature / Module | Tier 1: Starter<br>**₹599 / yr** *(~₹50/mo)* | Tier 2: Growth<br>**₹1,499 / yr** *(~₹125/mo)* | Tier 3: Pro AI *(Hero Tier)*<br>**₹2,599 / yr** *(~₹217/mo)* | Tier 4: Enterprise<br>**₹3,999 / yr** *(~₹333/mo)* |
 | :--- | :---: | :---: | :---: | :---: |
 | **Target Persona** | Micro-Retail / Dukaan | Small Retail & Traders | Wholesalers & Stockists | Large Distributors & Multi-Branch |
-| **User Seats & CA Access** | **1 User** *(Owner)* | **Up to 2 Users** | **Up to 5 Users** *(+ CA Portal)* | **Unlimited Users** *(Full RBAC)* |
+| **Multi-Device Access** | ✅ **Unlimited Devices**<br>*(Phone, PC, Tablet)* | ✅ **Unlimited Devices**<br>*(Phone, PC, Tablet)* | ✅ **Unlimited Devices**<br>*(Phone, PC, Tablet)* | ✅ **Unlimited Devices**<br>*(Phone, PC, Tablet)* |
 | **🌐 B2B EDI NETWORK (100% UNLOCKED FOR ALL)** | | | | |
 | B2B Inward Network Inbox (`/network/inbox`) | ✅ Included | ✅ Included | ✅ Included | ✅ Included |
 | 1-Click Inward Bill Accept & Purchase Ledger Ingestion | ✅ Included | ✅ Included | ✅ Included | ✅ Included |
 | Viral Invoice Claim System (`/claim`) | ✅ Included | ✅ Included | ✅ Included | ✅ Included |
 | Digital Cryptographic Bill Verification | ✅ Included | ✅ Included | ✅ Included | ✅ Included |
-| **⚡ AI OCR AUTOMATION (DAILY SCAN ALLOCATIONS)** | | | | |
+| **⚡ AI OCR SERVICES (ACTIVE FOR ALL — RESTRICTED PER DAY)** | | | | |
 | **Printed Bill & Bank OCR** *(Fast Model)* | **5 Scans / day** | **15 Scans / day** | **35 Scans / day** | **100 Scans / day** |
 | **Handwritten Bill OCR** *(Powerful Model)* | **1 Scan / day** | **3 Scans / day** | **6 Scans / day** | **20 Scans / day** |
 | Split-Screen Verification (`PurchaseOcrSplitView`) | ✅ Included | ✅ Included | ✅ Included | ✅ Included |
