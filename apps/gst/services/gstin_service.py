@@ -1,8 +1,9 @@
 import re
 import logging
 from typing import Dict, Any, Optional
-from datetime import timedelta
+from datetime import timedelta, datetime
 from django.utils import timezone
+from django.db import transaction
 from apps.companies.models import Company
 from apps.gst.models import GSTTaxpayerCache
 from apps.gst.services.sandbox_client import SandboxGSTClient
@@ -43,6 +44,7 @@ class GSTINService:
     def validate_format(cls, gstin: str) -> Dict[str, Any]:
         """
         Validates 15-character GSTIN structure, state code, and checksum locally.
+        Rejects malformed values before any external network attempt.
         """
         raw = (gstin or '').strip().upper()
         if not raw:
@@ -100,6 +102,10 @@ class GSTINService:
         """
         Verifies GSTIN using local validation, cache lookup, and Sandbox GST API.
         Does not waste external API calls if the format is invalid.
+        Safeguards:
+        - 24-hour statutory TTL on successful cached results
+        - Force refresh strictly bypasses cache and never reports stale data as successful on failure
+        - Preserves last known good data for degraded inspection
         """
         validation = cls.validate_format(gstin)
         if not validation["valid"]:
@@ -138,8 +144,7 @@ class GSTINService:
         # Query provider via SandboxGSTClient
         client = SandboxGSTClient(company=company)
         if not client.is_configured():
-            # If not configured with live credentials, return mock or cached fallback
-            if cached:
+            if cached and not force_refresh:
                 return {
                     "success": True,
                     "gstin": clean_gstin,
@@ -153,13 +158,19 @@ class GSTINService:
                     "taxpayer_type": cached.taxpayer_type,
                     "is_cached": True,
                     "source": "cache_unconfigured_gateway",
+                    "updated_at": cached.updated_at.isoformat()
                 }
             return {
                 "success": False,
                 "gstin": clean_gstin,
-                "error": "Sandbox GST Gateway is not configured. Please supply GST_SANDBOX_API_KEY and GST_SANDBOX_API_SECRET.",
+                "error": "Sandbox GST Gateway is not configured. Live verification unavailable.",
                 "configured": False,
-                "source": "provider_unconfigured"
+                "source": "provider_unconfigured",
+                "last_known_data": {
+                    "legal_name": cached.legal_name,
+                    "status": cached.status,
+                    "updated_at": cached.updated_at.isoformat()
+                } if cached else None
             }
 
         try:
@@ -170,10 +181,15 @@ class GSTINService:
                     "gstin": clean_gstin,
                     "error": res.get("error", "Taxpayer verification failed on Sandbox."),
                     "source": "provider_error",
-                    "correlation_id": res.get("correlation_id")
+                    "correlation_id": res.get("correlation_id"),
+                    "last_known_data": {
+                        "legal_name": cached.legal_name,
+                        "status": cached.status,
+                        "updated_at": cached.updated_at.isoformat()
+                    } if cached else None
                 }
 
-            # Update cache
+            # Update cache atomically
             legal_name = res.get("legal_name") or res.get("trade_name") or ""
             trade_name = res.get("trade_name") or res.get("legal_name") or ""
             status_str = res.get("status") or "Active"
@@ -186,40 +202,41 @@ class GSTINService:
             reg_date = None
             raw_reg_date = res.get("registration_date")
             if raw_reg_date:
-                try:
-                    for fmt in ('%d/%m/%Y', '%Y-%m-%d', '%d-%m-%Y'):
-                        try:
-                            from datetime import datetime
-                            reg_date = datetime.strptime(raw_reg_date, fmt).date()
-                            break
-                        except ValueError:
-                            pass
-                except Exception:
-                    reg_date = None
+                raw_str = str(raw_reg_date).strip()
+                for fmt in ('%d/%m/%Y', '%Y-%m-%d', '%d-%m-%Y', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ'):
+                    try:
+                        clean_sub = raw_str[:19] if ('T' in raw_str and len(raw_str) > 19) else raw_str
+                        reg_date = datetime.strptime(clean_sub, fmt[:len(clean_sub)]).date()
+                        break
+                    except (ValueError, TypeError):
+                        pass
 
-            GSTTaxpayerCache.objects.update_or_create(
-                gstin=clean_gstin,
-                defaults={
-                    "legal_name": legal_name[:255],
-                    "trade_name": trade_name[:255],
-                    "state_code": state_code[:2],
-                    "state_name": state_name[:100],
-                    "address": address,
-                    "pincode": pincode[:10],
-                    "status": status_str[:50],
-                    "taxpayer_type": taxpayer_type[:50],
-                    "registration_date": reg_date,
-                    "raw_json": res.get("raw", {})
-                }
-            )
+            with transaction.atomic():
+                cache_obj, _ = GSTTaxpayerCache.objects.update_or_create(
+                    gstin=clean_gstin,
+                    defaults={
+                        "legal_name": legal_name[:255],
+                        "trade_name": trade_name[:255],
+                        "state_code": state_code[:2],
+                        "state_name": state_name[:100],
+                        "address": address,
+                        "pincode": pincode[:10],
+                        "status": status_str[:50],
+                        "taxpayer_type": taxpayer_type[:50],
+                        "registration_date": reg_date,
+                        "raw_json": res.get("raw", {})
+                    }
+                )
 
             res["is_cached"] = False
             res["source"] = "provider_live"
+            res["updated_at"] = cache_obj.updated_at.isoformat()
             return res
 
         except Exception as e:
             logger.exception(f"Unexpected error in verify_gstin for {clean_gstin}: {e}")
-            if cached:
+            # If force_refresh was requested, do NOT return success from stale cache!
+            if cached and not force_refresh:
                 return {
                     "success": True,
                     "gstin": clean_gstin,
@@ -230,15 +247,22 @@ class GSTINService:
                     "address": cached.address,
                     "pincode": cached.pincode,
                     "status": cached.status,
+                    "taxpayer_type": cached.taxpayer_type,
                     "is_cached": True,
                     "source": "cache_fallback_on_error",
-                    "error_note": str(e)
+                    "error_note": str(e),
+                    "updated_at": cached.updated_at.isoformat()
                 }
             return {
                 "success": False,
                 "gstin": clean_gstin,
                 "error": f"GST verification failed: {str(e)}",
-                "source": "exception"
+                "source": "provider_error",
+                "last_known_data": {
+                    "legal_name": cached.legal_name,
+                    "status": cached.status,
+                    "updated_at": cached.updated_at.isoformat()
+                } if cached else None
             }
 
     @classmethod
@@ -249,11 +273,8 @@ class GSTINService:
         INVARIANT: READ-ONLY. Does not modify the party ledger.
         """
         current_name = getattr(party_ledger, 'name', '') or ''
-        current_legal_name = getattr(party_ledger, 'legal_name', '') or current_name
-        current_trade_name = getattr(party_ledger, 'trade_name', '') or ''
         current_state_code = getattr(party_ledger, 'state_code', '') or ''
         current_address = getattr(party_ledger, 'address', '') or ''
-        current_pincode = getattr(party_ledger, 'pincode', '') or ''
         current_gstin = getattr(party_ledger, 'gstin', '') or ''
 
         verified_legal = verified_data.get('legal_name', '') or ''
@@ -263,16 +284,19 @@ class GSTINService:
         verified_pincode = verified_data.get('pincode', '') or ''
         verified_gstin = verified_data.get('gstin', '') or ''
 
+        # Map party name comparison to verified legal or trade name
+        name_differs = bool(verified_legal and current_name != verified_legal)
+
         diffs = {
             "legal_name": {
-                "current": current_legal_name,
+                "current": current_name,
                 "verified": verified_legal,
-                "changed": bool(verified_legal and current_legal_name != verified_legal)
+                "changed": name_differs
             },
             "trade_name": {
-                "current": current_trade_name,
+                "current": current_name,
                 "verified": verified_trade,
-                "changed": bool(verified_trade and current_trade_name != verified_trade)
+                "changed": bool(verified_trade and current_name != verified_trade)
             },
             "state_code": {
                 "current": current_state_code,
@@ -283,11 +307,6 @@ class GSTINService:
                 "current": current_address,
                 "verified": verified_address,
                 "changed": bool(verified_address and current_address != verified_address)
-            },
-            "pincode": {
-                "current": current_pincode,
-                "verified": verified_pincode,
-                "changed": bool(verified_pincode and current_pincode != verified_pincode)
             },
             "gstin": {
                 "current": current_gstin,
@@ -313,40 +332,57 @@ class GSTINService:
         ledger_id: Any,
         verified_data: Dict[str, Any],
         apply_legal_name: bool = True,
-        apply_trade_name: bool = True,
+        apply_trade_name: bool = False,
         apply_state: bool = True,
         apply_address: bool = True,
+        apply_gstin: bool = True,
         user: Any = None
     ) -> Any:
+        """
+        Applies verified GSTIN attributes to a party ledger.
+        Guarantees:
+        - Accurately maps verified fields to real Ledger model columns (name, state_code, address, gstin)
+        - Preserves double-entry accounting integrity (balances and vouchers strictly untouched)
+        - Writes structured audit event
+        """
         from apps.ledgers.models import Ledger
         from apps.gst.services.audit_service import GSTAuditService
 
         party = Ledger.objects.get(id=ledger_id)
         updated_fields = []
 
+        # Name mapping: prefer legal_name if chosen, else trade_name
         if apply_legal_name and verified_data.get('legal_name'):
-            party.name = verified_data['legal_name'][:255]
+            party.name = str(verified_data['legal_name'])[:255].strip()
             updated_fields.append('name')
+        elif apply_trade_name and verified_data.get('trade_name'):
+            party.name = str(verified_data['trade_name'])[:255].strip()
+            updated_fields.append('name')
+
         if apply_state and verified_data.get('state_code'):
-            party.state_code = verified_data['state_code'][:2]
+            party.state_code = str(verified_data['state_code'])[:2].strip()
             updated_fields.append('state_code')
+
         if apply_address and verified_data.get('address'):
-            party.address = verified_data['address']
+            party.address = str(verified_data['address']).strip()
             updated_fields.append('address')
-        if verified_data.get('gstin'):
-            party.gstin = verified_data['gstin'].strip().upper()
+
+        if apply_gstin and verified_data.get('gstin'):
+            party.gstin = str(verified_data['gstin']).strip().upper()
             updated_fields.append('gstin')
 
         if updated_fields:
-            party.save(update_fields=updated_fields)
+            with transaction.atomic():
+                party.save(update_fields=updated_fields)
 
-        GSTAuditService.log_action(
-            company=party.company,
-            action="PARTY_ENRICH",
-            endpoint="/party/enrich/",
-            status_code=200,
-            is_success=True,
-            request_summary={"ledger_id": str(party.id), "updated_fields": updated_fields},
-            user=user
-        )
+                GSTAuditService.log_action(
+                    company=party.company,
+                    action="PARTY_ENRICH",
+                    endpoint="/party/enrich/",
+                    status_code=200,
+                    is_success=True,
+                    request_summary={"ledger_id": str(party.id), "updated_fields": updated_fields},
+                    user=user
+                )
+
         return party

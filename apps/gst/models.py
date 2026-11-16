@@ -144,6 +144,13 @@ class GSTRegistration(models.Model):
             models.Index(fields=['company', 'gstin']),
             models.Index(fields=['company', 'state_code']),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['company'],
+                condition=models.Q(is_primary=True),
+                name='unique_primary_gstin_per_company'
+            )
+        ]
 
     def __str__(self):
         return f"{self.gstin} ({self.state_name}) - {self.company.name} [{self.status}]"

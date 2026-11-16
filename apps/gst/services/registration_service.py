@@ -33,7 +33,8 @@ STATE_CODE_TO_NAME = {
 class GSTRegistrationService:
     """
     Dedicated Service for managing Multi-State / Multi-GSTIN Company Registrations.
-    Enforces tenant isolation, local format validation, duplicate prevention, and verification state transitions.
+    Enforces tenant isolation, PAN stem invariance, local format validation,
+    duplicate prevention, atomic primary switching, and verification state transitions.
     """
 
     @classmethod
@@ -83,7 +84,7 @@ class GSTRegistrationService:
     ) -> GSTRegistration:
         """
         Creates and optionally verifies a new GST registration for a company.
-        Guarantees tenant isolation and duplicate prevention.
+        Guarantees tenant isolation, duplicate prevention, and PAN stem consistency.
         """
         clean_gstin = (gstin or '').strip().upper()
 
@@ -103,7 +104,18 @@ class GSTRegistrationService:
                 f"GST Registration with GSTIN '{clean_gstin}' already exists for {company.name}."
             )
 
-        # 3. Optional Auto-Verification via Sandbox
+        # 3. PAN Stem Invariant: All registrations for an enterprise entity must share the same PAN stem
+        clean_pan = clean_gstin[2:12]
+        existing_first = GSTRegistration.objects.filter(company=company).first()
+        if existing_first:
+            existing_pan = existing_first.gstin[2:12]
+            if clean_pan != existing_pan:
+                raise GSTINValidationError(
+                    f"PAN stem mismatch: New GSTIN PAN '{clean_pan}' does not match existing company PAN '{existing_pan}'. "
+                    f"All multi-state registrations for an entity must share the identical 10-character PAN stem."
+                )
+
+        # 4. Optional Auto-Verification via Sandbox
         verification_status = 'NOT_VERIFIED'
         last_verified_at = None
         provider_ref = ''
@@ -134,19 +146,18 @@ class GSTRegistrationService:
                 elif raw_status == 'SUSPENDED':
                     reg_status = 'SUSPENDED'
             else:
-                # Local validation succeeded, but provider call failed or was unavailable
                 if verify_res.get("source") == "provider_unconfigured":
                     verification_status = 'NOT_VERIFIED'
                 else:
                     verification_status = 'PROVIDER_UNAVAILABLE'
 
         with transaction.atomic():
-            # If this is the company's first registration, force is_primary = True
-            has_other_regs = GSTRegistration.objects.filter(company=company).exists()
+            # Serialized lock to prevent concurrent double-primary race conditions
+            has_other_regs = GSTRegistration.objects.select_for_update().filter(company=company).exists()
             should_be_primary = is_primary or (not has_other_regs)
 
             if should_be_primary:
-                GSTRegistration.objects.filter(company=company, is_primary=True).update(is_primary=False)
+                GSTRegistration.objects.select_for_update().filter(company=company, is_primary=True).update(is_primary=False)
 
             state_name = STATE_CODE_TO_NAME.get(resolved_state, f"State {resolved_state}")
 
@@ -168,7 +179,7 @@ class GSTRegistrationService:
             )
 
             # Sync primary GSTIN to company model if primary
-            if should_be_primary and not company.gstin:
+            if should_be_primary:
                 company.gstin = clean_gstin
                 company.state_code = resolved_state
                 company.state_name = state_name
@@ -259,7 +270,7 @@ class GSTRegistrationService:
         user: Any = None
     ) -> GSTRegistration:
         """
-        Updates metadata on an existing GST registration.
+        Updates metadata on an existing GST registration with atomic primary exclusivity.
         """
         reg = cls.get_registration(company, registration_id)
         allowed_fields = [
@@ -273,8 +284,12 @@ class GSTRegistrationService:
                     setattr(reg, field, data[field])
 
             if data.get('is_primary'):
-                GSTRegistration.objects.filter(company=company, is_primary=True).exclude(id=reg.id).update(is_primary=False)
+                GSTRegistration.objects.select_for_update().filter(company=company, is_primary=True).exclude(id=reg.id).update(is_primary=False)
                 reg.is_primary = True
+                company.gstin = reg.gstin
+                company.state_code = reg.state_code
+                company.state_name = reg.state_name
+                company.save(update_fields=['gstin', 'state_code', 'state_name'])
 
             reg.save()
 
@@ -292,19 +307,65 @@ class GSTRegistrationService:
     @classmethod
     def deactivate_registration(cls, company: Company, registration_id: str, user: Any = None) -> GSTRegistration:
         """
-        Marks a registration as INACTIVE without deleting historical accounting records.
+        Marks a registration as INACTIVE without deleting historical accounting vouchers.
+        If the deactivated registration was primary, promotes next active registration to primary.
         """
         reg = cls.get_registration(company, registration_id)
-        reg.status = 'INACTIVE'
-        reg.save(update_fields=['status'])
+        with transaction.atomic():
+            reg.status = 'INACTIVE'
+            if reg.is_primary:
+                next_active = (
+                    GSTRegistration.objects.select_for_update()
+                    .filter(company=company, status='ACTIVE')
+                    .exclude(id=reg.id)
+                    .first()
+                )
+                if next_active:
+                    next_active.is_primary = True
+                    next_active.save(update_fields=['is_primary'])
+                    company.gstin = next_active.gstin
+                    company.state_code = next_active.state_code
+                    company.state_name = next_active.state_name
+                    company.save(update_fields=['gstin', 'state_code', 'state_name'])
+                    reg.is_primary = False
+            reg.save(update_fields=['status', 'is_primary'])
 
-        GSTAuditService.log_action(
-            company=company,
-            gst_registration=reg,
-            action='DEACTIVATE_REGISTRATION',
-            status_code=200,
-            is_success=True,
-            request_summary={"registration_id": str(reg.id), "status": "INACTIVE"},
-            user=user
-        )
+            GSTAuditService.log_action(
+                company=company,
+                gst_registration=reg,
+                action='DEACTIVATE_REGISTRATION',
+                status_code=200,
+                is_success=True,
+                request_summary={"registration_id": str(reg.id), "status": "INACTIVE"},
+                user=user
+            )
+        return reg
+
+    @classmethod
+    def reactivate_registration(cls, company: Company, registration_id: str, user: Any = None) -> GSTRegistration:
+        """
+        Reactivates an INACTIVE registration.
+        If no primary active registration exists, sets this registration as primary.
+        """
+        reg = cls.get_registration(company, registration_id)
+        with transaction.atomic():
+            reg.status = 'ACTIVE'
+            has_active_primary = GSTRegistration.objects.filter(company=company, status='ACTIVE', is_primary=True).exists()
+            if not has_active_primary:
+                reg.is_primary = True
+                company.gstin = reg.gstin
+                company.state_code = reg.state_code
+                company.state_name = reg.state_name
+                company.save(update_fields=['gstin', 'state_code', 'state_name'])
+            reg.save(update_fields=['status', 'is_primary'])
+
+            GSTAuditService.log_action(
+                company=company,
+                gst_registration=reg,
+                action='REACTIVATE_REGISTRATION',
+                status_code=200,
+                is_success=True,
+                request_summary={"registration_id": str(reg.id), "status": "ACTIVE"},
+                user=user
+            )
         return reg

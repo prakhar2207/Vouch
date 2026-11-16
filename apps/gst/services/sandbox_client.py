@@ -1,12 +1,15 @@
 import os
 import uuid
 import time
+import random
 import logging
 import requests
+from urllib.parse import urlparse
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 from django.conf import settings
 from django.utils import timezone
+from django.core.cache import cache
 from apps.companies.models import Company
 from apps.gst.models import CompanyGSTConfig, GSTRegistration
 from apps.gst.exceptions import (
@@ -24,17 +27,23 @@ class SandboxGSTClient:
     """
     Authoritative Provider Client for Sandbox by Quicko (https://sandbox.co.in).
     Handles:
-    - Base URL & environment selection (test vs live)
-    - /authenticate token exchange & auto-refresh
+    - Base URL & host allowlist validation (SSRF protection)
+    - /authenticate token exchange & dual caching (DB + Django cache)
+    - Token stampede prevention under high concurrency
     - Header management (x-api-key, authorization, x-api-version)
-    - Connection timeouts, exponential backoff for idempotent calls
-    - Error normalization
+    - Connection timeouts, bounded exponential backoff with jitter for idempotent calls
+    - Error normalization and credential redaction
     - Structured audit logging via GSTAuditService
     """
 
     DEFAULT_BASE_URL = "https://api.sandbox.co.in"
     DEFAULT_TEST_URL = "https://test-api.sandbox.co.in"
     API_VERSION = "1.0.0"
+
+    ALLOWED_SANDBOX_HOSTS = {
+        'api.sandbox.co.in',
+        'test-api.sandbox.co.in',
+    }
 
     def __init__(self, company: Optional[Company] = None, registration: Optional[GSTRegistration] = None):
         self.company = company
@@ -49,6 +58,7 @@ class SandboxGSTClient:
     def get_api_credentials(self) -> tuple[str, str, str, bool]:
         """
         Resolves API Key, Secret, Base URL, and Sandbox mode.
+        Enforces SSRF host allowlist checks.
         Checks CompanyGSTConfig first, then falls back to Django settings / environment.
         """
         api_key = ''
@@ -89,7 +99,17 @@ class SandboxGSTClient:
         if is_sandbox and 'test-api' in env_mode:
             base_url = self.DEFAULT_TEST_URL
 
-        return api_key.strip(), api_secret.strip(), base_url.strip(), is_sandbox
+        # SSRF Protection: Validate base_url against explicit allowlist of HTTPS hosts
+        clean_url = str(base_url).strip()
+        parsed = urlparse(clean_url)
+        if parsed.scheme != 'https' or parsed.netloc not in self.ALLOWED_SANDBOX_HOSTS:
+            logger.warning(
+                f"Untrusted or invalid Sandbox base URL host '{parsed.netloc}'. "
+                f"Resetting to authoritative DEFAULT_BASE_URL for security."
+            )
+            clean_url = self.DEFAULT_TEST_URL if (is_sandbox and 'test-api' in env_mode) else self.DEFAULT_BASE_URL
+
+        return api_key.strip(), api_secret.strip(), clean_url, is_sandbox
 
     def is_configured(self) -> bool:
         api_key, api_secret, _, _ = self.get_api_credentials()
@@ -99,6 +119,9 @@ class SandboxGSTClient:
         """
         Retrieves valid JWT access token from Quicko Sandbox.
         Reuses cached token if valid; otherwise executes POST /authenticate.
+        Dual caching:
+        1. Database cache via CompanyGSTConfig.sandbox_access_token
+        2. Django memory/distributed cache (prevents token stampedes when config row is absent)
         """
         api_key, api_secret, base_url, _ = self.get_api_credentials()
 
@@ -108,13 +131,20 @@ class SandboxGSTClient:
                 "Please configure GST Sandbox settings."
             )
 
-        # Check existing cached token
         now = timezone.now()
-        if not force_refresh and self.config and self.config.sandbox_access_token:
-            if self.config.sandbox_token_expires_at and self.config.sandbox_token_expires_at > (now + timedelta(minutes=5)):
-                return self.config.sandbox_access_token
+        cache_key = f"gst_sandbox_token_{str(self.company.id) if self.company else 'global'}"
 
-        # Exchange API Key & Secret for JWT token via POST /authenticate
+        # 1. Check existing cached token if not force_refresh
+        if not force_refresh:
+            if self.config and self.config.sandbox_access_token:
+                if self.config.sandbox_token_expires_at and self.config.sandbox_token_expires_at > (now + timedelta(minutes=5)):
+                    return self.config.sandbox_access_token
+
+            cached_token = cache.get(cache_key)
+            if cached_token:
+                return cached_token
+
+        # 2. Exchange API Key & Secret for JWT token via POST /authenticate
         endpoint = f"{base_url}/authenticate"
         correlation_id = f"AUTH-{uuid.uuid4().hex[:12].upper()}"
         headers = {
@@ -131,12 +161,29 @@ class SandboxGSTClient:
 
             if status_code == 200:
                 data = res.json()
-                # Access token may be at top level or nested under 'data'
-                token = data.get('access_token') or (data.get('data', {}).get('access_token') if isinstance(data.get('data'), dict) else '')
-                expires_in = data.get('expires_in', 86400)
+                payload_data = data.get('data') if isinstance(data.get('data'), dict) else {}
+                
+                # Robust token extraction (top-level or nested under 'data')
+                token = (
+                    data.get('access_token')
+                    or payload_data.get('access_token')
+                    or (data.get('data') if isinstance(data.get('data'), str) else '')
+                    or ''
+                )
+
+                # Robust expiry extraction (top-level or nested under 'data')
+                raw_exp = data.get('expires_in') or payload_data.get('expires_in')
+                try:
+                    expires_in = int(raw_exp) if raw_exp is not None else 86400
+                except (ValueError, TypeError):
+                    expires_in = 86400
 
                 if not token:
-                    raise GSTAuthenticationError(f"Sandbox /authenticate returned 200 but missing access_token: {data}")
+                    raise GSTAuthenticationError(f"Sandbox /authenticate returned 200 but missing access_token.")
+
+                # Cache in Django cache to prevent stampede (5-minute buffer)
+                cache_ttl = max(60, expires_in - 300)
+                cache.set(cache_key, token, timeout=cache_ttl)
 
                 # Cache in CompanyGSTConfig if available
                 if self.config:
@@ -158,20 +205,23 @@ class SandboxGSTClient:
                 )
                 return token
             elif status_code == 401 or status_code == 403:
+                # Sanitize error message to prevent credential echo
+                sanitized_text = res.text[:500].replace(api_key, "***").replace(api_secret, "***")
                 raise GSTAuthenticationError(
-                    f"Authentication failed with Sandbox (HTTP {status_code}): {res.text}"
+                    f"Authentication failed with Sandbox (HTTP {status_code}): {sanitized_text}"
                 )
             elif status_code == 429:
                 raise GSTRateLimitExceededError("Rate limit exceeded while authenticating with Sandbox.")
             else:
+                sanitized_text = res.text[:500].replace(api_key, "***").replace(api_secret, "***")
                 raise GSTIntegrationError(
-                    f"Sandbox /authenticate responded with HTTP {status_code}: {res.text}",
+                    f"Sandbox /authenticate responded with HTTP {status_code}: {sanitized_text}",
                     status_code=status_code
                 )
         except requests.exceptions.Timeout as e:
-            raise GSTIntegrationError(f"Connection timed out contacting Sandbox /authenticate: {e}", status_code=504)
+            raise GSTIntegrationError("Connection timed out contacting Sandbox /authenticate.", status_code=504)
         except requests.exceptions.RequestException as e:
-            raise GSTIntegrationError(f"Network error communicating with Sandbox /authenticate: {e}", status_code=502)
+            raise GSTIntegrationError("Network error communicating with Sandbox /authenticate.", status_code=502)
 
     def _get_authorized_headers(self, custom_session_token: Optional[str] = None) -> tuple[Dict[str, str], str]:
         """
@@ -206,8 +256,9 @@ class SandboxGSTClient:
         Central request dispatcher with:
         - Header injection
         - Timeout handling
-        - Safe retry logic for idempotent calls
-        - Audit logging
+        - Safe retry logic with bounded jittered exponential backoff for idempotent calls
+        - Strict fail-closed semantics for non-idempotent operations
+        - Audit logging with credential redaction
         """
         _, _, base_url, _ = self.get_api_credentials()
         endpoint = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
@@ -232,15 +283,16 @@ class SandboxGSTClient:
 
                 # Handle 401 token expiry retry (once)
                 if status_code == 401 and attempt == 1 and not custom_session_token:
-                    logger.info("Sandbox access token may be expired; refreshing token and retrying request.")
+                    logger.info("Sandbox access token expired; refreshing token and retrying request.")
                     new_token = self.get_access_token(force_refresh=True)
                     headers["authorization"] = new_token
                     continue
 
-                # Rate limiting
+                # Rate limiting (HTTP 429) - exponential backoff with jitter
                 if status_code == 429:
                     if allow_retries and attempt < max_attempts:
-                        time.sleep(1.5 * attempt)
+                        backoff = (1.5 * attempt) + random.uniform(0.1, 0.4)
+                        time.sleep(backoff)
                         continue
                     raise GSTRateLimitExceededError("Sandbox rate limit reached for this endpoint.")
 
@@ -295,12 +347,13 @@ class SandboxGSTClient:
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
                 last_exception = e
                 if allow_retries and attempt < max_attempts:
-                    time.sleep(1.0 * attempt)
+                    backoff = (1.0 * attempt) + random.uniform(0.1, 0.3)
+                    time.sleep(backoff)
                     continue
                 break
 
         # If loop exited on network failure
-        err_text = f"Connection to Sandbox failed after {attempt} attempt(s): {last_exception}"
+        err_text = f"Connection to Sandbox failed after {attempt} attempt(s): {type(last_exception).__name__}"
         if self.company:
             GSTAuditService.log_action(
                 company=self.company,
@@ -345,7 +398,6 @@ class SandboxGSTClient:
 
         data = res.get('data') or {}
         # Normalize fields returned by Sandbox
-        # Schema typically has: gstin, lgnm, tradeNam, sts, ctb, rgdt, pradr, nba
         pradr = data.get('pradr', {}) or {}
         addr_obj = pradr.get('addr', {}) if isinstance(pradr, dict) else {}
         

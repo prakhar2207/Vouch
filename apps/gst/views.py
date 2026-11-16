@@ -524,7 +524,8 @@ from apps.gst.serializers import (
     GSTR2BRecordSerializer,
     GSTAuditLogSerializer
 )
-from apps.gst.permissions import HasGSTPermission
+from apps.gst.permissions import HasGSTPermission, CanManageGSTRegistration
+from apps.accounts.permissions import user_has_company_roles
 from apps.gst.services.sandbox_client import SandboxGSTClient
 from apps.gst.services.gstin_service import GSTINService
 from apps.gst.services.returns_service import GSTReturnsService
@@ -543,7 +544,10 @@ class GSTRegistrationListCreateAPIView(APIView):
     POST /api/v1/gst/registrations/<uuid:company_id>/
     Manages multi-state / multi-GSTIN registrations for a company.
     """
-    permission_classes = [IsAuthenticated, HasGSTPermission]
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [IsAuthenticated(), HasGSTPermission()]
+        return [IsAuthenticated(), CanManageGSTRegistration()]
 
     def get(self, request, company_id):
         company = get_company_or_404(request.user, company_id)
@@ -593,7 +597,10 @@ class GSTRegistrationDetailAPIView(APIView):
     """
     GET/PUT/DELETE /api/v1/gst/registrations/<uuid:company_id>/<uuid:pk>/
     """
-    permission_classes = [IsAuthenticated, HasGSTPermission]
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [IsAuthenticated(), HasGSTPermission()]
+        return [IsAuthenticated(), CanManageGSTRegistration()]
 
     def get(self, request, company_id, pk):
         company = get_company_or_404(request.user, company_id)
@@ -656,6 +663,8 @@ class GSTRegistrationVerifyPreviewAPIView(APIView):
 
     def post(self, request, company_id):
         company = get_company_or_404(request.user, company_id)
+        if not user_has_company_roles(request.user, company, ['OWNER', 'ADMIN', 'ACCOUNTANT', 'CA']):
+            return Response({"success": False, "error": "Permission denied: Cannot perform GST pre-verification."}, status=403)
         gstin = request.data.get('gstin', '')
         result = GSTRegistrationService.verify_preview(company, gstin, user=request.user)
         status_code = 200 if result.get('success') else 400
@@ -671,6 +680,8 @@ class GSTRegistrationVerifyAPIView(APIView):
 
     def post(self, request, company_id, pk):
         company = get_company_or_404(request.user, company_id)
+        if not user_has_company_roles(request.user, company, ['OWNER', 'ADMIN', 'ACCOUNTANT', 'CA']):
+            return Response({"success": False, "error": "Permission denied: Cannot re-verify GST registrations."}, status=403)
         force_refresh = bool(request.data.get('force_refresh', True))
         try:
             res = GSTRegistrationService.verify_existing_registration(
@@ -688,7 +699,7 @@ class GSTRegistrationDeactivateAPIView(APIView):
     """
     POST /api/v1/gst/registrations/<uuid:company_id>/<uuid:pk>/deactivate/
     """
-    permission_classes = [IsAuthenticated, HasGSTPermission]
+    permission_classes = [IsAuthenticated, CanManageGSTRegistration]
 
     def post(self, request, company_id, pk):
         company = get_company_or_404(request.user, company_id)
@@ -707,7 +718,7 @@ class GSTRegistrationReactivateAPIView(APIView):
     """
     POST /api/v1/gst/registrations/<uuid:company_id>/<uuid:pk>/reactivate/
     """
-    permission_classes = [IsAuthenticated, HasGSTPermission]
+    permission_classes = [IsAuthenticated, CanManageGSTRegistration]
 
     def post(self, request, company_id, pk):
         company = get_company_or_404(request.user, company_id)
@@ -772,39 +783,73 @@ class PartyEnrichmentApplyAPIView(APIView):
     POST /api/v1/gst/party/enrich/
     Applies user-selected verified fields to party ledger.
     INVARIANT: Never silently corrupts or overwrites party without explicit field selections.
+    Strictly enforces role authorization and verified source data (no arbitrary browser payloads).
     """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         company_id = request.data.get('company_id')
         party_id = request.data.get('party_id')
-        fields_to_update = request.data.get('fields_to_update', {})  # dict of {field_name: value}
+        fields_to_update = request.data.get('fields_to_update', {})  # dict or list of fields
 
         if not company_id or not party_id or not fields_to_update:
             return Response({"success": False, "error": "company_id, party_id, and fields_to_update are required."}, status=400)
 
         company = get_company_or_404(request.user, company_id)
+        if not user_has_company_roles(request.user, company, ['OWNER', 'ADMIN', 'ACCOUNTANT']):
+            return Response({"success": False, "error": "Permission denied: Only OWNER, ADMIN, or ACCOUNTANT can enrich party ledgers."}, status=403)
+
         from apps.ledgers.models import Ledger
         try:
             party = Ledger.objects.get(id=party_id, company=company)
         except Ledger.DoesNotExist:
             return Response({"success": False, "error": "Party ledger not found."}, status=404)
 
-        allowed_fields = {'legal_name', 'trade_name', 'gstin', 'state_code', 'address', 'pincode'}
-        updated_fields = []
+        target_gstin = (
+            request.data.get('gstin')
+            or (fields_to_update.get('gstin') if isinstance(fields_to_update, dict) else '')
+            or party.gstin
+            or ''
+        ).strip().upper()
 
-        for field, value in fields_to_update.items():
-            if field in allowed_fields and hasattr(party, field):
-                setattr(party, field, value)
-                updated_fields.append(field)
+        if not target_gstin:
+            return Response({"success": False, "error": "No GSTIN associated with this party or request."}, status=400)
 
-        if updated_fields:
-            party.save(update_fields=updated_fields)
+        # Resolve verified taxpayer data from authoritative cache or live check
+        verify_res = GSTINService.verify_gstin(target_gstin, company=company, user=request.user)
+        if not verify_res.get('success'):
+            return Response({
+                "success": False,
+                "error": f"Cannot enrich party: GSTIN '{target_gstin}' verification failed ({verify_res.get('error')})."
+            }, status=400)
+
+        selected_keys = set(fields_to_update.keys()) if isinstance(fields_to_update, dict) else set(fields_to_update)
+
+        apply_legal = bool('legal_name' in selected_keys or 'name' in selected_keys)
+        apply_trade = bool('trade_name' in selected_keys and not apply_legal)
+        apply_state = bool('state_code' in selected_keys)
+        apply_addr = bool('address' in selected_keys)
+        apply_gst = bool('gstin' in selected_keys)
+
+        updated_party = GSTINService.apply_party_enrichment(
+            ledger_id=party.id,
+            verified_data=verify_res,
+            apply_legal_name=apply_legal,
+            apply_trade_name=apply_trade,
+            apply_state=apply_state,
+            apply_address=apply_addr,
+            apply_gstin=apply_gst,
+            user=request.user
+        )
 
         return Response({
             "success": True,
-            "message": f"Successfully updated {len(updated_fields)} field(s) on party '{party.name}'.",
-            "updated_fields": updated_fields
+            "message": f"Successfully enriched party '{updated_party.name}'.",
+            "party_id": str(updated_party.id),
+            "party_name": updated_party.name,
+            "gstin": updated_party.gstin,
+            "state_code": updated_party.state_code,
+            "address": updated_party.address
         })
 
 

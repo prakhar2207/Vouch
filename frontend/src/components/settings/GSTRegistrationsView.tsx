@@ -114,7 +114,14 @@ export default function GSTRegistrationsView({ companyId, companyName }: Props) 
         setInputAddress(res.address || inputAddress);
         setInputPincode(res.pincode || inputPincode);
         setInputTaxpayerType(res.taxpayer_type || inputTaxpayerType);
-        toast.success("GSTIN Verified", `${res.legal_name || clean} (${res.status || 'Active'})`);
+
+        if (res.source === 'provider_live') {
+          toast.success("GSTIN Verified (Live)", `${res.legal_name || clean} (${res.status || 'Active'})`);
+        } else if (res.is_cached) {
+          toast.success("GSTIN Verified (Cache)", `${res.legal_name || clean} (${res.status || 'Active'})`);
+        } else {
+          toast.warning("GSTIN Format Valid", `${res.legal_name || clean} (Gateway Offline - Validated Locally)`);
+        }
       } else {
         toast.error("Verification Failed", res.error || "Could not verify GSTIN with portal.");
       }
@@ -131,6 +138,15 @@ export default function GSTRegistrationsView({ companyId, companyName }: Props) 
     if (clean.length !== 15) {
       toast.warning("GSTIN must be 15 alphanumeric characters.");
       return;
+    }
+
+    if (!editingReg && !verifiedDetails) {
+      const confirmed = window.confirm(
+        "This GSTIN has not been verified against the GST portal. Are you sure you want to save it as unverified?"
+      );
+      if (!confirmed) {
+        return;
+      }
     }
 
     setSaving(true);
@@ -186,6 +202,13 @@ export default function GSTRegistrationsView({ companyId, companyName }: Props) 
   };
 
   const handleToggleActive = async (reg: GSTRegistration) => {
+    if (reg.status === 'ACTIVE') {
+      const confirmed = window.confirm(
+        `Are you sure you want to deactivate registration '${reg.gstin}'? Invoices cannot be filed under an inactive registration.`
+      );
+      if (!confirmed) return;
+    }
+
     try {
       if (reg.status === 'ACTIVE') {
         await gstApi.deactivateRegistration(companyId, reg.id);
@@ -345,7 +368,7 @@ export default function GSTRegistrationsView({ companyId, companyName }: Props) 
       {/* Add / Edit Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
-          <div className="bg-card border border-border rounded-2xl max-w-lg w-full p-6 shadow-2xl relative space-y-4">
+          <div className="bg-card border border-border rounded-2xl max-w-lg w-full p-6 shadow-2xl relative space-y-4 max-h-[90vh] overflow-y-auto">
             <button
               onClick={() => setIsModalOpen(false)}
               className="absolute top-4 right-4 text-muted-foreground hover:text-foreground p-1 rounded-lg hover:bg-muted/50"
@@ -408,9 +431,19 @@ export default function GSTRegistrationsView({ companyId, companyName }: Props) 
               {verifiedDetails && (
                 <div className="p-3.5 rounded-xl bg-emerald-500/5 border border-emerald-500/20 space-y-1.5">
                   <div className="flex items-center justify-between text-[11px]">
-                    <span className="font-bold text-emerald-500 flex items-center gap-1">
-                      <CheckCircle2 className="w-3.5 h-3.5" /> Portal Verified
-                    </span>
+                    {verifiedDetails.source === 'provider_live' ? (
+                      <span className="font-bold text-emerald-500 flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Portal Verified (Live)
+                      </span>
+                    ) : (verifiedDetails.is_cached || verifiedDetails.source === 'local_cache') ? (
+                      <span className="font-bold text-blue-500 flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Verified via Cache
+                      </span>
+                    ) : (
+                      <span className="font-bold text-amber-500 flex items-center gap-1">
+                        <AlertTriangle className="w-3.5 h-3.5" /> Format Validated (Gateway Offline)
+                      </span>
+                    )}
                     <span className="font-bold uppercase text-foreground">{verifiedDetails.status || 'Active'}</span>
                   </div>
                   <div className="font-semibold text-foreground text-xs">{verifiedDetails.legal_name}</div>

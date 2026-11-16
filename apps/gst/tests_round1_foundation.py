@@ -6,6 +6,8 @@ from unittest.mock import patch, MagicMock
 from django.test import TestCase
 from django.utils import timezone
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
+from django.db.utils import IntegrityError
 from rest_framework.test import APIClient
 
 from apps.companies.models import Company, UserCompany
@@ -94,6 +96,31 @@ class GSTRound1FoundationTests(TestCase):
             role="ACCOUNTANT"
         )
 
+        # Additional roles on Company A for RBAC & Tenant Isolation verification
+        self.user_owner = User.objects.create_user(
+            email="owner_a@apexbelting.com",
+            password="SecurePassword123!"
+        )
+        UserCompany.objects.create(user=self.user_owner, company=self.company_a, role="OWNER")
+
+        self.user_admin = User.objects.create_user(
+            email="admin_a@apexbelting.com",
+            password="SecurePassword123!"
+        )
+        UserCompany.objects.create(user=self.user_admin, company=self.company_a, role="ADMIN")
+
+        self.user_employee = User.objects.create_user(
+            email="employee_a@apexbelting.com",
+            password="SecurePassword123!"
+        )
+        UserCompany.objects.create(user=self.user_employee, company=self.company_a, role="EMPLOYEE")
+
+        self.user_viewer = User.objects.create_user(
+            email="viewer_a@apexbelting.com",
+            password="SecurePassword123!"
+        )
+        UserCompany.objects.create(user=self.user_viewer, company=self.company_a, role="VIEWER")
+
         # Config A with Sandbox Credentials
         self.config_a = CompanyGSTConfig.objects.create(
             company=self.company_a,
@@ -121,6 +148,18 @@ class GSTRound1FoundationTests(TestCase):
 
         self.client_b = APIClient()
         self.client_b.force_authenticate(user=self.user_b)
+
+        self.client_owner = APIClient()
+        self.client_owner.force_authenticate(user=self.user_owner)
+
+        self.client_admin = APIClient()
+        self.client_admin.force_authenticate(user=self.user_admin)
+
+        self.client_employee = APIClient()
+        self.client_employee.force_authenticate(user=self.user_employee)
+
+        self.client_viewer = APIClient()
+        self.client_viewer.force_authenticate(user=self.user_viewer)
 
     # =========================================================================
     # SECTION A: PROVIDER CLIENT TESTS
@@ -567,3 +606,396 @@ class GSTRound1FoundationTests(TestCase):
                     res_forced = GSTINService.verify_gstin(gstin, company=self.company_a, force_refresh=True)
                     self.assertFalse(res_forced.get("is_cached", False))
                     self.assertEqual(res_forced.get("legal_name"), "Forced Refresh Apex Ltd")
+
+    # =========================================================================
+    # SECTION H: ROUND 1.3 PRODUCTION-READINESS REMEDIATION & HARNESS TESTS
+    # =========================================================================
+    def test_raw_database_contains_ciphertext_not_plaintext(self):
+        """
+        Verifies that raw database columns store encrypted Fernet envelope 'enc:v1:...'
+        and never expose plaintext secrets at rest.
+        """
+        from apps.gst.encryption import ENCRYPTION_PREFIX
+        config = CompanyGSTConfig.objects.create(
+            company=self.company_b,
+            sandbox_api_key="super_secret_sandbox_key_999",
+            sandbox_api_secret="super_secret_sandbox_secret_888"
+        )
+        # Fetch raw values directly from database bypassing field descriptors
+        raw_row = CompanyGSTConfig.objects.filter(id=config.id).values('sandbox_api_key', 'sandbox_api_secret').first()
+        raw_key = raw_row['sandbox_api_key']
+        raw_secret = raw_row['sandbox_api_secret']
+
+        self.assertTrue(raw_key.startswith(ENCRYPTION_PREFIX))
+        self.assertTrue(raw_secret.startswith(ENCRYPTION_PREFIX))
+        self.assertNotIn("super_secret_sandbox_key_999", raw_key)
+        self.assertNotIn("super_secret_sandbox_secret_888", raw_secret)
+
+        # Transparent model property retrieval decrypts correctly
+        config.refresh_from_db()
+        self.assertEqual(config.sandbox_api_key, "super_secret_sandbox_key_999")
+        self.assertEqual(config.sandbox_api_secret, "super_secret_sandbox_secret_888")
+
+    def test_corrupted_ciphertext_raises_credential_decryption_error(self):
+        """Verifies that corrupted or tampered ciphertext raises CredentialDecryptionError."""
+        from apps.gst.encryption import CredentialDecryptionError
+        config = CompanyGSTConfig.objects.create(
+            company=self.company_b,
+            sandbox_api_key="valid_secret_key"
+        )
+        # Inject corrupted ciphertext
+        CompanyGSTConfig.objects.filter(id=config.id).update(sandbox_api_key="enc:v1:this_is_corrupted_ciphertext_tampered")
+
+        with self.assertRaises(CredentialDecryptionError):
+            config.refresh_from_db()
+
+    def test_key_rotation_management_command_dry_run_and_execution(self):
+        """
+        Verifies the rotate_gst_credentials management command:
+        1. Decrypts records encrypted with GST_ENCRYPTION_KEY_OLD
+        2. Re-encrypts with current primary GST_ENCRYPTION_KEY
+        3. Supports idempotent execution and dry-run mode
+        """
+        from cryptography.fernet import Fernet
+        from apps.gst.encryption import is_encrypted_with_primary_key, encrypt_gst_credential
+        from io import StringIO
+
+        primary_key = Fernet.generate_key().decode('utf-8')
+        old_key = Fernet.generate_key().decode('utf-8')
+
+        # Encrypt record using old key
+        old_fernet = Fernet(old_key.encode('utf-8'))
+        old_cipher = f"enc:v1:{old_fernet.encrypt(b'secret_key_under_old_key').decode('utf-8')}"
+
+        with self.settings(GST_ENCRYPTION_KEY=primary_key, GST_ENCRYPTION_KEY_OLD=old_key):
+            config = CompanyGSTConfig.objects.create(
+                company=self.company_b,
+                sandbox_api_key=""
+            )
+            CompanyGSTConfig.objects.filter(id=config.id).update(sandbox_api_key=old_cipher)
+
+            # Prior to rotation: readable via old key, but not encrypted with primary key
+            self.assertFalse(is_encrypted_with_primary_key(old_cipher))
+
+            # 1. Dry run execution
+            out_dry = StringIO()
+            call_command('rotate_gst_credentials', '--dry-run', stdout=out_dry)
+            output_dry = out_dry.getvalue()
+            self.assertIn("Dry Run: True", output_dry)
+            self.assertIn("Total Fields Rotated:             1", output_dry)
+
+            # Verify database unchanged after dry-run
+            raw_after_dry = CompanyGSTConfig.objects.filter(id=config.id).values('sandbox_api_key').first()
+            self.assertEqual(raw_after_dry['sandbox_api_key'], old_cipher)
+
+            # 2. Live rotation execution
+            out_live = StringIO()
+            call_command('rotate_gst_credentials', stdout=out_live)
+            output_live = out_live.getvalue()
+            self.assertIn("Dry Run: False", output_live)
+            self.assertIn("Total Fields Rotated:             1", output_live)
+
+            # Verify database is now encrypted with primary key
+            raw_after_live = CompanyGSTConfig.objects.filter(id=config.id).values('sandbox_api_key').first()
+            self.assertNotEqual(raw_after_live['sandbox_api_key'], old_cipher)
+            self.assertTrue(is_encrypted_with_primary_key(raw_after_live['sandbox_api_key']))
+
+            # Verify transparent decryption yields original plaintext
+            config.refresh_from_db()
+            self.assertEqual(config.sandbox_api_key, "secret_key_under_old_key")
+
+            # 3. Subsequent run should skip already rotated records (idempotent)
+            out_idempotent = StringIO()
+            call_command('rotate_gst_credentials', stdout=out_idempotent)
+            self.assertIn("Total Fields Rotated:             0", out_idempotent.getvalue())
+
+    def test_rbac_registration_mutations_restricted_to_admin_owner(self):
+        """
+        Verifies that only OWNER and ADMIN can create, update, or deactivate registrations.
+        EMPLOYEE and VIEWER are strictly forbidden (HTTP 403).
+        """
+        url = f"/api/v1/gst/registrations/{self.company_a.id}/"
+        payload = {
+            "gstin": "27AAACA1234A1Z5",
+            "state_code": "27",
+            "legal_name": "Apex Maharashtra",
+            "auto_verify": False
+        }
+
+        # 1. VIEWER cannot create
+        res_viewer = self.client_viewer.post(url, payload)
+        self.assertEqual(res_viewer.status_code, 403)
+
+        # 2. EMPLOYEE cannot create
+        res_emp = self.client_employee.post(url, payload)
+        self.assertEqual(res_emp.status_code, 403)
+
+        # 3. ADMIN can create
+        res_admin = self.client_admin.post(url, payload)
+        self.assertEqual(res_admin.status_code, 201)
+        reg_id = res_admin.data['registration']['id']
+
+        # 4. VIEWER cannot deactivate
+        deact_url = f"/api/v1/gst/registrations/{self.company_a.id}/{reg_id}/deactivate/"
+        res_deact_viewer = self.client_viewer.post(deact_url)
+        self.assertEqual(res_deact_viewer.status_code, 403)
+
+        # 5. ADMIN can deactivate
+        res_deact_admin = self.client_admin.post(deact_url)
+        self.assertEqual(res_deact_admin.status_code, 200)
+
+    def test_registration_authorized_users_object_permission(self):
+        """
+        Verifies registration-level authorized_users enforcement:
+        Non-admin members must be explicitly present in authorized_users.
+        ADMIN and OWNER bypass the restriction.
+        """
+        reg = GSTRegistration.objects.create(
+            company=self.company_a,
+            gstin="27AAACA1234A1Z5",
+            legal_name="Apex MH",
+            state_code="27",
+            state_name="Maharashtra"
+        )
+        reg.authorized_users.add(self.user_employee)
+
+        detail_url = f"/api/v1/gst/registrations/{self.company_a.id}/{reg.id}/"
+
+        # Authorized employee can access
+        res_emp = self.client_employee.get(detail_url)
+        self.assertEqual(res_emp.status_code, 200)
+
+        # Unauthorized viewer cannot access (not in authorized_users, not admin)
+        res_viewer = self.client_viewer.get(detail_url)
+        self.assertEqual(res_viewer.status_code, 403)
+
+        # Admin can access even if not explicitly in authorized_users
+        res_admin = self.client_admin.get(detail_url)
+        self.assertEqual(res_admin.status_code, 200)
+
+    def test_party_enrichment_rbac_and_cross_tenant_isolation(self):
+        """
+        Verifies party enrichment RBAC (OWNER, ADMIN, ACCOUNTANT only)
+        and strict tenant isolation (cross-tenant party rejected with 404/403).
+        """
+        party = Ledger.objects.create(
+            company=self.company_a,
+            group=self.group_debtors,
+            name="Original Client Name",
+            state_code="27",
+            gstin="27AADCB2230M1ZT"
+        )
+        # Pre-seed cache so verify_gstin succeeds offline
+        GSTTaxpayerCache.objects.create(
+            gstin="27AADCB2230M1ZT",
+            legal_name="Verified TCS Legal Name",
+            state_code="27",
+            address="Verified Address"
+        )
+
+        enrich_url = "/api/v1/gst/party/enrich/"
+        payload = {
+            "company_id": str(self.company_a.id),
+            "party_id": str(party.id),
+            "fields_to_update": ["legal_name", "address"]
+        }
+
+        # 1. VIEWER cannot enrich
+        res_viewer = self.client_viewer.post(enrich_url, payload, format='json')
+        self.assertEqual(res_viewer.status_code, 403)
+
+        # 2. Cross-tenant attempt (Company B tries to enrich Company A's party)
+        cross_payload = {
+            "company_id": str(self.company_b.id),
+            "party_id": str(party.id),
+            "fields_to_update": ["legal_name"]
+        }
+        res_cross = self.client_b.post(enrich_url, cross_payload, format='json')
+        self.assertEqual(res_cross.status_code, 404)
+
+        # 3. ACCOUNTANT can enrich
+        res_acc = self.client_a.post(enrich_url, payload, format='json')
+        self.assertEqual(res_acc.status_code, 200)
+        party.refresh_from_db()
+        self.assertEqual(party.name, "Verified TCS Legal Name")
+        self.assertEqual(party.address, "Verified Address")
+
+    def test_pan_stem_mismatch_raises_validation_error(self):
+        """
+        Verifies PAN stem invariant: All registrations for an enterprise entity
+        must share the exact same 10-character PAN stem.
+        """
+        # First registration: PAN is AAACA1234A
+        GSTRegistrationService.create_registration(
+            company=self.company_a,
+            gstin="27AAACA1234A1Z5",
+            state_code="27",
+            auto_verify=False,
+            user=self.user_admin
+        )
+
+        # Second registration with DIFFERENT PAN: BBBCB5678B
+        with self.assertRaises(GSTINValidationError) as ctx:
+            GSTRegistrationService.create_registration(
+                company=self.company_a,
+                gstin="07BBBCB5678B1Z2",
+                state_code="07",
+                auto_verify=False,
+                user=self.user_admin
+            )
+        self.assertIn("PAN stem mismatch", str(ctx.exception))
+
+    def test_concurrent_primary_registration_unique_constraint(self):
+        """
+        Verifies that the database-level UniqueConstraint strictly prevents
+        two primary registrations from existing for the same company.
+        """
+        # Create primary registration
+        GSTRegistration.objects.create(
+            company=self.company_a,
+            gstin="27AAACA1234A1Z5",
+            legal_name="Apex MH",
+            state_code="27",
+            is_primary=True
+        )
+
+        # Direct attempt to insert a second primary registration must raise IntegrityError
+        with self.assertRaises(IntegrityError):
+            GSTRegistration.objects.create(
+                company=self.company_a,
+                gstin="07AAACA1234A1Z7",
+                legal_name="Apex DL",
+                state_code="07",
+                is_primary=True
+            )
+
+    def test_deactivate_primary_promotes_next_active_registration(self):
+        """
+        Verifies that deactivating the primary registration atomically promotes
+        the next active registration to primary, preserving primary invariant.
+        """
+        reg_mh = GSTRegistration.objects.create(
+            company=self.company_a,
+            gstin="27AAACA1234A1Z5",
+            legal_name="Apex MH",
+            state_code="27",
+            status="ACTIVE",
+            is_primary=True
+        )
+        reg_dl = GSTRegistration.objects.create(
+            company=self.company_a,
+            gstin="07AAACA1234A1Z7",
+            legal_name="Apex DL",
+            state_code="07",
+            status="ACTIVE",
+            is_primary=False
+        )
+
+        GSTRegistrationService.deactivate_registration(self.company_a, str(reg_mh.id), user=self.user_admin)
+
+        reg_mh.refresh_from_db()
+        reg_dl.refresh_from_db()
+        self.assertEqual(reg_mh.status, "INACTIVE")
+        self.assertFalse(reg_mh.is_primary)
+        self.assertTrue(reg_dl.is_primary)
+        self.assertEqual(self.company_a.gstin, reg_dl.gstin)
+
+    def test_force_refresh_failure_does_not_return_stale_cache_as_success(self):
+        """
+        Verifies that if an error occurs during force_refresh=True, the service
+        strictly returns success=False and does NOT misrepresent stale cache as fresh verification.
+        """
+        import requests
+        gstin = "27AAACA1234A1Z5"
+        # Seed stale cache
+        GSTTaxpayerCache.objects.create(
+            gstin=gstin,
+            legal_name="Cached Stale Name",
+            state_code="27",
+            status="Active"
+        )
+
+        with patch.object(SandboxGSTClient, 'is_configured', return_value=True):
+            with patch.object(SandboxGSTClient, 'search_taxpayer', return_value={
+                "success": False,
+                "error": "504 Gateway Timeout contacting GST Portal"
+            }):
+                res = GSTINService.verify_gstin(gstin, company=self.company_a, force_refresh=True)
+                self.assertFalse(res["success"])
+                self.assertEqual(res["source"], "provider_error")
+                self.assertIn("504 Gateway Timeout", res["error"])
+                self.assertIsNotNone(res.get("last_known_data"))
+
+    def test_iso_8601_registration_date_parsing(self):
+        """Verifies robust parsing of ISO-8601 timestamps returned by Sandbox."""
+        mock_res = {
+            "success": True,
+            "data": {
+                "gstin": "27AADCB2230M1ZT",
+                "lgnm": "TATA CONSULTANCY SERVICES LIMITED",
+                "sts": "Active",
+                "rgdt": "2017-07-01T00:00:00.000Z",
+                "stcd": "27"
+            }
+        }
+        with patch.object(SandboxGSTClient, 'is_configured', return_value=True):
+            with patch.object(SandboxGSTClient, 'execute_request', return_value=mock_res):
+                client = SandboxGSTClient(company=self.company_a)
+                parsed = client.search_taxpayer("27AADCB2230M1ZT")
+                self.assertTrue(parsed["success"])
+                self.assertEqual(parsed["legal_name"], "TATA CONSULTANCY SERVICES LIMITED")
+
+    def test_sandbox_client_ssrf_host_allowlist_enforced(self):
+        """
+        Verifies that user-supplied malicious or unallowlisted base URLs
+        are rejected and safely reset to the default allowlisted host.
+        """
+        with patch('django.conf.settings.SANDBOX_BASE_URL', 'http://169.254.169.254/latest/meta-data'):
+            client = SandboxGSTClient(company=self.company_a)
+            _, _, base_url, _ = client.get_api_credentials()
+            self.assertEqual(base_url, SandboxGSTClient.DEFAULT_BASE_URL)
+
+    def test_sandbox_client_token_caching_without_config_row(self):
+        """
+        Verifies that when CompanyGSTConfig is absent, JWT tokens are cached
+        in Django cache to prevent token stampedes on /authenticate.
+        """
+        from django.core.cache import cache
+        cache.clear()
+
+        mock_auth = MagicMock(status_code=200)
+        mock_auth.json.return_value = {"access_token": "global_jwt_token_123", "expires_in": 3600}
+
+        with patch('apps.gst.services.sandbox_client.requests.request', return_value=mock_auth) as mock_req:
+            with patch('django.conf.settings.SANDBOX_API_KEY', 'platform_key'):
+                with patch('django.conf.settings.SANDBOX_API_SECRET', 'platform_secret'):
+                    # Company B has no CompanyGSTConfig record
+                    client = SandboxGSTClient(company=self.company_b)
+                    token1 = client.get_access_token()
+                    self.assertEqual(token1, "global_jwt_token_123")
+                    self.assertEqual(mock_req.call_count, 1)
+
+                    # Second call must hit Django cache without executing requests.request
+                    token2 = client.get_access_token()
+                    self.assertEqual(token2, "global_jwt_token_123")
+                    self.assertEqual(mock_req.call_count, 1)
+
+    def test_sandbox_client_nested_expires_in(self):
+        """Verifies that nested 'expires_in' inside data payload is correctly parsed."""
+        mock_auth = MagicMock(status_code=200)
+        mock_auth.json.return_value = {
+            "status_code": 200,
+            "data": {
+                "access_token": "nested_jwt_token",
+                "expires_in": 7200
+            }
+        }
+        with patch('apps.gst.services.sandbox_client.requests.request', return_value=mock_auth):
+            client = SandboxGSTClient(company=self.company_a)
+            token = client.get_access_token(force_refresh=True)
+            self.assertEqual(token, "nested_jwt_token")
+            self.config_a.refresh_from_db()
+            self.assertIsNotNone(self.config_a.sandbox_token_expires_at)
+            # Should expire ~2 hours (7200s) from now, not 24 hours
+            diff = self.config_a.sandbox_token_expires_at - timezone.now()
+            self.assertTrue(7100 <= diff.total_seconds() <= 7210)
