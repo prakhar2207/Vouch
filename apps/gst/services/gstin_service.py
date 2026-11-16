@@ -112,12 +112,12 @@ class GSTINService:
 
         clean_gstin = validation["gstin"]
 
-        # Check local cache first (within 30-day TTL)
+        # Check local cache first (strictly within 24-hour TTL)
         now = timezone.now()
         cached = GSTTaxpayerCache.objects.filter(gstin=clean_gstin).first()
         if cached and not force_refresh:
             cache_age = now - cached.updated_at
-            if cache_age < timedelta(days=30):
+            if cache_age < timedelta(hours=24):
                 return {
                     "success": True,
                     "gstin": clean_gstin,

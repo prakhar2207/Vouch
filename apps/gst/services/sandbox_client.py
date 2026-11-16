@@ -53,7 +53,13 @@ class SandboxGSTClient:
         """
         api_key = ''
         api_secret = ''
-        base_url = getattr(settings, 'GST_SANDBOX_BASE_URL', '') or self.DEFAULT_BASE_URL
+        base_url = (
+            getattr(settings, 'SANDBOX_BASE_URL', '')
+            or getattr(settings, 'GST_SANDBOX_BASE_URL', '')
+            or os.environ.get('SANDBOX_BASE_URL', '')
+            or os.environ.get('GST_SANDBOX_BASE_URL', '')
+            or self.DEFAULT_BASE_URL
+        )
         is_sandbox = True
 
         if self.config:
@@ -64,9 +70,19 @@ class SandboxGSTClient:
             is_sandbox = self.config.is_sandbox
 
         if not api_key:
-            api_key = getattr(settings, 'GST_SANDBOX_API_KEY', '') or os.environ.get('GST_SANDBOX_API_KEY', '')
+            api_key = (
+                getattr(settings, 'SANDBOX_API_KEY', '')
+                or getattr(settings, 'GST_SANDBOX_API_KEY', '')
+                or os.environ.get('SANDBOX_API_KEY', '')
+                or os.environ.get('GST_SANDBOX_API_KEY', '')
+            )
         if not api_secret:
-            api_secret = getattr(settings, 'GST_SANDBOX_API_SECRET', '') or os.environ.get('GST_SANDBOX_API_SECRET', '')
+            api_secret = (
+                getattr(settings, 'SANDBOX_API_SECRET', '')
+                or getattr(settings, 'GST_SANDBOX_API_SECRET', '')
+                or os.environ.get('SANDBOX_API_SECRET', '')
+                or os.environ.get('GST_SANDBOX_API_SECRET', '')
+            )
 
         # Adjust base URL for explicit sandbox environment if configured
         env_mode = getattr(settings, 'GST_SANDBOX_ENV', '') or os.environ.get('GST_SANDBOX_ENV', 'staging')

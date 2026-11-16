@@ -1,3 +1,4 @@
+import os
 import base64
 import hashlib
 import logging
@@ -23,11 +24,19 @@ class CredentialDecryptionError(CredentialSecurityError):
 
 def get_gst_credential_fernet() -> Fernet:
     """
-    Derives an authenticated 32-byte URL-safe base64 key from settings.GST_CREDENTIAL_KEY or settings.SECRET_KEY.
+    Derives an authenticated 32-byte URL-safe base64 key from settings.GST_ENCRYPTION_KEY,
+    settings.GST_CREDENTIAL_KEY, or settings.SECRET_KEY.
     Uses SHA-256 key derivation to ensure standard 256-bit entropy.
     Fails closed if no key is configured.
     """
-    raw_key = getattr(settings, 'GST_CREDENTIAL_KEY', None) or getattr(settings, 'SECRET_KEY', None)
+    raw_key = (
+        getattr(settings, 'GST_ENCRYPTION_KEY', None)
+        or os.environ.get('GST_ENCRYPTION_KEY')
+        or getattr(settings, 'GST_CREDENTIAL_KEY', None)
+        or os.environ.get('GST_CREDENTIAL_KEY')
+        or getattr(settings, 'SECRET_KEY', None)
+        or os.environ.get('SECRET_KEY')
+    )
     if not raw_key:
         raise CredentialEncryptionError("Encryption key is missing. Cannot initialize secure cryptographic provider.")
     digest = hashlib.sha256(raw_key.encode('utf-8')).digest()
@@ -92,7 +101,7 @@ class EncryptedTextField(models.TextField):
     and decrypts them upon retrieval from the database (from_db_value / to_python).
     Enforces fail-closed semantics across all persistence operations.
     """
-    description = "Fernet AES-256 Authenticated Encrypted Text"
+    description = "Fernet Authenticated Encrypted Text (AES-128-CBC + HMAC-SHA256)"
 
     def from_db_value(self, value, expression, connection):
         if value is None:
