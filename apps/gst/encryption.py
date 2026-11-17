@@ -74,7 +74,7 @@ def get_primary_fernet() -> Fernet:
     is_testing = ('test' in sys.argv) or getattr(settings, 'TESTING', False)
 
     if not raw_key:
-        if env_name in ('production', 'prod') and not is_testing:
+        if env_name in ('staging', 'stage', 'production', 'prod') and not is_testing:
             raise CredentialEncryptionError(
                 f"FATAL SECURITY CONFIGURATION: Dedicated GST encryption key (GST_ENCRYPTION_KEY) "
                 f"must be explicitly configured in environment '{env_name}'. "
@@ -113,7 +113,7 @@ def get_gst_credential_fernet() -> Union[Fernet, MultiFernet]:
     is_testing = ('test' in sys.argv) or getattr(settings, 'TESTING', False)
 
     if not raw_key:
-        if env_name in ('production', 'prod') and not is_testing:
+        if env_name in ('staging', 'stage', 'production', 'prod') and not is_testing:
             raise CredentialEncryptionError(
                 f"FATAL SECURITY CONFIGURATION: Dedicated GST encryption key (GST_ENCRYPTION_KEY) "
                 f"must be explicitly configured in environment '{env_name}'. "

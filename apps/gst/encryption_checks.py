@@ -31,22 +31,13 @@ def check_gst_encryption_configuration(app_configs, **kwargs):
     )
 
     if not primary_key and not is_testing:
-        if env_name in ('production', 'prod'):
+        if env_name in ('staging', 'stage', 'production', 'prod'):
             errors.append(
                 Error(
-                    "Dedicated GST encryption key (GST_ENCRYPTION_KEY) is not configured in live production environment.",
+                    "Dedicated GST encryption key (GST_ENCRYPTION_KEY) is not configured in live environment.",
                     hint="Set GST_ENCRYPTION_KEY in your environment variables to a 44-character base64 Fernet key.",
                     obj="settings.GST_ENCRYPTION_KEY",
                     id="gst.E001",
-                )
-            )
-        elif env_name in ('staging', 'stage'):
-            errors.append(
-                Warning(
-                    "Dedicated GST encryption key (GST_ENCRYPTION_KEY) is not configured in staging environment. Using SECRET_KEY derivation.",
-                    hint="Set GST_ENCRYPTION_KEY in your Render environment variables to a 44-character base64 Fernet key.",
-                    obj="settings.GST_ENCRYPTION_KEY",
-                    id="gst.W001",
                 )
             )
 

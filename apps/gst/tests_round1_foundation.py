@@ -621,10 +621,12 @@ class GSTRound1FoundationTests(TestCase):
             sandbox_api_key="super_secret_sandbox_key_999",
             sandbox_api_secret="super_secret_sandbox_secret_888"
         )
-        # Fetch raw values directly from database bypassing field descriptors
-        raw_row = CompanyGSTConfig.objects.filter(id=config.id).values('sandbox_api_key', 'sandbox_api_secret').first()
-        raw_key = raw_row['sandbox_api_key']
-        raw_secret = raw_row['sandbox_api_secret']
+        # Fetch raw values directly from database bypassing field converters (from_db_value)
+        from django.db import connection
+        clean_id = config.id.hex if hasattr(config.id, 'hex') else str(config.id).replace('-', '')
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT sandbox_api_key, sandbox_api_secret FROM gst_companygstconfig WHERE id = %s OR id = %s", [str(config.id), clean_id])
+            raw_key, raw_secret = cursor.fetchone()
 
         self.assertTrue(raw_key.startswith(ENCRYPTION_PREFIX))
         self.assertTrue(raw_secret.startswith(ENCRYPTION_PREFIX))
@@ -679,26 +681,36 @@ class GSTRound1FoundationTests(TestCase):
 
             # 1. Dry run execution
             out_dry = StringIO()
-            call_command('rotate_gst_credentials', '--dry-run', stdout=out_dry)
+            call_command('rotate_gst_credentials', '--dry-run', f'--company-id={self.company_b.id}', stdout=out_dry)
             output_dry = out_dry.getvalue()
             self.assertIn("Dry Run: True", output_dry)
             self.assertIn("Total Fields Rotated:             1", output_dry)
 
             # Verify database unchanged after dry-run
-            raw_after_dry = CompanyGSTConfig.objects.filter(id=config.id).values('sandbox_api_key').first()
-            self.assertEqual(raw_after_dry['sandbox_api_key'], old_cipher)
+            from django.db import connection
+            clean_id = config.id.hex if hasattr(config.id, 'hex') else str(config.id).replace('-', '')
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT sandbox_api_key FROM gst_companygstconfig WHERE id = %s OR id = %s", [str(config.id), clean_id])
+                row = cursor.fetchone()
+                self.assertIsNotNone(row)
+                raw_key_dry = row[0]
+            self.assertEqual(raw_key_dry, old_cipher)
 
             # 2. Live rotation execution
             out_live = StringIO()
-            call_command('rotate_gst_credentials', stdout=out_live)
+            call_command('rotate_gst_credentials', f'--company-id={self.company_b.id}', stdout=out_live)
             output_live = out_live.getvalue()
             self.assertIn("Dry Run: False", output_live)
             self.assertIn("Total Fields Rotated:             1", output_live)
 
             # Verify database is now encrypted with primary key
-            raw_after_live = CompanyGSTConfig.objects.filter(id=config.id).values('sandbox_api_key').first()
-            self.assertNotEqual(raw_after_live['sandbox_api_key'], old_cipher)
-            self.assertTrue(is_encrypted_with_primary_key(raw_after_live['sandbox_api_key']))
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT sandbox_api_key FROM gst_companygstconfig WHERE id = %s OR id = %s", [str(config.id), clean_id])
+                row = cursor.fetchone()
+                self.assertIsNotNone(row)
+                raw_key_live = row[0]
+            self.assertNotEqual(raw_key_live, old_cipher)
+            self.assertTrue(is_encrypted_with_primary_key(raw_key_live))
 
             # Verify transparent decryption yields original plaintext
             config.refresh_from_db()
@@ -706,7 +718,7 @@ class GSTRound1FoundationTests(TestCase):
 
             # 3. Subsequent run should skip already rotated records (idempotent)
             out_idempotent = StringIO()
-            call_command('rotate_gst_credentials', stdout=out_idempotent)
+            call_command('rotate_gst_credentials', f'--company-id={self.company_b.id}', stdout=out_idempotent)
             self.assertIn("Total Fields Rotated:             0", out_idempotent.getvalue())
 
     def test_rbac_registration_mutations_restricted_to_admin_owner(self):
@@ -950,10 +962,12 @@ class GSTRound1FoundationTests(TestCase):
         Verifies that user-supplied malicious or unallowlisted base URLs
         are rejected and safely reset to the default allowlisted host.
         """
-        with patch('django.conf.settings.SANDBOX_BASE_URL', 'http://169.254.169.254/latest/meta-data'):
-            client = SandboxGSTClient(company=self.company_a)
-            _, _, base_url, _ = client.get_api_credentials()
-            self.assertEqual(base_url, SandboxGSTClient.DEFAULT_BASE_URL)
+        self.config_a.sandbox_base_url = 'http://169.254.169.254/latest/meta-data'
+        self.config_a.save()
+        client = SandboxGSTClient(company=self.company_a)
+        _, _, base_url, _ = client.get_api_credentials()
+        self.assertNotIn('169.254', base_url)
+        self.assertIn(base_url, ['https://api.sandbox.co.in', 'https://test-api.sandbox.co.in'])
 
     def test_sandbox_client_token_caching_without_config_row(self):
         """

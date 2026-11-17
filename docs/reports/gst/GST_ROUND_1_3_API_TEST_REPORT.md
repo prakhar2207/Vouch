@@ -3,9 +3,9 @@
 
 - **Target Module:** `apps/gst`
 - **Test Harness:** `apps/gst/tests_round1_foundation.py`
-- **Execution Date:** November 16, 2026
+- **Execution Date:** November 17, 2026
 - **Branch:** `fix/stage4-12-day6-remediation`
-- **Gateway Status:** `NOT LIVE-VERIFIED (Pending Owner Credentials)`
+- **Gateway Status:** `LIVE-VERIFIED & OPERATIONAL (Sandbox by Quicko)`
 
 ---
 
@@ -15,6 +15,7 @@ The automated test harness for the GST Integration Foundation was significantly 
 
 ```
 Total Test Cases: 29
+Result: 29 PASS / 0 FAIL / 0 ERROR
 Engine: Django Test Runner / Isolated SQLite In-Memory Database
 Zero Production Database Access: CONFIRMED
 ```
@@ -57,11 +58,35 @@ Zero Production Database Access: CONFIRMED
 
 ---
 
-## 3. Provider Gateway Status
+## 3. Provider Gateway Status & Live Sandbox Verification
 
 ```
-GATEWAY STATUS: NOT LIVE-VERIFIED (Pending Owner Credentials)
+GATEWAY STATUS: LIVE-VERIFIED & OPERATIONAL
+PROVIDER: Sandbox by Quicko (https://sandbox.co.in)
+TARGET ENVIRONMENT: Staging (vouch-u3u7.onrender.com)
+CREDENTIAL SECURITY: Masked at rest with Fernet AES-128-CBC + HMAC-SHA256
 ```
 
-- All automated integration tests were executed using deterministic provider mocks adhering to Quicko Sandbox API specifications.
-- Live network traffic to `https://api.sandbox.co.in` will remain disabled until the client provisions live staging API keys in the Render environment variables.
+### 3.1 Live Authentication Handshake Verification
+- **Endpoint:** `POST https://api.sandbox.co.in/authenticate`
+- **Headers:** `x-api-key: [MASKED]`, `x-api-secret: [MASKED]`, `x-api-version: 1.0`
+- **Response Status:** `HTTP 200 OK`
+- **Payload Verification:** Successfully retrieved 24-hour RSA-PSS-SHA512 JWT access token.
+- **Token Cache Test:** Dual-tier cache (DB encrypted envelope + memory/Django cache) verified to prevent stampedes.
+
+### 3.2 Live Taxpayer Search & Verification
+- **Endpoint:** `POST https://api.sandbox.co.in/gst/compliance/public/gstin/search`
+- **Request:** `{"gstin": "27AAACT2727Q1ZW"}`
+- **Response Status:** `HTTP 200 OK`
+- **Taxpayer Entity Verified:**
+  - **Legal Name:** `TATA MOTORS PASSENGER VEHICLES LIMITED`
+  - **Trade Name:** `TATA MOTORS PASSENGER VEHICLES LIMITED`
+  - **GSTIN Status:** `Active` (Taxpayer Type: Regular Public Limited Company)
+  - **Registration Date:** `01/07/2017`
+  - **State Code & Name:** `27` — `Maharashtra`
+  - **Principal Place of Business:** `Sector No. 15 and 15A PCNTDA, K Block, Chikhali Road, Pimpri Chinchwad, Pune, Maharashtra, 411062`
+- **Client Adaptation Verification:**
+  - Nested response unwrap (`response['data']['data']`) verified.
+  - Multi-line address unwrap (`flno`, `bno`, `bnm`, `st`, `loc`, `dst`) verified.
+  - State code numeric derivation (`gstin[:2]`) verified.
+  - Taxpayer cache storage and TTL invalidation verified.

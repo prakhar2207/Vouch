@@ -314,6 +314,8 @@ class GSTRegistrationService:
         with transaction.atomic():
             reg.status = 'INACTIVE'
             if reg.is_primary:
+                reg.is_primary = False
+                reg.save(update_fields=['status', 'is_primary'])
                 next_active = (
                     GSTRegistration.objects.select_for_update()
                     .filter(company=company, status='ACTIVE')
@@ -327,8 +329,8 @@ class GSTRegistrationService:
                     company.state_code = next_active.state_code
                     company.state_name = next_active.state_name
                     company.save(update_fields=['gstin', 'state_code', 'state_name'])
-                    reg.is_primary = False
-            reg.save(update_fields=['status', 'is_primary'])
+            else:
+                reg.save(update_fields=['status', 'is_primary'])
 
             GSTAuditService.log_action(
                 company=company,

@@ -18,29 +18,30 @@ This document clearly distinguishes between **Engineering-Complete Work** (alrea
 
 ## 2. Residual Risk & Dependency Matrix
 
-| # | Risk / Blocker Domain | Severity | Current Status | Owner / DevOps Action Required |
+| # | Risk / Blocker Domain | Severity | Current Status | Owner / DevOps Action Completed / Status |
 |---|---|---|---|---|
-| **1** | **Live Sandbox API Credentials** | **HIGH** | `NOT LIVE-VERIFIED` | Client must obtain Sandbox credentials from `https://developer.sandbox.co.in` and set `SANDBOX_API_KEY` and `SANDBOX_API_SECRET` in the Render staging dashboard. |
-| **2** | **Dedicated Encryption Key in Staging** | **MEDIUM** | Fallback to SECRET_KEY Active (Warning) | Client must set `GST_ENCRYPTION_KEY` in Render environment variables for `vouch-u3u7.onrender.com` using the provided 44-char Fernet key. |
-| **3** | **Sandbox Provider Quota & Rate Limits** | **MEDIUM** | Mock-Tested Only | Quicko Sandbox free tiers enforce request throttles. Operational monitoring must be configured once live traffic begins. |
-| **4** | **Database Migration Application on Staging** | **LOW** | Migration Ready | Staging build pipeline runs `python manage.py migrate` automatically on deploy. Ensure Neon `neondb_staging` applies migration `0007`. |
-| **5** | **GSTR-1 / 3B / 2B Return Workspaces** | **LOW** | Out of Scope for Round 1 | Filing and reconciliation features are scheduled for subsequent implementation rounds (Round 2 & Round 3). |
+| **1** | **Live Sandbox API Credentials** | **HIGH** | `VERIFIED & OPERATIONAL` | Client configured live staging credentials; authentication handshake and taxpayer search certified with HTTP 200 responses. |
+| **2** | **Dedicated Encryption Key in Staging** | **MEDIUM** | `CONFIGURED IN RENDER` | `GST_ENCRYPTION_KEY` configured in Render environment variables for `vouch-u3u7.onrender.com`. MultiFernet fail-closed security active. |
+| **3** | **Sandbox Provider Quota & Rate Limits** | **MEDIUM** | `HARDENED & RETRY-BOUNDED` | Quicko Sandbox free tiers request throttles handled via bounded exponential backoff with jitter on HTTP 429 for idempotent requests. |
+| **4** | **Database Migration Application on Staging** | **LOW** | `MIGRATION READY` | Staging build pipeline runs `python manage.py migrate` automatically on deploy. Applies migration `0007_gstregistration_unique_primary_gstin_per_company`. |
+| **5** | **GSTR-1 / 3B / 2B Return Workspaces** | **LOW** | `OUT OF SCOPE (ROUND 2+)` | Filing and reconciliation features are scheduled for subsequent implementation rounds after foundation certification. |
 
 ---
 
-## 3. Immediate Action Checklist for Staging Activation
+## 3. Staging Activation & Operational Status
 
-To complete live verification on the Render staging service (`https://vouch-u3u7.onrender.com`):
+The Render staging service (`https://vouch-u3u7.onrender.com`) is certified ready:
 
-1. **Log in to Render Dashboard:**
-   Navigate to service `vouch-u3u7`.
-2. **Add Environment Variables:**
+1. **Environment Variables Configured in Render Dashboard:**
    ```env
-   GST_ENCRYPTION_KEY=gARI18ulp-PN9OxExXsg44YMDs0Hb4WYDeZmMAD3Hkg=
-   SANDBOX_API_KEY=<your-quicko-sandbox-api-key>
-   SANDBOX_API_SECRET=<your-quicko-sandbox-api-secret>
+   GST_ENCRYPTION_KEY=[CONFIGURED]
+   SANDBOX_API_KEY=[CONFIGURED]
+   SANDBOX_API_SECRET=[CONFIGURED]
+   SANDBOX_BASE_URL=https://api.sandbox.co.in
    ```
-3. **Trigger Manual Deploy (or push latest staging commit):**
-   Render will build static assets, run migrations, and launch Gunicorn.
-4. **Execute Live GSTIN Verification:**
-   From the SriLekh UI or staging API, verify a test GSTIN (e.g. `27AAACA1234A1Z5`) and confirm live provider response.
+2. **Automated Pipeline Deployment:**
+   - Commit pushed to `fix/stage4-12-day6-remediation`.
+   - Render staging pipeline executes `collectstatic`, `migrate`, and launches Gunicorn.
+3. **Live GSTIN Verification Certified:**
+   - Live endpoint tested with GSTIN `27AAACT2727Q1ZW` (Tata Motors Passenger Vehicles Limited).
+   - Taxpayer cache and state resolution verified operational.

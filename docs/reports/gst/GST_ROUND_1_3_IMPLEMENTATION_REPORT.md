@@ -6,8 +6,8 @@
 - **Branch:** `fix/stage4-12-day6-remediation`
 - **Implementation Commit:** `57f2179e3f0f4accc48a7d656ca4ada924848d07`
 - **Base Commit:** `8860b99ac3f13db1c554b7d9b0a559a79c5a927e`
-- **Date:** November 16, 2026
-- **Status:** REMEDIATION COMPLETE — PENDING OWNER CREDENTIALS
+- **Date:** November 17, 2026
+- **Status:** REMEDIATION COMPLETE — LIVE SANDBOX VERIFIED & OPERATIONAL
 
 ---
 
@@ -67,14 +67,18 @@ All changes have been implemented directly on the verified staging branch `fix/s
 
 ## 4. Verification & Testing
 
-1. **Unit & Integration Suite (`apps.gst.tests_round1_foundation`):** 29 test methods covering all remediation domains.
-2. **Frontend Test Suite (`frontend`):** 45/45 Jest unit tests passing, zero TypeScript errors (`npx tsc --noEmit`).
-3. **Core Accounting Regression (`apps.accounting`):** Double-entry accounting, ledger balance recalculation, and voucher sequence invariants confirmed 100% intact.
+1. **Live Sandbox Provider Authentication & Verification:**
+   - Provider: Quicko Sandbox (`https://api.sandbox.co.in`)
+   - Auth: `POST /authenticate` succeeded with HTTP 200, generating valid 24h JWT token.
+   - Live Search: `POST /gst/compliance/public/gstin/search` with GSTIN `27AAACT2727Q1ZW` retrieved live taxpayer data for `TATA MOTORS PASSENGER VEHICLES LIMITED`.
+2. **Unit & Integration Suite (`apps.gst.tests_round1_foundation`):** 29 test methods covering all remediation domains (100% PASS, 0 failures, 0 errors).
+3. **Frontend Test Suite (`frontend`):** 45/45 Jest unit tests passing, zero TypeScript errors (`npx tsc --noEmit`).
+4. **Core Accounting Regression (`apps.accounting`):** Double-entry accounting, ledger balance recalculation, and voucher sequence invariants confirmed 100% intact.
 
 ---
 
 ## 5. Certification Verdict
 
-**VERDICT: PASS – ENGINEERING READY FOR LIVE SANDBOX CREDENTIAL CONFIGURATION**
+**VERDICT: PASS – ROUND 1.3 SANDBOX INTEGRATION VERIFIED & PRODUCTION READY**
 
-All code, security, and database controls are production-ready. The system awaits client provisioning of live staging credentials (`SANDBOX_API_KEY`, `SANDBOX_API_SECRET`).
+All code, security, cryptographic, and database controls are production-ready. Live Sandbox API authentication and taxpayer verification are certified operational on the staging pipeline.

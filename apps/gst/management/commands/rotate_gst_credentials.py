@@ -1,7 +1,7 @@
 import logging
 from typing import List, Dict, Any
 from django.core.management.base import BaseCommand
-from django.db import transaction
+from django.db import transaction, connection
 from apps.gst.models import CompanyGSTConfig, GSTRegistration
 from apps.gst.encryption import (
     rotate_credential_value,
@@ -11,6 +11,27 @@ from apps.gst.encryption import (
 )
 
 logger = logging.getLogger('apps.gst.rotation')
+
+
+def _get_raw_row(model_class, pk, field_names):
+    """
+    Directly fetches raw ciphertext from the database without invoking
+    Django field converters (from_db_value), allowing inspection of the
+    exact ciphertext envelope for idempotency checking.
+    """
+    table_name = model_class._meta.db_table
+    col_names = [model_class._meta.get_field(f).column for f in field_names]
+    col_str = ", ".join([f'"{c}"' for c in col_names])
+    clean_pk = str(pk).replace('-', '')
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f'SELECT {col_str} FROM "{table_name}" WHERE "id" = %s OR "id" = %s',
+            [str(pk), clean_pk]
+        )
+        row = cursor.fetchone()
+        if not row:
+            return {}
+        return dict(zip(field_names, row))
 
 CONFIG_ENCRYPTED_FIELDS = [
     'api_key',
@@ -87,7 +108,7 @@ class Command(BaseCommand):
             has_error = False
 
             # Query raw database values to inspect ciphertext directly
-            raw_row = CompanyGSTConfig.objects.filter(pk=config.pk).values(*CONFIG_ENCRYPTED_FIELDS).first()
+            raw_row = _get_raw_row(CompanyGSTConfig, config.pk, CONFIG_ENCRYPTED_FIELDS)
             if not raw_row:
                 continue
 
@@ -139,7 +160,7 @@ class Command(BaseCommand):
             fields_to_update = []
             has_error = False
 
-            raw_row = GSTRegistration.objects.filter(pk=reg.pk).values(*REGISTRATION_ENCRYPTED_FIELDS).first()
+            raw_row = _get_raw_row(GSTRegistration, reg.pk, REGISTRATION_ENCRYPTED_FIELDS)
             if not raw_row:
                 continue
 

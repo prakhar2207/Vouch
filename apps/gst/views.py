@@ -606,6 +606,7 @@ class GSTRegistrationDetailAPIView(APIView):
         company = get_company_or_404(request.user, company_id)
         try:
             reg = GSTRegistrationService.get_registration(company, pk)
+            self.check_object_permissions(request, reg)
         except GSTRegistrationAccessDenied:
             return Response({"success": False, "error": "GST registration not found."}, status=404)
 
@@ -614,6 +615,8 @@ class GSTRegistrationDetailAPIView(APIView):
     def put(self, request, company_id, pk):
         company = get_company_or_404(request.user, company_id)
         try:
+            reg = GSTRegistrationService.get_registration(company, pk)
+            self.check_object_permissions(request, reg)
             updated_reg = GSTRegistrationService.update_registration(
                 company=company,
                 registration_id=pk,
@@ -635,6 +638,7 @@ class GSTRegistrationDetailAPIView(APIView):
         hard_delete = request.query_params.get('hard_delete', 'false').lower() == 'true'
         try:
             reg = GSTRegistrationService.get_registration(company, pk)
+            self.check_object_permissions(request, reg)
             if hard_delete:
                 # Only hard delete if zero vouchers reference it
                 from apps.accounting.models import Voucher
