@@ -38,6 +38,15 @@ from .views import (
     EWayBillVehicleUpdateAPIView,
     EWayBillCancelV2APIView,
     GSTAuditLogsAPIView,
+    GSTWorkspacePeriodAPIView,
+    GSTWorkspaceDraftAPIView,
+    GSTWorkspaceValidateAPIView,
+    GSTWorkspaceSignOffAPIView,
+    GSTWorkspaceExportAPIView,
+    GSTReconciliationUploadAPIView,
+    GSTReconciliationSummaryAPIView,
+    GSTReconciliationRecordsAPIView,
+    GSTReconciliationManualMatchAPIView,
 )
 from .itc_views import (
     GSTR2BUploadView,
@@ -83,6 +92,20 @@ urlpatterns = [
     path('reconciliation/gstr2b/<uuid:company_id>/', GSTR2BReconciliationAPIView.as_view(), name='gst_reconciliation_gstr2b'),
     path('reconciliation/gstr2b/sync/<uuid:company_id>/', GSTR2BSyncFromSandboxAPIView.as_view(), name='gst_reconciliation_gstr2b_sync'),
     path('reconciliation/gstr2b/review/<uuid:record_id>/', GSTR2BReviewRecordAPIView.as_view(), name='gst_reconciliation_review'),
+    path('reconciliation/<uuid:company_id>/upload-2b/', GSTReconciliationUploadAPIView.as_view(), name='gst_reconciliation_upload_2b'),
+    path('reconciliation/<uuid:company_id>/run/', GSTReconciliationSummaryAPIView.as_view(), name='gst_reconciliation_run'),
+    path('reconciliation/<uuid:company_id>/summary/', GSTReconciliationSummaryAPIView.as_view(), name='gst_reconciliation_summary'),
+    path('reconciliation/<uuid:company_id>/records/', GSTReconciliationRecordsAPIView.as_view(), name='gst_reconciliation_records'),
+    path('reconciliation/<uuid:company_id>/manual-match/', GSTReconciliationManualMatchAPIView.as_view(), name='gst_reconciliation_manual_match'),
+
+    # 6B. Unified GST Return Workspace (Round 2.0)
+    path('workspace/<uuid:company_id>/', GSTWorkspacePeriodAPIView.as_view(), name='gst_workspace_period'),
+    path('workspace/<uuid:company_id>/init-period/', GSTWorkspacePeriodAPIView.as_view(), name='gst_workspace_init_period'),
+    path('workspace/<uuid:company_id>/generate-draft/', GSTWorkspaceDraftAPIView.as_view(), name='gst_workspace_generate_draft'),
+    path('workspace/<uuid:company_id>/draft/', GSTWorkspaceDraftAPIView.as_view(), name='gst_workspace_draft_get'),
+    path('workspace/<uuid:company_id>/validate/', GSTWorkspaceValidateAPIView.as_view(), name='gst_workspace_validate'),
+    path('workspace/<uuid:company_id>/sign-off/', GSTWorkspaceSignOffAPIView.as_view(), name='gst_workspace_sign_off'),
+    path('workspace/<uuid:company_id>/export/', GSTWorkspaceExportAPIView.as_view(), name='gst_workspace_export'),
 
     # Legacy ITC views
     path('itc/upload-2b/', GSTR2BUploadView.as_view(), name='itc_upload_2b'),

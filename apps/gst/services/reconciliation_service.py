@@ -137,7 +137,8 @@ class GSTReconciliationService:
         if return_period:
             rec_qs = rec_qs.filter(import_batch__return_period=return_period)
         if registration:
-            rec_qs = rec_qs.filter(gst_registration=registration)
+            from django.db.models import Q
+            rec_qs = rec_qs.filter(Q(gst_registration=registration) | Q(gst_registration__isnull=True))
 
         gstr2b_records = list(rec_qs.select_related('import_batch'))
 

@@ -8,7 +8,8 @@ from apps.gst.models import (
     GSTR2BImport,
     GSTR2BRecord,
     GSTFilingRecord,
-    GSTAuditLog
+    GSTAuditLog,
+    GSTReturnWorkspace
 )
 
 
@@ -165,3 +166,27 @@ class GSTAuditLogSerializer(serializers.ModelSerializer):
             'request_summary', 'response_summary', 'error_message',
             'performed_by_email', 'ip_address', 'created_at'
         ]
+
+
+class GSTReturnWorkspaceSerializer(serializers.ModelSerializer):
+    gstin = serializers.CharField(source='gst_registration.gstin', read_only=True, default='')
+    state_code = serializers.CharField(source='gst_registration.state_code', read_only=True, default='')
+    reviewed_by_email = serializers.EmailField(source='reviewed_by.email', read_only=True)
+
+    class Meta:
+        model = GSTReturnWorkspace
+        fields = [
+            'id', 'company', 'gst_registration', 'gstin', 'state_code',
+            'financial_year', 'return_period', 'return_type', 'status',
+            'sales_data_available', 'purchase_data_available',
+            'unclassified_count', 'validation_error_count', 'validation_warning_count',
+            'tax_liability_summary', 'itc_summary', 'reconciliation_status',
+            'validation_errors', 'is_stale', 'last_generated_at',
+            'reviewed_by', 'reviewed_by_email', 'reviewed_at',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = [
+            'id', 'company', 'created_at', 'updated_at', 'is_stale',
+            'last_generated_at', 'reviewed_at'
+        ]
+

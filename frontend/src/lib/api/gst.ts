@@ -458,5 +458,74 @@ export const gstApi = {
     const url = `${API_BASE_URL}/api/v1/gst/reports/gstr3b/${companyId}/?start_date=${startDate}&end_date=${endDate}`;
     const res = await axios.get(url, { headers: getHeaders(companyId) });
     return res.data;
+  },
+
+  // Round 2.0 GST Return Workspace & Reconciliation APIs
+  async getWorkspace(companyId: string, period: string, returnType: string = 'GSTR1', regId?: string) {
+    let url = `${API_BASE_URL}/api/v1/gst/workspace/${companyId}/?period=${period}&return_type=${returnType}`;
+    if (regId) url += `&registration_id=${regId}`;
+    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  async generateWorkspaceDraft(companyId: string, period: string, returnType: string = 'GSTR1', regId?: string) {
+    const url = `${API_BASE_URL}/api/v1/gst/workspace/${companyId}/generate-draft/`;
+    const res = await axios.post(url, { period, return_type: returnType, registration_id: regId }, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  async validateWorkspace(companyId: string, period: string, returnType: string = 'GSTR1', regId?: string) {
+    const url = `${API_BASE_URL}/api/v1/gst/workspace/${companyId}/validate/`;
+    const res = await axios.post(url, { period, return_type: returnType, registration_id: regId }, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  async signOffWorkspace(companyId: string, period: string, returnType: string = 'GSTR1', regId?: string) {
+    const url = `${API_BASE_URL}/api/v1/gst/workspace/${companyId}/sign-off/`;
+    const res = await axios.post(url, { period, return_type: returnType, registration_id: regId }, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  async exportWorkspace(companyId: string, period: string, returnType: string = 'GSTR1', format: string = 'JSON', regId?: string) {
+    const url = `${API_BASE_URL}/api/v1/gst/workspace/${companyId}/export/`;
+    const res = await axios.post(url, { period, return_type: returnType, format, registration_id: regId }, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  async uploadGSTR2B(companyId: string, file: File, period?: string, regId?: string) {
+    const url = `${API_BASE_URL}/api/v1/gst/reconciliation/${companyId}/upload-2b/`;
+    const formData = new FormData();
+    formData.append('file', file);
+    if (period) formData.append('period', period);
+    if (regId) formData.append('registration_id', regId);
+    const headers = getHeaders(companyId);
+    const res = await axios.post(url, formData, { headers });
+    return res.data;
+  },
+
+  async getReconciliationSummary(companyId: string, period?: string, regId?: string) {
+    let url = `${API_BASE_URL}/api/v1/gst/reconciliation/${companyId}/summary/`;
+    const params = [];
+    if (period) params.push(`period=${period}`);
+    if (regId) params.push(`registration_id=${regId}`);
+    if (params.length > 0) url += `?${params.join('&')}`;
+    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  async getReconciliationRecords(companyId: string, period?: string, matchStatus?: string) {
+    let url = `${API_BASE_URL}/api/v1/gst/reconciliation/${companyId}/records/`;
+    const params = [];
+    if (period) params.push(`period=${period}`);
+    if (matchStatus) params.push(`match_status=${matchStatus}`);
+    if (params.length > 0) url += `?${params.join('&')}`;
+    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    return res.data;
+  },
+
+  async manualMatchRecord(companyId: string, recordId: string, voucherId: string, notes?: string) {
+    const url = `${API_BASE_URL}/api/v1/gst/reconciliation/${companyId}/manual-match/`;
+    const res = await axios.post(url, { record_id: recordId, voucher_id: voucherId, notes }, { headers: getHeaders(companyId) });
+    return res.data;
   }
 };

@@ -1,5 +1,6 @@
 import json
 from datetime import date
+from django.utils import timezone
 from django.http import HttpResponse, JsonResponse
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -515,14 +516,22 @@ class GSTRDirectPortalStatusAPIView(APIView):
 # PHASE 2 & 3: MULTI-GSTIN, SANDBOX PROVIDER & RECONCILIATION WORKSPACES
 # ==============================================================================
 
-from apps.gst.models import GSTRegistration, GSTAuditLog, EInvoiceRecord
+from apps.gst.models import (
+    GSTRegistration,
+    GSTAuditLog,
+    EInvoiceRecord,
+    GSTReturnWorkspace,
+    GSTR2BImport,
+    GSTR2BRecord
+)
 from apps.gst.serializers import (
     GSTRegistrationSerializer,
     GSTRegistrationWriteSerializer,
     EInvoiceRecordSerializer,
     EWayBillRecordSerializer,
     GSTR2BRecordSerializer,
-    GSTAuditLogSerializer
+    GSTAuditLogSerializer,
+    GSTReturnWorkspaceSerializer
 )
 from apps.gst.permissions import HasGSTPermission, CanManageGSTRegistration
 from apps.accounts.permissions import user_has_company_roles
@@ -530,6 +539,9 @@ from apps.gst.services.sandbox_client import SandboxGSTClient
 from apps.gst.services.gstin_service import GSTINService
 from apps.gst.services.returns_service import GSTReturnsService
 from apps.gst.services.reconciliation_service import GSTReconciliationService
+from apps.gst.services.workspace_service import GSTWorkspaceService
+from apps.gst.services.validation_service import GSTValidationService
+from apps.gst.services.itc_reconciliation_service import ITCReconciliationService
 from apps.gst.services.einvoice_service import EInvoiceService
 from apps.gst.services.ewaybill_service import EWayBillService as EWayBillServiceV2
 
@@ -1267,3 +1279,419 @@ class GSTAuditLogsAPIView(APIView):
         logs = GSTAuditLog.objects.filter(company=company).order_by('-created_at')[:100]
         serializer = GSTAuditLogSerializer(logs, many=True)
         return Response({"success": True, "logs": serializer.data})
+
+
+# ==============================================================================
+# ROUND 2.0: GST RETURN WORKSPACE, VALIDATION & RECONCILIATION API
+# ==============================================================================
+
+class GSTWorkspacePeriodAPIView(APIView):
+    """
+    GET /api/v1/gst/workspace/<uuid:company_id>/
+    POST /api/v1/gst/workspace/<uuid:company_id>/init-period/
+    Unified GST Workspace tracking return periods, data availability, validations, and drift.
+    """
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [IsAuthenticated(), CanViewGST()]
+        return [IsAuthenticated(), CanPrepareGST()]
+
+    def get(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        period = request.query_params.get('period', '082026')
+        return_type = request.query_params.get('return_type', 'GSTR1').upper()
+        reg_id = request.query_params.get('registration_id')
+
+        registration = None
+        if reg_id:
+            registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
+        if not registration:
+            registration = GSTRegistration.objects.filter(company=company, is_primary=True).first()
+
+        workspace = GSTWorkspaceService.get_or_create_workspace(
+            company=company,
+            registration=registration,
+            return_type=return_type,
+            return_period=period
+        )
+        GSTWorkspaceService.check_drift(workspace)
+
+        serializer = GSTReturnWorkspaceSerializer(workspace)
+        return Response({
+            "success": True,
+            "workspace": serializer.data
+        })
+
+    def post(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        period = request.data.get('period', '082026')
+        return_type = request.data.get('return_type', 'GSTR1').upper()
+        reg_id = request.data.get('registration_id')
+
+        registration = None
+        if reg_id:
+            registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
+        if not registration:
+            registration = GSTRegistration.objects.filter(company=company, is_primary=True).first()
+
+        workspace = GSTWorkspaceService.get_or_create_workspace(
+            company=company,
+            registration=registration,
+            return_type=return_type,
+            return_period=period
+        )
+        GSTWorkspaceService.check_drift(workspace)
+
+        serializer = GSTReturnWorkspaceSerializer(workspace)
+        return Response({
+            "success": True,
+            "message": f"GST return workspace period '{period}' initialized.",
+            "workspace": serializer.data
+        })
+
+
+class GSTWorkspaceDraftAPIView(APIView):
+    """
+    POST /api/v1/gst/workspace/<uuid:company_id>/generate-draft/
+    GET /api/v1/gst/workspace/<uuid:company_id>/draft/
+    Compiles or retrieves official return draft snapshot (GSTR-1, GSTR-3B).
+    """
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [IsAuthenticated(), CanViewGST()]
+        return [IsAuthenticated(), CanPrepareGST()]
+
+    def post(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        period = request.data.get('period', '082026')
+        return_type = request.data.get('return_type', 'GSTR1').upper()
+        reg_id = request.data.get('registration_id')
+
+        registration = None
+        if reg_id:
+            registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
+        if not registration:
+            registration = GSTRegistration.objects.filter(company=company, is_primary=True).first()
+
+        workspace = GSTWorkspaceService.get_or_create_workspace(
+            company=company,
+            registration=registration,
+            return_type=return_type,
+            return_period=period
+        )
+
+        updated_ws = GSTWorkspaceService.generate_draft(workspace, user=request.user)
+        serializer = GSTReturnWorkspaceSerializer(updated_ws)
+
+        return Response({
+            "success": True,
+            "message": f"Draft snapshot compiled for {return_type} ({period}).",
+            "workspace": serializer.data,
+            "draft": updated_ws.draft_payload
+        })
+
+    def get(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        period = request.query_params.get('period', '082026')
+        return_type = request.query_params.get('return_type', 'GSTR1').upper()
+        reg_id = request.query_params.get('registration_id')
+
+        registration = None
+        if reg_id:
+            registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
+        if not registration:
+            registration = GSTRegistration.objects.filter(company=company, is_primary=True).first()
+
+        workspace = GSTWorkspaceService.get_or_create_workspace(
+            company=company,
+            registration=registration,
+            return_type=return_type,
+            return_period=period
+        )
+        is_stale = GSTWorkspaceService.check_drift(workspace)
+        serializer = GSTReturnWorkspaceSerializer(workspace)
+
+        return Response({
+            "success": True,
+            "workspace": serializer.data,
+            "draft": workspace.draft_payload,
+            "is_stale": is_stale
+        })
+
+
+class GSTWorkspaceValidateAPIView(APIView):
+    """
+    POST /api/v1/gst/workspace/<uuid:company_id>/validate/
+    Executes centralized pre-filing validation checks against period vouchers.
+    """
+    permission_classes = [IsAuthenticated, CanViewGST]
+
+    def post(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        period = request.data.get('period', '082026')
+        return_type = request.data.get('return_type', 'GSTR1').upper()
+        reg_id = request.data.get('registration_id')
+
+        registration = None
+        if reg_id:
+            registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
+
+        start_date, end_date, _, _ = GSTReturnsService.parse_period(period)
+        val_res = GSTValidationService.validate_period_vouchers(
+            company=company,
+            registration=registration,
+            start_date=start_date,
+            end_date=end_date,
+            return_type=return_type
+        )
+        return Response({
+            "success": True,
+            "validation": val_res
+        })
+
+
+class GSTWorkspaceSignOffAPIView(APIView):
+    """
+    POST /api/v1/gst/workspace/<uuid:company_id>/sign-off/
+    Marks return draft as REVIEWED following accountant/CA sign-off.
+    """
+    permission_classes = [IsAuthenticated, CanPrepareGST]
+
+    def post(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        period = request.data.get('period', '082026')
+        return_type = request.data.get('return_type', 'GSTR1').upper()
+        reg_id = request.data.get('registration_id')
+
+        # Enforce authorized roles
+        if not user_has_company_roles(request.user, company, ['OWNER', 'ADMIN', 'ACCOUNTANT', 'CA']):
+            return Response({
+                "success": False,
+                "error": "Only company Owner, Admin, Accountant, or Chartered Accountant may sign off return drafts."
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        registration = None
+        if reg_id:
+            registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
+
+        workspace = GSTWorkspaceService.get_or_create_workspace(
+            company=company,
+            registration=registration,
+            return_type=return_type,
+            return_period=period
+        )
+
+        res = GSTWorkspaceService.sign_off_draft(workspace, user=request.user)
+        status_code = 200 if res.get("success") else 400
+        return Response(res, status=status_code)
+
+
+class GSTWorkspaceExportAPIView(APIView):
+    """
+    POST /api/v1/gst/workspace/<uuid:company_id>/export/
+    Exports official portal JSON payload or structured return data.
+    """
+    permission_classes = [IsAuthenticated, CanPrepareGST]
+
+    def post(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        period = request.data.get('period', '082026')
+        return_type = request.data.get('return_type', 'GSTR1').upper()
+        reg_id = request.data.get('registration_id')
+        fmt = request.data.get('format', 'JSON').upper()
+
+        registration = None
+        if reg_id:
+            registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
+
+        workspace = GSTWorkspaceService.get_or_create_workspace(
+            company=company,
+            registration=registration,
+            return_type=return_type,
+            return_period=period
+        )
+
+        res = GSTWorkspaceService.export_draft(workspace, export_format=fmt)
+        return Response(res)
+
+
+class GSTReconciliationUploadAPIView(APIView):
+    """
+    POST /api/v1/gst/reconciliation/<uuid:company_id>/upload-2b/
+    Securely uploads GSTR-2B JSON or Excel file with duplicate detection and automatic matching.
+    """
+    permission_classes = [IsAuthenticated, CanReconcileGST]
+
+    def post(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        file_obj = request.FILES.get('file')
+        period = request.data.get('period', '').strip()
+        reg_id = request.data.get('registration_id')
+
+        if not file_obj:
+            return Response({"success": False, "error": "No file provided for upload."}, status=400)
+
+        file_name = file_obj.name.lower()
+        if not (file_name.endswith('.json') or file_name.endswith('.xlsx') or file_name.endswith('.xls')):
+            return Response({
+                "success": False,
+                "error": "Unsupported file format. Please upload official GSTR-2B in .json or .xlsx format."
+            }, status=400)
+
+        # File size check (15MB maximum)
+        if file_obj.size > 15 * 1024 * 1024:
+            return Response({
+                "success": False,
+                "error": "File exceeds maximum permitted size of 15MB."
+            }, status=400)
+
+        registration = None
+        if reg_id:
+            registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
+
+        # Check duplicate import
+        if period and GSTR2BImport.objects.filter(
+            company=company,
+            return_period=period,
+            file_name=file_obj.name,
+            status='PROCESSED'
+        ).exists():
+            return Response({
+                "success": False,
+                "error": f"Duplicate import: A file named '{file_obj.name}' has already been processed for period '{period}'."
+            }, status=400)
+
+        try:
+            if file_name.endswith('.json'):
+                content = file_obj.read().decode('utf-8')
+                import json
+                json_data = json.loads(content)
+                import_batch = ITCReconciliationService.ingest_gstr2b_json(
+                    company=company,
+                    json_data=json_data,
+                    user=request.user,
+                    file_name=file_obj.name,
+                    return_period=period or None
+                )
+            else:
+                import_batch = ITCReconciliationService.ingest_gstr2b_excel(
+                    company=company,
+                    file_obj=file_obj,
+                    user=request.user,
+                    file_name=file_obj.name,
+                    return_period=period or None
+                )
+
+            if registration:
+                import_batch.gst_registration = registration
+                import_batch.save(update_fields=['gst_registration'])
+                import_batch.records.update(gst_registration=registration)
+
+            # Execute matching
+            rec_summary = GSTReconciliationService.reconcile_period(
+                company=company,
+                registration=registration,
+                return_period=import_batch.return_period
+            )
+
+            return Response({
+                "success": True,
+                "message": f"Successfully ingested {import_batch.total_invoices_count} records from '{file_obj.name}'.",
+                "import_batch_id": str(import_batch.id),
+                "return_period": import_batch.return_period,
+                "total_invoices": import_batch.total_invoices_count,
+                "reconciliation_summary": rec_summary
+            })
+        except Exception as e:
+            logger.exception("Error processing GSTR-2B file upload")
+            return Response({"success": False, "error": f"Failed to parse GSTR-2B file: {str(e)}"}, status=400)
+
+
+class GSTReconciliationSummaryAPIView(APIView):
+    """
+    GET /api/v1/gst/reconciliation/<uuid:company_id>/summary/
+    Returns 9-category match breakdown and financial metrics.
+    """
+    permission_classes = [IsAuthenticated, CanViewGST]
+
+    def get(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        period = request.query_params.get('period')
+        reg_id = request.query_params.get('registration_id')
+
+        registration = None
+        if reg_id:
+            registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
+
+        summary = GSTReconciliationService.reconcile_period(
+            company=company,
+            registration=registration,
+            return_period=period
+        )
+        return Response({"success": True, "data": summary})
+
+
+class GSTReconciliationRecordsAPIView(APIView):
+    """
+    GET /api/v1/gst/reconciliation/<uuid:company_id>/records/
+    Paginated list of GSTR-2B records with individual match status and diffs.
+    """
+    permission_classes = [IsAuthenticated, CanViewGST]
+
+    def get(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        period = request.query_params.get('period')
+        status_filter = request.query_params.get('match_status')
+
+        records_qs = GSTR2BRecord.objects.filter(company=company).order_by('-invoice_date')
+        if period:
+            records_qs = records_qs.filter(import_batch__return_period=period)
+        if status_filter and status_filter != 'ALL':
+            records_qs = records_qs.filter(match_status=status_filter)
+
+        page_records = records_qs[:200]
+        serializer = GSTR2BRecordSerializer(page_records, many=True)
+        return Response({
+            "success": True,
+            "count": records_qs.count(),
+            "records": serializer.data
+        })
+
+
+class GSTReconciliationManualMatchAPIView(APIView):
+    """
+    POST /api/v1/gst/reconciliation/<uuid:company_id>/manual-match/
+    Manually associates a GSTR-2B record with a purchase voucher with audit trail.
+    """
+    permission_classes = [IsAuthenticated, CanReconcileGST]
+
+    def post(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        record_id = request.data.get('record_id')
+        voucher_id = request.data.get('voucher_id')
+        notes = request.data.get('notes', '')
+
+        try:
+            record = GSTR2BRecord.objects.get(id=record_id, company=company)
+        except GSTR2BRecord.DoesNotExist:
+            return Response({"success": False, "error": "GSTR-2B record not found."}, status=404)
+
+        try:
+            voucher = Voucher.objects.get(id=voucher_id, company=company)
+        except Voucher.DoesNotExist:
+            return Response({"success": False, "error": "Purchase voucher not found."}, status=404)
+
+        record.matched_voucher = voucher
+        record.match_status = 'MATCHED'
+        record.is_reviewed = True
+        record.reviewed_at = timezone.now()
+        record.reviewed_by = request.user
+        record.review_notes = notes or f"Manually linked to voucher {voucher.voucher_number} by {request.user.email}"
+        record.save(update_fields=['matched_voucher', 'match_status', 'is_reviewed', 'reviewed_at', 'reviewed_by', 'review_notes'])
+
+        return Response({
+            "success": True,
+            "message": f"Successfully linked record '{record.invoice_number}' with voucher '{voucher.voucher_number}'.",
+            "record": GSTR2BRecordSerializer(record).data
+        })
+

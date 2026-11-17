@@ -64,12 +64,14 @@ class ITCReconciliationService:
         json_data: Any,
         user=None,
         file_name: str = '',
-        return_period: Optional[str] = None
+        return_period: Optional[str] = None,
+        registration: Optional[Any] = None
     ) -> GSTR2BImport:
         """
         Ingests official GSTR-2B JSON downloaded from the GST Portal.
         Parses B2B (Table 3), B2BA (Amendments), and CDNR (Credit/Debit notes).
         """
+        from apps.gst.models import GSTRegistration
         if isinstance(json_data, (str, bytes)):
             json_data = json.loads(json_data)
 
@@ -86,8 +88,17 @@ class ITCReconciliationService:
             else:
                 fy = f"{y-1}-{str(y)[2:]}"
 
+        # Resolve GST registration
+        if not registration:
+            target_gstin = str(json_data.get('gstin') or json_data.get('data', {}).get('gstin') or '').strip().upper()
+            if target_gstin:
+                registration = GSTRegistration.objects.filter(company=company, gstin=target_gstin).first()
+            if not registration:
+                registration = GSTRegistration.objects.filter(company=company, is_primary=True).first()
+
         import_batch = GSTR2BImport.objects.create(
             company=company,
+            gst_registration=registration,
             return_period=fp,
             financial_year=fy,
             file_format='JSON',
@@ -157,6 +168,7 @@ class ITCReconciliationService:
                 record = GSTR2BRecord(
                     import_batch=import_batch,
                     company=company,
+                    gst_registration=registration,
                     supplier_gstin=ctin,
                     supplier_name=trdnm,
                     invoice_number=inum,
@@ -215,6 +227,7 @@ class ITCReconciliationService:
                 record = GSTR2BRecord(
                     import_batch=import_batch,
                     company=company,
+                    gst_registration=registration,
                     supplier_gstin=ctin,
                     supplier_name=trdnm,
                     invoice_number=nt_num,

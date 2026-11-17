@@ -516,3 +516,85 @@ class GSTAuditLog(models.Model):
 
     def __str__(self):
         return f"[{self.action}] {self.company.name} - Success={self.is_success} ({self.created_at.strftime('%Y-%m-%d %H:%M:%S')})"
+
+
+class GSTReturnWorkspace(models.Model):
+    """
+    Unified GST Workspace model tracking return period lifecycle, draft snapshots,
+    pre-filing validations, and voucher drift detection.
+    
+    Lifecycle Statuses:
+    NOT_STARTED -> DRAFT -> VALIDATION_REQUIRED -> READY_FOR_REVIEW -> REVIEWED -> EXPORTED
+    """
+    STATUS_CHOICES = (
+        ('NOT_STARTED', 'Not Started'),
+        ('DRAFT', 'Draft Generated'),
+        ('VALIDATION_REQUIRED', 'Validation Required'),
+        ('READY_FOR_REVIEW', 'Ready for Review'),
+        ('REVIEWED', 'Reviewed & Approved'),
+        ('EXPORTED', 'Exported'),
+    )
+
+    RETURN_TYPE_CHOICES = (
+        ('GSTR1', 'GSTR-1 (Outward Supplies)'),
+        ('GSTR3B', 'GSTR-3B (Monthly Summary)'),
+        ('GSTR2B_RECON', 'GSTR-2B Reconciliation'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='gst_return_workspaces')
+    gst_registration = models.ForeignKey(
+        GSTRegistration,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='return_workspaces'
+    )
+    financial_year = models.CharField(max_length=15, db_index=True)  # e.g. "2026-27"
+    return_period = models.CharField(max_length=20, db_index=True)   # e.g. "082026" or "2026-08"
+    return_type = models.CharField(max_length=20, choices=RETURN_TYPE_CHOICES, default='GSTR1', db_index=True)
+
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='NOT_STARTED', db_index=True)
+
+    sales_data_available = models.BooleanField(default=False)
+    purchase_data_available = models.BooleanField(default=False)
+    unclassified_count = models.PositiveIntegerField(default=0)
+    validation_error_count = models.PositiveIntegerField(default=0)
+    validation_warning_count = models.PositiveIntegerField(default=0)
+
+    tax_liability_summary = models.JSONField(default=dict, blank=True)
+    itc_summary = models.JSONField(default=dict, blank=True)
+    reconciliation_status = models.CharField(max_length=30, default='NOT_STARTED')
+    validation_errors = models.JSONField(default=list, blank=True)
+
+    # Snapshot and Drift Detection
+    source_voucher_hash = models.CharField(max_length=64, blank=True, default='')
+    is_stale = models.BooleanField(default=False)
+    draft_payload = models.JSONField(default=dict, blank=True)
+    last_generated_at = models.DateTimeField(null=True, blank=True)
+
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reviewed_gst_workspaces'
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-return_period', 'return_type']
+        unique_together = ('company', 'gst_registration', 'return_type', 'return_period')
+        indexes = [
+            models.Index(fields=['company', 'return_type', 'return_period']),
+            models.Index(fields=['company', 'status']),
+            models.Index(fields=['company', 'financial_year']),
+        ]
+
+    def __str__(self):
+        reg = self.gst_registration.gstin if self.gst_registration else "Default"
+        return f"{self.company.name} [{reg}] {self.return_type} ({self.return_period}) - {self.status}"
+
