@@ -800,8 +800,8 @@ class PartyEnrichmentApplyAPIView(APIView):
             return Response({"success": False, "error": "company_id, party_id, and fields_to_update are required."}, status=400)
 
         company = get_company_or_404(request.user, company_id)
-        if not user_has_company_roles(request.user, company, ['OWNER', 'ADMIN', 'ACCOUNTANT']):
-            return Response({"success": False, "error": "Permission denied: Only OWNER, ADMIN, or ACCOUNTANT can enrich party ledgers."}, status=403)
+        if not user_has_company_roles(request.user, company, ['OWNER', 'ADMIN', 'ACCOUNTANT', 'CA']):
+            return Response({"success": False, "error": "Permission denied: Only OWNER, ADMIN, ACCOUNTANT, or CA can enrich party ledgers."}, status=403)
 
         from apps.ledgers.models import Ledger
         try:

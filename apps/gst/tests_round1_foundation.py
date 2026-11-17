@@ -121,6 +121,12 @@ class GSTRound1FoundationTests(TestCase):
         )
         UserCompany.objects.create(user=self.user_viewer, company=self.company_a, role="VIEWER")
 
+        self.user_ca = User.objects.create_user(
+            email="ca_a@apexbelting.com",
+            password="SecurePassword123!"
+        )
+        UserCompany.objects.create(user=self.user_ca, company=self.company_a, role="CA")
+
         # Config A with Sandbox Credentials
         self.config_a = CompanyGSTConfig.objects.create(
             company=self.company_a,
@@ -160,6 +166,9 @@ class GSTRound1FoundationTests(TestCase):
 
         self.client_viewer = APIClient()
         self.client_viewer.force_authenticate(user=self.user_viewer)
+
+        self.client_ca = APIClient()
+        self.client_ca.force_authenticate(user=self.user_ca)
 
     # =========================================================================
     # SECTION A: PROVIDER CLIENT TESTS
@@ -463,11 +472,20 @@ class GSTRound1FoundationTests(TestCase):
         Verifies that registering GSTINs, verifying taxpayers, and modifying registrations
         causes ZERO mutations to accounting vouchers, balances, or stock ledgers.
         """
-        # Baseline Accounting Voucher
+        # Baseline Accounting Voucher & Entries
+        from apps.accounting.models import LedgerEntry
         party = Ledger.objects.create(
             company=self.company_a,
             group=self.group_debtors,
             name="Client A",
+            opening_balance=Decimal("500.00"),
+            current_balance=Decimal("1680.00")
+        )
+        sales_ledger = Ledger.objects.create(
+            company=self.company_a,
+            group=self.group_creditors,
+            name="Domestic Sales",
+            opening_balance=Decimal("0.00"),
             current_balance=Decimal("1180.00")
         )
         voucher = Voucher.objects.create(
@@ -480,12 +498,27 @@ class GSTRound1FoundationTests(TestCase):
             status='POSTED',
             total_amount=Decimal('1180.00')
         )
+        LedgerEntry.objects.create(
+            voucher=voucher,
+            ledger=party,
+            debit_amount=Decimal('1180.00'),
+            credit_amount=Decimal('0.00')
+        )
+        LedgerEntry.objects.create(
+            voucher=voucher,
+            ledger=sales_ledger,
+            debit_amount=Decimal('0.00'),
+            credit_amount=Decimal('1180.00')
+        )
 
         voucher_count_before = Voucher.objects.filter(company=self.company_a).count()
+        entry_count_before = LedgerEntry.objects.filter(voucher__company=self.company_a).count()
         party_bal_before = party.current_balance
+        party_op_before = party.opening_balance
+        sales_bal_before = sales_ledger.current_balance
 
         # Perform multiple GST operations
-        GSTRegistrationService.create_registration(
+        reg = GSTRegistrationService.create_registration(
             company=self.company_a,
             gstin="27AAACA1234A1Z5",
             state_code="27",
@@ -494,15 +527,38 @@ class GSTRound1FoundationTests(TestCase):
         )
         GSTINService.validate_format("27AADCB2230M1ZT")
 
+        # Perform party enrichment (metadata update only)
+        GSTINService.apply_party_enrichment(
+            ledger_id=party.id,
+            verified_data={
+                "gstin": "27AAACA1234A1Z5",
+                "legal_name": "Client A Legal Entity",
+                "address": "Verified Billing Address",
+                "state_code": "27"
+            },
+            apply_legal_name=True,
+            apply_address=True,
+            apply_state=True,
+            user=self.user_a
+        )
+
         # Assert zero accounting mutations
         voucher_count_after = Voucher.objects.filter(company=self.company_a).count()
+        entry_count_after = LedgerEntry.objects.filter(voucher__company=self.company_a).count()
         party.refresh_from_db()
+        sales_ledger.refresh_from_db()
         voucher.refresh_from_db()
 
         self.assertEqual(voucher_count_before, voucher_count_after)
+        self.assertEqual(entry_count_before, entry_count_after)
         self.assertEqual(party_bal_before, party.current_balance)
+        self.assertEqual(party_op_before, party.opening_balance)
+        self.assertEqual(sales_bal_before, sales_ledger.current_balance)
         self.assertEqual(voucher.total_amount, Decimal('1180.00'))
         self.assertEqual(voucher.status, 'POSTED')
+        # Only party metadata was enriched
+        self.assertEqual(party.name, "Client A Legal Entity")
+        self.assertEqual(party.address, "Verified Billing Address")
 
     # =========================================================================
     # SECTION G: ROUND 1.2 ENCRYPTION HARDENING & CACHE BEHAVIOR
@@ -721,6 +777,11 @@ class GSTRound1FoundationTests(TestCase):
             call_command('rotate_gst_credentials', f'--company-id={self.company_b.id}', stdout=out_idempotent)
             self.assertIn("Total Fields Rotated:             0", out_idempotent.getvalue())
 
+            # 4. Removing the old key entirely does not break credential retrieval
+            with self.settings(GST_ENCRYPTION_KEY=primary_key, GST_ENCRYPTION_KEY_OLD=None):
+                config.refresh_from_db()
+                self.assertEqual(config.sandbox_api_key, "secret_key_under_old_key")
+
     def test_rbac_registration_mutations_restricted_to_admin_owner(self):
         """
         Verifies that only OWNER and ADMIN can create, update, or deactivate registrations.
@@ -812,9 +873,11 @@ class GSTRound1FoundationTests(TestCase):
             "fields_to_update": ["legal_name", "address"]
         }
 
-        # 1. VIEWER cannot enrich
+        # 1. VIEWER and EMPLOYEE cannot enrich
         res_viewer = self.client_viewer.post(enrich_url, payload, format='json')
         self.assertEqual(res_viewer.status_code, 403)
+        res_emp = self.client_employee.post(enrich_url, payload, format='json')
+        self.assertEqual(res_emp.status_code, 403)
 
         # 2. Cross-tenant attempt (Company B tries to enrich Company A's party)
         cross_payload = {
@@ -825,7 +888,11 @@ class GSTRound1FoundationTests(TestCase):
         res_cross = self.client_b.post(enrich_url, cross_payload, format='json')
         self.assertEqual(res_cross.status_code, 404)
 
-        # 3. ACCOUNTANT can enrich
+        # 3. CA can enrich
+        res_ca = self.client_ca.post(enrich_url, payload, format='json')
+        self.assertEqual(res_ca.status_code, 200)
+
+        # 4. ACCOUNTANT can enrich
         res_acc = self.client_a.post(enrich_url, payload, format='json')
         self.assertEqual(res_acc.status_code, 200)
         party.refresh_from_db()
@@ -911,6 +978,61 @@ class GSTRound1FoundationTests(TestCase):
         self.assertFalse(reg_mh.is_primary)
         self.assertTrue(reg_dl.is_primary)
         self.assertEqual(self.company_a.gstin, reg_dl.gstin)
+
+    def test_deactivate_sole_primary_registration_leaves_zero_primary_registrations(self):
+        """
+        Verifies that deactivating the only registration leaves the company with
+        zero primary registrations and zero active registrations without database errors,
+        explicitly confirming the 'at most one primary' invariant (0 <= 1).
+        """
+        reg = GSTRegistration.objects.create(
+            company=self.company_a,
+            gstin="27AAACA1234A1Z5",
+            legal_name="Apex MH",
+            state_code="27",
+            status="ACTIVE",
+            is_primary=True
+        )
+        GSTRegistrationService.deactivate_registration(self.company_a, str(reg.id), user=self.user_admin)
+        reg.refresh_from_db()
+        self.assertEqual(reg.status, "INACTIVE")
+        self.assertFalse(reg.is_primary)
+        self.assertEqual(self.company_a.gst_registrations.filter(is_primary=True).count(), 0)
+        self.assertEqual(self.company_a.gst_registrations.filter(status='ACTIVE').count(), 0)
+
+    def test_concurrent_primary_switching_atomic(self):
+        """
+        Verifies that updating a non-primary registration to primary atomically
+        demotes the existing primary, maintaining exactly one primary active.
+        """
+        reg1 = GSTRegistration.objects.create(
+            company=self.company_a,
+            gstin="27AAACA1234A1Z5",
+            legal_name="Apex MH",
+            state_code="27",
+            status="ACTIVE",
+            is_primary=True
+        )
+        reg2 = GSTRegistration.objects.create(
+            company=self.company_a,
+            gstin="07AAACA1234A1Z7",
+            legal_name="Apex DL",
+            state_code="07",
+            status="ACTIVE",
+            is_primary=False
+        )
+        GSTRegistrationService.update_registration(
+            company=self.company_a,
+            registration_id=str(reg2.id),
+            data={"is_primary": True},
+            user=self.user_admin
+        )
+        reg1.refresh_from_db()
+        reg2.refresh_from_db()
+        self.assertFalse(reg1.is_primary)
+        self.assertTrue(reg2.is_primary)
+        self.assertEqual(self.company_a.gstin, reg2.gstin)
+        self.assertEqual(self.company_a.gst_registrations.filter(is_primary=True).count(), 1)
 
     def test_force_refresh_failure_does_not_return_stale_cache_as_success(self):
         """
