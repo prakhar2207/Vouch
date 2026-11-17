@@ -397,17 +397,26 @@ class SandboxGSTClient:
             return res
 
         data = res.get('data') or {}
+        if isinstance(data.get('data'), dict):
+            data = data['data']
+
         # Normalize fields returned by Sandbox
         pradr = data.get('pradr', {}) or {}
         addr_obj = pradr.get('addr', {}) if isinstance(pradr, dict) else {}
         
         # Build address string
+        flno = addr_obj.get('flno', '')
         bno = addr_obj.get('bno', '')
+        bnm = addr_obj.get('bnm', '')
         st = addr_obj.get('st', '')
         loc = addr_obj.get('loc', '')
+        dst = addr_obj.get('dst', '')
         pncd = addr_obj.get('pncd', '')
-        stcd = addr_obj.get('stcd', '') or gstin[:2]
-        full_address = ", ".join(part for part in [bno, st, loc] if part)
+        # In Indian GST, state code is strictly the 2-digit numeric prefix of GSTIN
+        state_code = gstin[:2] if len(gstin) >= 2 and gstin[:2].isdigit() else (addr_obj.get('stcd', '')[:2])
+        # Quicko returns the state name in addr_obj['stcd'] (e.g. "Maharashtra")
+        state_name = addr_obj.get('stcd', '') or data.get('state_name', '')
+        full_address = ", ".join(part for part in [flno, bno, bnm, st, loc, dst] if part)
 
         normalized = {
             "success": True,
@@ -417,8 +426,8 @@ class SandboxGSTClient:
             "status": data.get('sts') or data.get('status') or 'Active',
             "taxpayer_type": data.get('ctb') or data.get('taxpayer_type') or 'Regular',
             "registration_date": data.get('rgdt') or data.get('registration_date') or None,
-            "state_code": stcd,
-            "state_name": data.get('state_name') or '',
+            "state_code": state_code,
+            "state_name": state_name,
             "address": full_address or data.get('address') or '',
             "pincode": pncd or data.get('pincode') or '',
             "raw": data,
