@@ -90,6 +90,11 @@ class GSTReturnsService:
         """
         start_date, end_date, period_code, fy = cls.parse_period(return_period)
 
+        # Statutory B2CL Threshold (CBIC Notification No. 12/2024 - Central Tax amending Rule 59(4)(b)):
+        # - Return periods up to July 2024: > ₹2,50,000 (invoice value)
+        # - Return periods from August 2024 onwards: > ₹1,00,000 (invoice value)
+        b2cl_threshold = Decimal('100000.00') if start_date >= date(2024, 8, 1) else Decimal('250000.00')
+
         supplier_gstin = (
             registration.gstin if registration
             else (company.gstin or 'URP')
@@ -282,8 +287,8 @@ class GSTReturnsService:
                         "itms": rate_items
                     }
                     b2b_by_recipient[party_gstin].append(inv_obj)
-                elif is_interstate and voucher_total > Decimal('250000.00'):
-                    # Table 5: B2CL (Interstate Large Invoices > 2.5L to unregistered)
+                elif is_interstate and not is_registered and voucher_total > b2cl_threshold:
+                    # Table 5: B2CL (Interstate Large Invoices > threshold to unregistered)
                     b2cl_list.append({
                         "pos": pos,
                         "inv": [{
@@ -330,7 +335,7 @@ class GSTReturnsService:
                 else:
                     # Table 9B: CDNUR (Credit/Debit Notes to Unregistered)
                     cdnur_list.append({
-                        "typ": "B2CL" if (is_interstate and voucher_total > Decimal('250000.00')) else "B2CS",
+                        "typ": "B2CL" if (is_interstate and not is_registered and voucher_total > b2cl_threshold) else "B2CS",
                         "nt": [note_obj]
                     })
 
@@ -498,24 +503,29 @@ class GSTReturnsService:
     def calculate_rule88a_setoff(
         cls,
         outward_tax: Dict[str, Decimal],
-        itc_available: Dict[str, Decimal]
+        itc_available: Dict[str, Decimal],
+        igst_distribution: str = 'OPTIMAL'
     ) -> Dict[str, Any]:
         """
         Executes statutory Rule 88A Input Tax Credit set-off waterfall:
-        Priority 1: Exhaust IGST credit completely against IGST liability, then CGST, then SGST.
-        Priority 2: Exhaust CGST credit against remaining CGST liability, then IGST liability. (Never SGST).
-        Priority 3: Exhaust SGST credit against remaining SGST liability, then IGST liability. (Never CGST).
-        Priority 4: Cess sets off Cess only.
+        Priority 1: Exhaust IGST credit completely against IGST liability.
+        Priority 2: Remaining IGST credit can be utilized towards CGST and SGST in any order/proportion
+                    (Sections 49, 49A, 49B & Rule 88A, Circular No. 98/17/2019-GST).
+        Priority 3: Exhaust CGST credit against remaining CGST liability, then IGST liability (Only after IGST credit is 0).
+                    NEVER against SGST.
+        Priority 4: Exhaust SGST credit against remaining SGST liability, then IGST liability (Only after IGST credit is 0).
+                    NEVER against CGST.
+        Priority 5: Cess sets off Cess only.
         """
-        L_igst = outward_tax.get("igst", Decimal('0.00'))
-        L_cgst = outward_tax.get("cgst", Decimal('0.00'))
-        L_sgst = outward_tax.get("sgst", Decimal('0.00'))
-        L_cess = outward_tax.get("cess", Decimal('0.00'))
+        L_igst = quantize_amount(outward_tax.get("igst", Decimal('0.00')))
+        L_cgst = quantize_amount(outward_tax.get("cgst", Decimal('0.00')))
+        L_sgst = quantize_amount(outward_tax.get("sgst", Decimal('0.00')))
+        L_cess = quantize_amount(outward_tax.get("cess", Decimal('0.00')))
 
-        C_igst = itc_available.get("igst", Decimal('0.00'))
-        C_cgst = itc_available.get("cgst", Decimal('0.00'))
-        C_sgst = itc_available.get("sgst", Decimal('0.00'))
-        C_cess = itc_available.get("cess", Decimal('0.00'))
+        C_igst = quantize_amount(itc_available.get("igst", Decimal('0.00')))
+        C_cgst = quantize_amount(itc_available.get("cgst", Decimal('0.00')))
+        C_sgst = quantize_amount(itc_available.get("sgst", Decimal('0.00')))
+        C_cess = quantize_amount(itc_available.get("cess", Decimal('0.00')))
 
         # Step 1: Cess offset
         cess_paid_itc = min(C_cess, L_cess)
@@ -527,19 +537,50 @@ class GSTReturnsService:
         rem_L_igst = L_igst - igst_paid_igst_itc
         rem_C_igst = C_igst - igst_paid_igst_itc
 
-        # IGST credit used for CGST liability
         cgst_paid_igst_itc = Decimal('0.00')
-        if rem_C_igst > 0 and L_cgst > 0:
-            cgst_paid_igst_itc = min(rem_C_igst, L_cgst)
-            L_cgst -= cgst_paid_igst_itc
-            rem_C_igst -= cgst_paid_igst_itc
-
-        # IGST credit used for SGST liability
         sgst_paid_igst_itc = Decimal('0.00')
-        if rem_C_igst > 0 and L_sgst > 0:
-            sgst_paid_igst_itc = min(rem_C_igst, L_sgst)
-            L_sgst -= sgst_paid_igst_itc
-            rem_C_igst -= sgst_paid_igst_itc
+
+        dist_mode = (igst_distribution or 'OPTIMAL').upper()
+        if rem_C_igst > 0:
+            if dist_mode == 'SGST_FIRST':
+                if L_sgst > 0:
+                    sgst_paid_igst_itc = min(rem_C_igst, L_sgst)
+                    L_sgst -= sgst_paid_igst_itc
+                    rem_C_igst -= sgst_paid_igst_itc
+                if rem_C_igst > 0 and L_cgst > 0:
+                    cgst_paid_igst_itc = min(rem_C_igst, L_cgst)
+                    L_cgst -= cgst_paid_igst_itc
+                    rem_C_igst -= cgst_paid_igst_itc
+            elif dist_mode == 'EQUAL':
+                half = quantize_amount(rem_C_igst / Decimal('2.00'))
+                p_cgst = min(half, L_cgst)
+                p_sgst = min(rem_C_igst - p_cgst, L_sgst)
+                cgst_paid_igst_itc += p_cgst
+                L_cgst -= p_cgst
+                rem_C_igst -= p_cgst
+                sgst_paid_igst_itc += p_sgst
+                L_sgst -= p_sgst
+                rem_C_igst -= p_sgst
+                if rem_C_igst > 0 and L_cgst > 0:
+                    extra = min(rem_C_igst, L_cgst)
+                    cgst_paid_igst_itc += extra
+                    L_cgst -= extra
+                    rem_C_igst -= extra
+                if rem_C_igst > 0 and L_sgst > 0:
+                    extra = min(rem_C_igst, L_sgst)
+                    sgst_paid_igst_itc += extra
+                    L_sgst -= extra
+                    rem_C_igst -= extra
+            else:
+                # Default / OPTIMAL / CGST_FIRST
+                if L_cgst > 0:
+                    cgst_paid_igst_itc = min(rem_C_igst, L_cgst)
+                    L_cgst -= cgst_paid_igst_itc
+                    rem_C_igst -= cgst_paid_igst_itc
+                if rem_C_igst > 0 and L_sgst > 0:
+                    sgst_paid_igst_itc = min(rem_C_igst, L_sgst)
+                    L_sgst -= sgst_paid_igst_itc
+                    rem_C_igst -= sgst_paid_igst_itc
 
         # Step 3: CGST credit offset
         cgst_paid_cgst_itc = min(C_cgst, L_cgst)
@@ -565,11 +606,12 @@ class GSTReturnsService:
             rem_L_igst -= igst_paid_sgst_itc
             rem_C_sgst -= igst_paid_sgst_itc
 
-        cash_igst = rem_L_igst
-        cash_cgst = L_cgst
-        cash_sgst = L_sgst
+        cash_igst = quantize_amount(rem_L_igst)
+        cash_cgst = quantize_amount(L_cgst)
+        cash_sgst = quantize_amount(L_sgst)
+        cash_cess = quantize_amount(cash_cess)
         total_cash = cash_igst + cash_cgst + cash_sgst + cash_cess
-        total_itc_carried_forward = rem_C_igst + rem_C_cgst + rem_C_sgst + rem_C_cess
+        total_itc_carried_forward = quantize_amount(rem_C_igst + rem_C_cgst + rem_C_sgst + rem_C_cess)
 
         return {
             "setoff_details": {
@@ -804,11 +846,30 @@ class GSTReturnsService:
                 interstate_unreg_taxable += Decimal(str(b2cs.get("txval", 0)))
                 interstate_unreg_igst += Decimal(str(b2cs.get("iamt", 0)))
 
+        # Zero-rated supplies (exports) and nil/exempt summaries from GSTR-1
+        exp_txval = Decimal('0.00')
+        exp_igst = Decimal('0.00')
+        for exp in sales_data.get("official_gstr1_json", {}).get("exp", []):
+            for inv in exp.get("inv", []):
+                for itm in inv.get("itms", []):
+                    det = itm.get("itm_det", {})
+                    exp_txval += Decimal(str(det.get("txval", 0)))
+                    exp_igst += Decimal(str(det.get("iamt", 0)))
+
+        nil_inv = (sales_data.get("official_gstr1_json", {}).get("nil", {}).get("inv") or [{}])[0]
+        nil_amt = Decimal(str(nil_inv.get("nil_amt", 0) or 0))
+        expt_amt = Decimal(str(nil_inv.get("expt_amt", 0) or 0))
+        ngsup_amt = Decimal(str(nil_inv.get("ngsup_amt", 0) or 0))
+
         # Rule 88A Waterfall Set-off
+        # CRITICAL STATUTORY INVARIANT (Section 49(4) + Section 2(82)):
+        # RCM liability (Table 3.1(d)) is EXCLUDED from output tax and CANNOT be discharged via ITC!
+        # It must be paid 100% in CASH via the Electronic Cash Ledger.
+        # Only outward tax liabilities (Table 3.1(a), 3.1(b)) can be offset against ITC.
         outward_tax_dict = {
-            "igst": outward_igst + inward_rcm_igst,
-            "cgst": outward_cgst + inward_rcm_cgst,
-            "sgst": outward_sgst + inward_rcm_sgst,
+            "igst": outward_igst + exp_igst,
+            "cgst": outward_cgst,
+            "sgst": outward_sgst,
             "cess": outward_cess
         }
         itc_dict = {
@@ -819,13 +880,48 @@ class GSTReturnsService:
         }
         setoff_result = cls.calculate_rule88a_setoff(outward_tax_dict, itc_dict)
 
+        # Cash liability breakdown:
+        outward_cash_igst = Decimal(str(setoff_result["net_cash_payable"]["igst"]))
+        outward_cash_cgst = Decimal(str(setoff_result["net_cash_payable"]["cgst"]))
+        outward_cash_sgst = Decimal(str(setoff_result["net_cash_payable"]["sgst"]))
+        outward_cash_cess = Decimal(str(setoff_result["net_cash_payable"]["cess"]))
+
+        # Inward RCM liability must be paid 100% in cash (cannot be reduced by ITC)
+        total_cash_igst = outward_cash_igst + inward_rcm_igst
+        total_cash_cgst = outward_cash_cgst + inward_rcm_cgst
+        total_cash_sgst = outward_cash_sgst + inward_rcm_sgst
+        total_cash_cess = outward_cash_cess
+        total_cash = total_cash_igst + total_cash_cgst + total_cash_sgst + total_cash_cess
+
+        net_cash_summary = {
+            "igst": float(total_cash_igst),
+            "cgst": float(total_cash_cgst),
+            "sgst": float(total_cash_sgst),
+            "cess": float(total_cash_cess),
+            "total": float(total_cash),
+            "breakdown": {
+                "outward_tax_cash": {
+                    "igst": float(outward_cash_igst),
+                    "cgst": float(outward_cash_cgst),
+                    "sgst": float(outward_cash_sgst),
+                    "cess": float(outward_cash_cess)
+                },
+                "rcm_cash_liability": {
+                    "igst": float(inward_rcm_igst),
+                    "cgst": float(inward_rcm_cgst),
+                    "sgst": float(inward_rcm_sgst),
+                    "total": float(inward_rcm_igst + inward_rcm_cgst + inward_rcm_sgst)
+                }
+            }
+        }
+
         # Ledger balance reconciliation
         ledger_recon = cls.reconcile_accounting_ledgers(
             company=company,
             start_date=start_date,
             end_date=end_date,
-            calculated_outward={"cgst": outward_cgst, "sgst": outward_sgst, "igst": outward_igst},
-            calculated_itc={"cgst": itc_cgst, "sgst": itc_sgst, "igst": itc_igst}
+            calculated_outward={"cgst": outward_cgst, "sgst": outward_sgst, "igst": outward_igst + exp_igst},
+            calculated_itc={"cgst": itc_cgst + inward_rcm_cgst, "sgst": itc_sgst + inward_rcm_sgst, "igst": itc_igst + inward_rcm_igst}
         )
 
         table_3_1 = {
@@ -836,8 +932,12 @@ class GSTReturnsService:
                 "sgst": float(outward_sgst),
                 "cess": float(outward_cess)
             },
-            "zero_rated_supplies": {"taxable_value": 0.00, "igst": 0.00, "cess": 0.00},
-            "nil_exempt_supplies": {"taxable_value": 0.00},
+            "zero_rated_supplies": {
+                "taxable_value": float(exp_txval),
+                "igst": float(exp_igst),
+                "cess": 0.00
+            },
+            "nil_exempt_supplies": {"taxable_value": float(nil_amt + expt_amt)},
             "inward_rcm_supplies": {
                 "taxable_value": float(inward_rcm_taxable),
                 "igst": float(inward_rcm_igst),
@@ -845,7 +945,7 @@ class GSTReturnsService:
                 "sgst": float(inward_rcm_sgst),
                 "cess": 0.00
             },
-            "non_gst_supplies": {"taxable_value": 0.00}
+            "non_gst_supplies": {"taxable_value": float(ngsup_amt)}
         }
 
         table_3_2 = {
@@ -912,7 +1012,7 @@ class GSTReturnsService:
             "table_5": table_5,
             "rule88a_setoff": setoff_result,
             "ledger_reconciliation": ledger_recon,
-            "tax_payable": setoff_result["net_cash_payable"],
+            "tax_payable": net_cash_summary,
             "filing_status": filing_record.status if filing_record else "DRAFT",
             "arn": filing_record.arn if filing_record else None,
             "submitted_at": filing_record.submitted_at.isoformat() if filing_record else None

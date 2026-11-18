@@ -93,6 +93,22 @@ export interface EInvoiceData {
   cancelled_at?: string;
 }
 
+export interface GSTR2BMismatchDetails {
+  category: string;
+  confidence_score?: number;
+  confidence_level?: 'EXACT_MATCH' | 'HIGH_CONFIDENCE' | 'AMBIGUOUS' | 'MISMATCH' | 'NO_MATCH';
+  statutory_itc_eligibility?: 'ELIGIBLE' | 'INELIGIBLE' | 'REVIEW_REQUIRED' | 'BLOCKED_SEC17_5' | 'REVERSAL_REQUIRED';
+  statutory_reason?: string;
+  explanation?: string;
+  days_difference?: number;
+  book_voucher_number?: string | null;
+  book_date?: string | null;
+  book_total?: number | null;
+  gstr2b_total?: number;
+  taxable_diff?: number;
+  tax_diff?: number;
+}
+
 export interface GSTR2BRecordItem {
   id: string;
   supplier_gstin: string;

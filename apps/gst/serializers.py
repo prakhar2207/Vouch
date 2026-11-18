@@ -143,6 +143,8 @@ class EWayBillRecordSerializer(serializers.ModelSerializer):
 
 
 class GSTR2BRecordSerializer(serializers.ModelSerializer):
+    matched_voucher_number = serializers.CharField(source='matched_voucher.voucher_number', read_only=True, default=None)
+
     class Meta:
         model = GSTR2BRecord
         fields = [
@@ -150,6 +152,7 @@ class GSTR2BRecordSerializer(serializers.ModelSerializer):
             'invoice_date', 'invoice_value', 'taxable_value',
             'igst_amount', 'cgst_amount', 'sgst_amount', 'cess_amount',
             'place_of_supply', 'itc_available', 'itc_ineligible_reason',
+            'matched_voucher', 'matched_voucher_number',
             'match_status', 'mismatch_details', 'is_reviewed',
             'reviewed_at', 'review_notes', 'created_at'
         ]

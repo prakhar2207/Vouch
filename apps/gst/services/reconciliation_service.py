@@ -33,15 +33,15 @@ class GSTReconciliationService:
     @classmethod
     def normalize_invoice_number(cls, num_str: str) -> str:
         """
-        Normalizes invoice number by stripping non-alphanumeric characters,
-        removing leading zeros and standard prefixes for comparison.
+        Normalizes invoice number by stripping non-alphanumeric separators
+        and standard prefixes for comparison without collapsing distinct numeric sequences.
         """
         if not num_str:
             return ""
         cleaned = re.sub(r'[^A-Z0-9]', '', str(num_str).strip().upper())
         if cleaned.startswith('INV') and len(cleaned) > 3:
             cleaned = cleaned[3:]
-        return cleaned.lstrip('0') or cleaned
+        return cleaned
 
     @classmethod
     def fetch_and_ingest_from_sandbox(
@@ -180,7 +180,11 @@ class GSTReconciliationService:
             if not rec.itc_available:
                 rec.match_status = 'INELIGIBLE_ITC'
                 rec.mismatch_details = {
-                    "reason": rec.itc_ineligible_reason or "Vendor marked as ITC Ineligible in GSTR-2B / Section 17(5)."
+                    "category": "INELIGIBLE_ITC",
+                    "confidence_score": 1.0,
+                    "confidence_level": "EXACT_MATCH",
+                    "statutory_itc_eligibility": "INELIGIBLE",
+                    "explanation": rec.itc_ineligible_reason or "Vendor marked as ITC Ineligible in GSTR-2B / Section 17(5)."
                 }
                 category_counts["INELIGIBLE_ITC"] += 1
                 records_to_update.append(rec)
@@ -189,6 +193,8 @@ class GSTReconciliationService:
             # Candidate match search
             best_voucher = None
             best_match_category = 'MISSING_IN_BOOKS'
+            confidence_score = 0.0
+            confidence_level = 'NO_MATCH'
             mismatch_explanation = "Invoice appears in GSTR-2B but no corresponding purchase voucher was found in books."
 
             r_gstin = rec.supplier_gstin.upper()
@@ -200,6 +206,11 @@ class GSTReconciliationService:
             r_sgst = quantize_amount(rec.sgst_amount)
             r_tax = r_igst + r_cgst + r_sgst
             r_total = quantize_amount(rec.invoice_value)
+
+            diff_val = Decimal('0.00')
+            diff_txval = Decimal('0.00')
+            diff_tax = Decimal('0.00')
+            diff_days = 0
 
             # Try exact match on (supplier_gstin, normalized_invoice_number)
             for v in vouchers:
@@ -229,18 +240,35 @@ class GSTReconciliationService:
                     diff_breakdown = abs(v_igst - r_igst) > cls.TOLERANCE or abs(v_cgst - r_cgst) > cls.TOLERANCE or abs(v_sgst - r_sgst) > cls.TOLERANCE
                     if diff_breakdown:
                         best_match_category = 'TAX_MISMATCH'
+                        confidence_score = 0.65
+                        confidence_level = 'AMBIGUOUS'
                         mismatch_explanation = f"Tax breakdown mismatch: Books has IGST={v_igst}, CGST/SGST={v_cgst}; 2B has IGST={r_igst}, CGST/SGST={r_cgst}."
-                    elif diff_val <= cls.TOLERANCE and diff_txval <= cls.TOLERANCE and diff_tax <= cls.TOLERANCE and diff_days <= 3:
-                        best_match_category = 'MATCHED'
-                        mismatch_explanation = "Exact match on GSTIN, invoice number, amounts, and date."
-                    elif diff_days > 30:
-                        best_match_category = 'DATE_MISMATCH'
-                        mismatch_explanation = f"Invoice date discrepancy: Books={v.voucher_date}, 2B={r_date} ({diff_days} days difference)."
+                    elif diff_val <= cls.TOLERANCE and diff_txval <= cls.TOLERANCE and diff_tax <= cls.TOLERANCE:
+                        if diff_days <= 3:
+                            best_match_category = 'MATCHED'
+                            confidence_score = 1.00
+                            confidence_level = 'EXACT_MATCH'
+                            mismatch_explanation = "Exact match on GSTIN, invoice number, amounts, and date (difference <= 3 days)."
+                        elif diff_days <= 15:
+                            best_match_category = 'MATCHED'
+                            confidence_score = 0.85
+                            confidence_level = 'HIGH_CONFIDENCE'
+                            mismatch_explanation = f"High-confidence match: GSTIN and invoice number match with date difference of {diff_days} days."
+                        else:
+                            # 30-day date difference does not silently establish a match!
+                            best_match_category = 'DATE_MISMATCH'
+                            confidence_score = 0.40
+                            confidence_level = 'MISMATCH'
+                            mismatch_explanation = f"Invoice date discrepancy: Books={v.voucher_date}, 2B={r_date} ({diff_days} days difference)."
                     elif diff_txval > cls.TOLERANCE or diff_tax > cls.TOLERANCE:
                         best_match_category = 'PARTIAL_MATCH'
+                        confidence_score = 0.50
+                        confidence_level = 'MISMATCH'
                         mismatch_explanation = f"Value mismatch: Taxable diff=₹{diff_txval}, Tax diff=₹{diff_tax}."
                     else:
                         best_match_category = 'MISMATCHED'
+                        confidence_score = 0.30
+                        confidence_level = 'MISMATCH'
                         mismatch_explanation = f"General discrepancy: Total diff=₹{diff_val}."
                     break
 
@@ -248,6 +276,8 @@ class GSTReconciliationService:
                 elif v_norm == r_norm and abs(v_total - r_total) <= cls.TOLERANCE:
                     best_voucher = v
                     best_match_category = 'GSTIN_MISMATCH'
+                    confidence_score = 0.40
+                    confidence_level = 'MISMATCH'
                     mismatch_explanation = f"Invoice number '{v_bill_no}' matches, but supplier GSTIN differs: Books={v_gstin}, 2B={r_gstin}."
                     break
 
@@ -258,19 +288,47 @@ class GSTReconciliationService:
                     if clean_v_num and clean_r_num and (clean_v_num.endswith(clean_r_num) or clean_r_num.endswith(clean_v_num)):
                         best_voucher = v
                         best_match_category = 'DOC_NUM_MISMATCH'
+                        confidence_score = 0.60
+                        confidence_level = 'AMBIGUOUS'
                         mismatch_explanation = f"Formatting variation in invoice number: Books='{v_bill_no}', 2B='{rec.invoice_number}'."
                         break
+
+            # Statutory ITC Eligibility evaluation (Section 16, Section 17(5))
+            if not rec.itc_available:
+                statutory_eligibility = 'INELIGIBLE'
+                statutory_reason = rec.itc_ineligible_reason or "Supplier marked as ITC Ineligible in GSTR-2B"
+            elif best_match_category == 'MATCHED':
+                v_ineligible = getattr(best_voucher, 'is_itc_ineligible', False) or getattr(best_voucher, 'itc_match_status', '') == 'INELIGIBLE'
+                if v_ineligible:
+                    statutory_eligibility = 'BLOCKED_SEC17_5'
+                    statutory_reason = "Blocked credit under CGST Section 17(5) marked in accounting books."
+                else:
+                    statutory_eligibility = 'ELIGIBLE'
+                    statutory_reason = "Statutory conditions met: available in GSTR-2B and matched with tax invoice in purchase books."
+            elif best_voucher:
+                statutory_eligibility = 'REVIEW_REQUIRED'
+                statutory_reason = f"Candidate voucher found with discrepancies ({best_match_category}). Manual review required."
+            else:
+                statutory_eligibility = 'REVIEW_REQUIRED'
+                statutory_reason = "Missing purchase invoice in books. Statutory ITC eligibility cannot be claimed without tax invoice (Section 16(2)(a))."
 
             # Update GSTR-2B Record
             rec.match_status = best_match_category
             rec.matched_voucher = best_voucher
             rec.mismatch_details = {
                 "category": best_match_category,
+                "confidence_score": confidence_score,
+                "confidence_level": confidence_level,
+                "statutory_itc_eligibility": statutory_eligibility,
+                "statutory_reason": statutory_reason,
                 "explanation": mismatch_explanation,
+                "days_difference": diff_days,
                 "book_voucher_number": best_voucher.voucher_number if best_voucher else None,
                 "book_date": str(best_voucher.voucher_date) if best_voucher else None,
                 "book_total": float(best_voucher.total_amount) if best_voucher else None,
                 "gstr2b_total": float(r_total),
+                "taxable_diff": float(diff_txval),
+                "tax_diff": float(diff_tax)
             }
 
             if best_voucher:

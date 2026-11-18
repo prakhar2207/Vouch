@@ -29,8 +29,11 @@ class GSTWorkspaceService:
         voucher_types: List[str]
     ) -> str:
         """
-        Computes SHA-256 fingerprint over the set of active vouchers for the period.
-        Used to detect subsequent modifications, additions, or cancellations (drift).
+        Computes SHA-256 fingerprint over the set of active vouchers and their line items for the period.
+        Comprehensive drift detection captures changes to:
+        - Voucher header (voucher_number, voucher_date, total_amount, party, GSTIN, PoS, RCM, status)
+        - Voucher items (product, HSN/SAC, quantity, rate, taxable_amount, gst_rate, tax components)
+        - Master ledger data affecting tax classification
         """
         vouchers = Voucher.objects.filter(
             company=company,
@@ -38,11 +41,29 @@ class GSTWorkspaceService:
             voucher_date__gte=start_date,
             voucher_date__lte=end_date,
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        ).order_by('id').values_list('id', 'updated_at', 'total_amount')
+        ).select_related('party_ledger').prefetch_related('items__product').order_by('id')
 
         hasher = hashlib.sha256()
-        for vid, updated_at, total in vouchers:
-            hasher.update(f"{vid}_{updated_at.isoformat()}_{total};".encode('utf-8'))
+        for v in vouchers:
+            party_g = (v.party_ledger.gstin if v.party_ledger else '') or (v.buyer_gstin or '')
+            party_pos = (v.buyer_state_code or (v.party_ledger.state_code if v.party_ledger else '') or '')
+            hdr_str = (
+                f"v:{v.id}|{v.voucher_number}|{v.voucher_type}|{v.voucher_date}|"
+                f"{v.status}|{v.total_amount}|{party_g}|{party_pos}|"
+                f"{getattr(v, 'is_reverse_charge', False)}|{getattr(v, 'is_advance', False)}|"
+                f"{v.updated_at.isoformat()};"
+            )
+            hasher.update(hdr_str.encode('utf-8'))
+
+            for itm in v.items.all().order_by('id'):
+                hsn = (itm.hsn_code or (itm.product.hsn_code if itm.product else '') or '').strip()
+                itm_str = (
+                    f"itm:{itm.id}|{itm.product_id}|{hsn}|{itm.quantity}|{itm.rate}|"
+                    f"{itm.taxable_amount}|{itm.gst_rate}|{itm.cgst_amount}|{itm.sgst_amount}|"
+                    f"{itm.igst_amount}|{getattr(itm, 'cess_amount', 0)}|{itm.total_amount};"
+                )
+                hasher.update(itm_str.encode('utf-8'))
+
         return hasher.hexdigest()
 
     @classmethod
