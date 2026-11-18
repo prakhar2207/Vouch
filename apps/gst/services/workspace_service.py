@@ -315,9 +315,24 @@ class GSTWorkspaceService:
         payload_canonical = json.dumps(official_payload, sort_keys=True, separators=(',', ':'))
         payload_hash = hashlib.sha256(payload_canonical.encode('utf-8')).hexdigest()
 
-        # 6. Format Content Selection
+        # 6. Format Content Selection & Portal Compatibility Notice
+        is_portal_uploadable = (workspace.return_type == 'GSTR1' and fmt == 'JSON')
+        if workspace.return_type == 'GSTR1':
+            export_classification = "OFFICIAL_PORTAL_OFFLINE_TOOL_JSON" if fmt == 'JSON' else "STATUTORY_AUDIT_REPORT"
+            portal_notice = "Conforms to GSTN Offline Tool Schema v3.1.2. Uploadable directly to GST Portal under GSTR-1 Offline Preparation."
+        elif workspace.return_type == 'GSTR3B':
+            export_classification = "GSTN_API_RETURN_PAYLOAD" if fmt == 'JSON' else "STATUTORY_PORTAL_ENTRY_GUIDE"
+            portal_notice = (
+                "NOTE: GST Portal GUI (gst.gov.in) does NOT support direct .json file upload for GSTR-3B. "
+                "The JSON payload conforms to GSTN GSP/ASP Return Filing API Specification (v1.4) for automated API submission. "
+                "For manual filing on the portal, refer to the Table-by-Table Entry Guide (REVIEW_REPORT)."
+            )
+        else:
+            export_classification = "INTERNAL_REPORT"
+            portal_notice = ""
+
         if fmt == 'REVIEW_REPORT':
-            content = cls._build_human_review_report(workspace, payload_hash)
+            content = cls._build_human_review_report(workspace, payload_hash, portal_notice)
         else:
             content = official_payload
 
@@ -327,6 +342,9 @@ class GSTWorkspaceService:
             "return_period": workspace.return_period,
             "format": fmt,
             "conformance_standard": validation_result.get("conformance_standard"),
+            "portal_uploadable": is_portal_uploadable,
+            "export_classification": export_classification,
+            "portal_compatibility_notice": portal_notice,
             "payload_hash": payload_hash,
             "validation_summary": {
                 "is_valid": validation_result.get("is_valid"),
@@ -342,7 +360,8 @@ class GSTWorkspaceService:
     def _build_human_review_report(
         cls,
         workspace: GSTReturnWorkspace,
-        payload_hash: str
+        payload_hash: str,
+        portal_notice: str = ""
     ) -> Dict[str, Any]:
         """
         Builds a human-readable, accountant-verifiable audit report of the return.
@@ -350,8 +369,15 @@ class GSTWorkspaceService:
         reg_gstin = workspace.gst_registration.gstin if workspace.gst_registration else (workspace.company.gstin or 'URP')
         reg_state = workspace.gst_registration.state_name if workspace.gst_registration else (workspace.company.state or 'Default')
 
+        report_title = (
+            f"SriLekh Statutory GSTR-3B Table-by-Table Portal Entry Guide & Audit Report"
+            if workspace.return_type == 'GSTR3B'
+            else f"SriLekh GST Return Audit & Review Report — {workspace.return_type}"
+        )
+
         report: Dict[str, Any] = {
-            "title": f"SriLekh GST Return Audit & Review Report — {workspace.return_type}",
+            "title": report_title,
+            "portal_filing_guide_notice": portal_notice,
             "header": {
                 "company_name": workspace.company.name,
                 "gstin": reg_gstin,

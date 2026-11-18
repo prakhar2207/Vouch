@@ -437,7 +437,8 @@ class GSTRound21AuditTests(TestCase):
         )
         res_jul = GSTReturnsService.prepare_gstr1(self.company, self.reg_primary, return_period="072024")
         cdnur_jul = res_jul["official_gstr1_json"]["cdnur"]
-        self.assertEqual(cdnur_jul[0]["typ"], "B2CS")
+        # In July 2024 (threshold ₹2.5L), ₹1.5L credit note is B2CS (netted in Table 7, strictly excluded from Table 9B CDNUR)
+        self.assertEqual(len(cdnur_jul), 0)
 
         # Aug 2024
         cn_aug = Voucher.objects.create(

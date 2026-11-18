@@ -297,6 +297,9 @@ export interface GSTExportResult {
   return_period: string;
   format: 'JSON' | 'REVIEW_REPORT' | 'RECON_REPORT';
   conformance_standard?: string;
+  portal_uploadable?: boolean;
+  export_classification?: string;
+  portal_compatibility_notice?: string;
   payload_hash?: string;
   validation_summary?: GSTPayloadValidationResult;
   payload?: OfficialGSTR1Payload | OfficialGSTR3BPayload | any;

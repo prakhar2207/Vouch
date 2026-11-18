@@ -116,7 +116,7 @@ class GSTReturnsService:
 
         # GSTR-1 Section Buckets
         b2b_by_recipient = defaultdict(list)
-        b2cl_list = []
+        b2cl_by_pos = defaultdict(list)
         b2cs_groups = defaultdict(lambda: {
             "sply_ty": "INTRA",
             "pos": "",
@@ -131,10 +131,11 @@ class GSTReturnsService:
         cdnur_list = []
         exp_list = []
 
-        nil_exempt_summary = {
-            "nil_amt": Decimal('0.00'),
-            "expt_amt": Decimal('0.00'),
-            "ngsup_amt": Decimal('0.00')
+        nil_supplies_map = {
+            "INTRAB2B": {"nil_amt": Decimal('0.00'), "expt_amt": Decimal('0.00'), "ngsup_amt": Decimal('0.00')},
+            "INTRAB2C": {"nil_amt": Decimal('0.00'), "expt_amt": Decimal('0.00'), "ngsup_amt": Decimal('0.00')},
+            "INTERB2B": {"nil_amt": Decimal('0.00'), "expt_amt": Decimal('0.00'), "ngsup_amt": Decimal('0.00')},
+            "INTERB2C": {"nil_amt": Decimal('0.00'), "expt_amt": Decimal('0.00'), "ngsup_amt": Decimal('0.00')}
         }
 
         advances_received_list = []
@@ -253,12 +254,14 @@ class GSTReturnsService:
                 hsn_entry["samt"] += sgst
                 hsn_entry["csamt"] += cess
 
-            # Table 8: Nil-rated or exempt tracking
+            # Table 8: Nil-rated or exempt tracking across 4 statutory categories
             if not voucher_has_tax and voucher_total > 0:
-                if is_interstate:
-                    nil_exempt_summary["nil_amt"] += voucher_total
+                bucket_key = ("INTER" if is_interstate else "INTRA") + ("B2B" if is_registered else "B2C")
+                has_zero_rate = any(quantize_amount(itm.gst_rate) == Decimal('0.00') for itm in voucher_items)
+                if has_zero_rate:
+                    nil_supplies_map[bucket_key]["nil_amt"] += voucher_total
                 else:
-                    nil_exempt_summary["expt_amt"] += voucher_total
+                    nil_supplies_map[bucket_key]["expt_amt"] += voucher_total
 
             # Classify into return sections
             if v.voucher_type == 'SALES':
@@ -288,15 +291,13 @@ class GSTReturnsService:
                     }
                     b2b_by_recipient[party_gstin].append(inv_obj)
                 elif is_interstate and not is_registered and voucher_total > b2cl_threshold:
-                    # Table 5: B2CL (Interstate Large Invoices > threshold to unregistered)
-                    b2cl_list.append({
-                        "pos": pos,
-                        "inv": [{
-                            "inum": v.voucher_number,
-                            "idt": v.voucher_date.strftime('%d-%m-%Y'),
-                            "val": float(voucher_total),
-                            "itms": rate_items
-                        }]
+                    # Table 5: B2CL (Interstate Large Invoices > threshold to unregistered, grouped by PoS)
+                    b2cl_by_pos[pos].append({
+                        "inum": v.voucher_number,
+                        "idt": v.voucher_date.strftime('%d-%m-%Y'),
+                        "val": float(voucher_total),
+                        "inv_typ": "R",
+                        "itms": rate_items
                     })
                 else:
                     # Table 7: B2CS (Small Invoices & Intrastate Unregistered)
@@ -318,26 +319,64 @@ class GSTReturnsService:
                 orig_num = orig_inv.voucher_number if orig_inv else (v.reference_number or f"{v.voucher_number}-REF")
                 orig_dt = orig_inv.voucher_date.strftime('%d-%m-%Y') if orig_inv else v.voucher_date.strftime('%d-%m-%Y')
 
-                note_obj = {
-                    "nt_num": v.voucher_number,
-                    "nt_dt": v.voucher_date.strftime('%d-%m-%Y'),
-                    "ntty": nt_type,
-                    "inum": orig_num,
-                    "idt": orig_dt,
-                    "val": float(voucher_total),
-                    "pos": pos,
-                    "itms": rate_items
-                }
-
                 if is_registered:
                     # Table 9B: CDNR (Credit/Debit Notes to Registered)
+                    note_obj = {
+                        "nt_num": v.voucher_number,
+                        "nt_dt": v.voucher_date.strftime('%d-%m-%Y'),
+                        "ntty": nt_type,
+                        "inum": orig_num,
+                        "idt": orig_dt,
+                        "val": float(voucher_total),
+                        "pos": pos,
+                        "rchrg": "Y" if getattr(v, 'is_reverse_charge', False) else "N",
+                        "p_gst": "N",
+                        "itms": rate_items
+                    }
                     cdnr_by_recipient[party_gstin].append(note_obj)
-                else:
-                    # Table 9B: CDNUR (Credit/Debit Notes to Unregistered)
+                elif is_export:
+                    # Table 9B: CDNUR (Credit/Debit Notes to Unregistered - Exports)
                     cdnur_list.append({
-                        "typ": "B2CL" if (is_interstate and not is_registered and voucher_total > b2cl_threshold) else "B2CS",
-                        "nt": [note_obj]
+                        "typ": "EXPWP" if getattr(v, 'export_with_payment', False) else "EXPWOP",
+                        "nt_num": v.voucher_number,
+                        "nt_dt": v.voucher_date.strftime('%d-%m-%Y'),
+                        "ntty": nt_type,
+                        "inum": orig_num,
+                        "idt": orig_dt,
+                        "val": float(voucher_total),
+                        "pos": pos,
+                        "p_gst": "N",
+                        "itms": rate_items
                     })
+                elif is_interstate and not is_registered and voucher_total > b2cl_threshold:
+                    # Table 9B: CDNUR (Credit/Debit Notes to Unregistered - Large B2CL)
+                    cdnur_list.append({
+                        "typ": "B2CL",
+                        "nt_num": v.voucher_number,
+                        "nt_dt": v.voucher_date.strftime('%d-%m-%Y'),
+                        "ntty": nt_type,
+                        "inum": orig_num,
+                        "idt": orig_dt,
+                        "val": float(voucher_total),
+                        "pos": pos,
+                        "p_gst": "N",
+                        "itms": rate_items
+                    })
+                else:
+                    # Statutory Rule: Unregistered small credit/debit notes (B2CS) cannot be entered in Table 9B CDNUR.
+                    # They are statutorily netted directly into Table 7 (B2CS) turnover and tax heads.
+                    sign = Decimal('-1.00') if v.voucher_type == 'CREDIT_NOTE' else Decimal('1.00')
+                    for itm in voucher_items:
+                        r_key = (pos, "INTER" if is_interstate else "INTRA", quantize_amount(itm.gst_rate))
+                        group = b2cs_groups[r_key]
+                        group["sply_ty"] = "INTER" if is_interstate else "INTRA"
+                        group["pos"] = pos
+                        group["rt"] = quantize_amount(itm.gst_rate)
+                        group["txval"] += sign * quantize_amount(itm.taxable_amount)
+                        group["iamt"] += sign * quantize_amount(itm.igst_amount)
+                        group["camt"] += sign * quantize_amount(itm.cgst_amount)
+                        group["samt"] += sign * quantize_amount(itm.sgst_amount)
+                        group["csamt"] += sign * quantize_amount(getattr(itm, 'cess_amount', 0))
 
             if not has_error:
                 clean_invoices_count += 1
@@ -369,6 +408,7 @@ class GSTReturnsService:
 
         # Format payloads
         b2b_payload = [{"ctin": ctin, "inv": invs} for ctin, invs in b2b_by_recipient.items()]
+        b2cl_payload = [{"pos": p, "inv": invs} for p, invs in b2cl_by_pos.items()]
         cdnr_payload = [{"ctin": ctin, "nt": notes} for ctin, notes in cdnr_by_recipient.items()]
         b2cs_payload = [
             {
@@ -381,8 +421,20 @@ class GSTReturnsService:
                 "samt": float(g["samt"]),
                 "csamt": float(g["csamt"])
             }
-            for g in b2cs_groups.values() if g["txval"] > 0
+            for g in b2cs_groups.values() if g["txval"] != 0 or g["iamt"] != 0 or g["camt"] != 0
         ]
+
+        nil_payload = {
+            "inv": [
+                {
+                    "sply_ty": k,
+                    "nil_amt": float(vals["nil_amt"]),
+                    "expt_amt": float(vals["expt_amt"]),
+                    "ngsup_amt": float(vals["ngsup_amt"])
+                }
+                for k, vals in nil_supplies_map.items()
+            ]
+        }
 
         hsn_payload = [
             {
@@ -446,22 +498,22 @@ class GSTReturnsService:
             "version": "GST3.1.2",
             "cur_gt": float(total_txval + total_tax),
             "b2b": b2b_payload,
-            "b2cl": b2cl_list,
+            "b2ba": [],
+            "b2cl": b2cl_payload,
+            "b2cla": [],
             "b2cs": b2cs_payload,
+            "b2csa": [],
             "cdnr": cdnr_payload,
+            "cdnra": [],
             "cdnur": cdnur_list,
+            "cdnura": [],
             "exp": exp_list,
-            "nil": {
-                "inv": [
-                    {
-                        "nil_amt": float(nil_exempt_summary["nil_amt"]),
-                        "expt_amt": float(nil_exempt_summary["expt_amt"]),
-                        "ngsup_amt": float(nil_exempt_summary["ngsup_amt"])
-                    }
-                ]
-            },
+            "expa": [],
+            "nil": nil_payload,
             "at": advances_received_list,
+            "ata": [],
             "txpd": advances_adjusted_list,
+            "txpda": [],
             "hsn": {"data": hsn_payload},
             "doc_issue": {"doc_det": doc_details}
         }
@@ -489,7 +541,7 @@ class GSTReturnsService:
                 "total_tax": float(total_tax),
                 "total_invoice_value": float(total_txval + total_tax),
                 "b2b_invoices_count": sum(len(x["inv"]) for x in b2b_payload),
-                "b2cl_invoices_count": len(b2cl_list),
+                "b2cl_invoices_count": sum(len(x["inv"]) for x in b2cl_payload),
                 "b2cs_groups_count": len(b2cs_payload),
                 "credit_notes_count": len(cn_numbers),
                 "debit_notes_count": len(dn_numbers),

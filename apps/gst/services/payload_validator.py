@@ -23,6 +23,9 @@ VALID_POS_CODES: Set[str] = {
 STANDARD_GST_RATES: Set[float] = {
     0.0, 0.1, 0.25, 1.5, 3.0, 5.0, 6.0, 7.5, 12.0, 18.0, 28.0
 }
+STANDARD_GSTR_RATES_FLOAT: Set[float] = {float(r) for r in STANDARD_GST_RATES}
+
+from apps.gst.services.rate_reference_service import GSTRateScheduleService
 
 
 def _quant(val: Any) -> Decimal:
@@ -377,6 +380,145 @@ class GSTPayloadValidator:
                             recommendation="Interstate supplies must charge IGST only."
                         ))
 
+        # --- Table 9B: CDNR (Credit/Debit Notes to Registered) ---
+        cdnr_list = payload.get("cdnr", [])
+        if isinstance(cdnr_list, list):
+            for cdnr_group in cdnr_list:
+                ctin = str(cdnr_group.get("ctin", "")).strip().upper()
+                if not ctin or not GSTIN_REGEX.match(ctin):
+                    issues.append(cls._issue(
+                        error_code="GST_CDNR_INVALID_CTIN",
+                        severity="ERROR",
+                        section="Table 9B (cdnr)",
+                        record_identifier=f"ctin:{ctin}",
+                        description=f"Invalid recipient GSTIN '{ctin}' in CDNR notes.",
+                        recommendation="Correct buyer GSTIN on the credit/debit note."
+                    ))
+                for nt in cdnr_group.get("nt", []):
+                    nt_num = str(nt.get("nt_num", "")).strip()
+                    ntty = str(nt.get("ntty", "")).strip().upper()
+                    inum = str(nt.get("inum", "")).strip()
+                    pos = str(nt.get("pos", "")).strip().zfill(2)
+
+                    if ntty not in ['C', 'D']:
+                        issues.append(cls._issue(
+                            error_code="GST_CDNR_NOTE_TYPE_INVALID",
+                            severity="ERROR",
+                            section="Table 9B (cdnr)",
+                            record_identifier=f"nt:{nt_num}",
+                            description=f"Note type '{ntty}' must be 'C' (Credit) or 'D' (Debit).",
+                            recommendation="Set ntty to 'C' or 'D'."
+                        ))
+                    if not nt_num or not INVOICE_NUM_REGEX.match(nt_num):
+                        issues.append(cls._issue(
+                            error_code="GST_CDNR_NUM_INVALID",
+                            severity="ERROR",
+                            section="Table 9B (cdnr)",
+                            record_identifier=f"nt:{nt_num}",
+                            description=f"Credit/Debit note number '{nt_num}' is invalid.",
+                            recommendation="Ensure note number complies with Rule 53 of CGST Rules."
+                        ))
+                    if not inum:
+                        issues.append(cls._issue(
+                            error_code="GST_CDNR_ORIG_INVOICE_MISSING",
+                            severity="ERROR",
+                            section="Table 9B (cdnr)",
+                            record_identifier=f"nt:{nt_num}",
+                            description=f"Note '{nt_num}' is missing original invoice reference (inum).",
+                            recommendation="Link credit/debit note to original invoice number."
+                        ))
+                    if pos not in VALID_POS_CODES:
+                        issues.append(cls._issue(
+                            error_code="GST_POS_INVALID",
+                            severity="ERROR",
+                            section="Table 9B (cdnr)",
+                            record_identifier=f"nt:{nt_num}",
+                            description=f"Invalid Place of Supply '{pos}' on note '{nt_num}'.",
+                            recommendation="Assign valid Indian state code."
+                        ))
+
+        # --- Table 9B: CDNUR (Credit/Debit Notes to Unregistered) ---
+        cdnur_list = payload.get("cdnur", [])
+        if isinstance(cdnur_list, list):
+            b2cl_threshold = Decimal('100000.00')
+            if period_date and period_date[0] < date(2024, 8, 1):
+                b2cl_threshold = Decimal('250000.00')
+
+            for nt in cdnur_list:
+                typ = str(nt.get("typ", "")).strip().upper()
+                nt_num = str(nt.get("nt_num", "")).strip()
+                ntty = str(nt.get("ntty", "")).strip().upper()
+                val = _quant(nt.get("val", 0))
+                pos = str(nt.get("pos", "")).strip().zfill(2)
+
+                if typ == "B2CS":
+                    issues.append(cls._issue(
+                        error_code="GST_CDNUR_B2CS_PROHIBITED",
+                        severity="ERROR",
+                        section="Table 9B (cdnur)",
+                        record_identifier=f"nt:{nt_num}",
+                        description="B2CS credit/debit notes cannot be reported in Table 9B CDNUR. They must be netted directly into Table 7 (B2CS).",
+                        recommendation="Net B2CS notes directly in Table 7 turnover and taxes."
+                    ))
+                elif typ not in ['B2CL', 'EXPWP', 'EXPWOP']:
+                    issues.append(cls._issue(
+                        error_code="GST_CDNUR_TYP_INVALID",
+                        severity="ERROR",
+                        section="Table 9B (cdnur)",
+                        record_identifier=f"nt:{nt_num}",
+                        description=f"Invalid supply type '{typ}' in CDNUR. Allowed values are 'B2CL', 'EXPWP', 'EXPWOP'.",
+                        recommendation="Use statutory CDNUR supply types."
+                    ))
+                elif typ == "B2CL":
+                    if pos == supplier_state and supplier_state:
+                        issues.append(cls._issue(
+                            error_code="GST_CDNUR_B2CL_INTRASTATE_PROHIBITED",
+                            severity="ERROR",
+                            section="Table 9B (cdnur)",
+                            record_identifier=f"nt:{nt_num}",
+                            description="B2CL notes in Table 9B only apply to interstate supplies.",
+                            recommendation="Intrastate unregistered notes must be netted in Table 7."
+                        ))
+                    if val <= b2cl_threshold:
+                        issues.append(cls._issue(
+                            error_code="GST_CDNUR_B2CL_BELOW_THRESHOLD",
+                            severity="ERROR",
+                            section="Table 9B (cdnur)",
+                            record_identifier=f"nt:{nt_num}",
+                            description=f"Note value ₹{val} is below/equal to B2CL threshold ₹{b2cl_threshold}.",
+                            recommendation="Small unregistered notes must be netted in Table 7."
+                        ))
+
+        # --- Table 8: Nil, Exempt and Non-GST Supplies ---
+        nil_section = payload.get("nil", {})
+        if isinstance(nil_section, dict):
+            nil_inv = nil_section.get("inv", [])
+            valid_sply_types = {"INTRAB2B", "INTRAB2C", "INTERB2B", "INTERB2C"}
+            for row in nil_inv:
+                st = str(row.get("sply_ty", "")).strip().upper()
+                if st and st not in valid_sply_types:
+                    issues.append(cls._issue(
+                        error_code="GST_NIL_SUPPLY_TYPE_INVALID",
+                        severity="ERROR",
+                        section="Table 8 (nil)",
+                        record_identifier=f"nil:{st}",
+                        description=f"Invalid supply type '{st}' in Table 8. Expected one of {sorted(valid_sply_types)}.",
+                        recommendation="Categorize nil supplies into statutory 4-way classification."
+                    ))
+
+        # --- Amendment Sections Verification ---
+        expected_amendment_keys = ['b2ba', 'b2cla', 'b2csa', 'cdnra', 'cdnura', 'expa', 'ata', 'txpda']
+        for akey in expected_amendment_keys:
+            if akey in payload and not isinstance(payload[akey], list):
+                issues.append(cls._issue(
+                    error_code="GST_AMENDMENT_SECTION_TYPE_INVALID",
+                    severity="ERROR",
+                    section=f"Amendment ({akey})",
+                    record_identifier=akey,
+                    description=f"Amendment section '{akey}' must be an array / list.",
+                    recommendation=f"Initialize '{akey}' as empty list [] when no amendments exist."
+                ))
+
         # --- Table 12: HSN Summary ---
         hsn_section = payload.get("hsn", {})
         hsn_data = hsn_section.get("data", []) if isinstance(hsn_section, dict) else []
@@ -392,9 +534,14 @@ class GSTPayloadValidator:
                 recommendation="Ensure all products have valid HSN/SAC codes configured."
             ))
         else:
+            tx_ref_date = period_date[0] if period_date else date.today()
             for item in hsn_data:
                 hsn_code = str(item.get("hsn_sc", "")).strip()
                 txval = _quant(item.get("txval", 0))
+                iamt = _quant(item.get("iamt", 0))
+                camt = _quant(item.get("camt", 0))
+                samt = _quant(item.get("samt", 0))
+                csamt = _quant(item.get("csamt", 0))
                 hsn_total_txval += txval
 
                 if not hsn_code or not HSN_REGEX.match(hsn_code):
@@ -406,6 +553,40 @@ class GSTPayloadValidator:
                         description=f"Invalid HSN/SAC code '{hsn_code}'. Must be 4 to 8 digits.",
                         recommendation="Update product HSN code to minimum 4 digits."
                     ))
+                else:
+                    # Effective-Dated Statutory GST Rate Reference Check (Round 2.2.1)
+                    if txval > 0:
+                        total_tax_head = iamt if iamt > 0 else (camt + samt)
+                        applied_rt = (total_tax_head / txval * Decimal('100.0')).quantize(Decimal('0.01'))
+                        applied_cess_rt = (csamt / txval * Decimal('100.0')).quantize(Decimal('0.01')) if csamt > 0 else Decimal('0.00')
+
+                        stat_check = GSTRateScheduleService.validate_tax_rate(
+                            hsn_sc=hsn_code,
+                            tx_date=tx_ref_date,
+                            applied_rate=applied_rt,
+                            is_interstate=(iamt > 0),
+                            applied_cess=applied_cess_rt
+                        )
+                        if stat_check["status"] == "STATUTORY_MISMATCH":
+                            iss = stat_check.get("issue", {})
+                            issues.append(cls._issue(
+                                error_code=iss.get("code", "GST_STATUTORY_RATE_MISMATCH"),
+                                severity=iss.get("severity", "ERROR"),
+                                section="Table 12 (hsn)",
+                                record_identifier=f"hsn:{hsn_code}:{applied_rt}%",
+                                description=iss.get("description", f"Statutory rate mismatch for HSN '{hsn_code}'."),
+                                recommendation=iss.get("recommendation", "Verify tax rate against statutory notifications.")
+                            ))
+                        elif stat_check["status"] == "REVIEW_REQUIRED":
+                            iss = stat_check.get("issue", {})
+                            issues.append(cls._issue(
+                                error_code=iss.get("code", "GST_RATE_REVIEW_REQUIRED"),
+                                severity=iss.get("severity", "WARNING"),
+                                section="Table 12 (hsn)",
+                                record_identifier=f"hsn:{hsn_code}",
+                                description=iss.get("description", f"Tax rate review advised for HSN '{hsn_code}'."),
+                                recommendation=iss.get("recommendation", "Confirm applicable rate.")
+                            ))
 
             # HSN vs Tables Total Taxable Reconciliation
             variance = abs(total_txval_all_sections - hsn_total_txval)
@@ -724,5 +905,4 @@ class GSTPayloadValidator:
         }
 
 
-# Float lookup set for fast rate verification
-STANDARD_GSTR_RATES_FLOAT = {float(r) for r in STANDARD_GST_RATES}
+
