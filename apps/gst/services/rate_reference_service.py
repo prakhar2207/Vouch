@@ -30,15 +30,21 @@ class GSTRateRule(NamedTuple):
 
 class StatutoryChangeEntry(NamedTuple):
     reference_id: str
-    council_meeting: str  # e.g. "55th GST Council", "56th GST Council", "57th GST Council"
+    council_meeting: str  # e.g. "55th GST Council", "56th GST Council", "57th GST Council", "CBIC Circular 265", "CBIC Instruction 02"
     meeting_date: date
     effective_date: Optional[date]
-    category: str  # 'RATE_CHANGE', 'EXEMPTION', 'COMPLIANCE', 'STATUTORY_REFORM'
+    category: str  # 'RATE_CHANGE', 'EXEMPTION', 'COMPLIANCE', 'STATUTORY_REFORM', 'CLASSIFICATION_CLARIFICATION', 'ADMINISTRATIVE_INSTRUCTION'
     hsn_sac: Optional[str]
     description: str
-    status: str  # 'VERIFIED_ACTIVE', 'PENDING_NOTIFICATION', 'PENDING_AMENDMENT'
+    status: str  # 'VERIFIED_ACTIVE', 'PENDING_NOTIFICATION', 'PENDING_AMENDMENT', 'ENFORCEABLE', 'ADMINISTRATIVE_BINDING_ON_DEPT', 'ADVISORY'
     gazette_notification: Optional[str]
     statutory_notes: str
+    legal_source: str = 'GST_COUNCIL_RECOMMENDATION'  # 'GAZETTED_NOTIFICATION', 'STATUTORY_AMENDMENT', 'CBIC_CIRCULAR', 'CBIC_INSTRUCTION', 'GST_COUNCIL_RECOMMENDATION', 'OFFICIAL_FAQ', 'PENDING_LEGAL_ACTION'
+    issuing_authority: str = 'GST_COUNCIL'  # 'CBIC', 'GST_COUNCIL', 'PARLIAMENT_MOF', 'GSTN'
+    document_reference: Optional[str] = None
+    affected_module: str = 'RATE_ENGINE'  # 'RATE_ENGINE', 'CLASSIFICATION', 'ITC_ELIGIBILITY', 'RETURN_PREP', 'COMPLIANCE_GUIDANCE', 'NONE'
+    source_url: Optional[str] = None
+    last_reviewed_date: Optional[date] = None
 
 
 class GSTRateScheduleService:
@@ -322,7 +328,7 @@ class GSTRateScheduleService:
             effective_to=date(2019, 7, 31),
             notification_ref='Notification No. 1/2017-Central Tax (Rate), Schedule II, S.No. 206',
             required_conditions=(),
-            excluded_conditions=('IS_ICE', 'FUEL_PETROL', 'FUEL_DIESEL'),
+            excluded_conditions=('IS_ICE', 'FUEL_PETROL', 'FUEL_DIESEL', 'MARGIN_SCHEME'),
             supply_type='TAXABLE',
             is_exempt=False,
             is_nil_rated=False,
@@ -344,7 +350,7 @@ class GSTRateScheduleService:
             effective_to=None,
             notification_ref='Notification No. 12/2019-Central Tax (Rate) amending 1/2017-CT(Rate)',
             required_conditions=(),
-            excluded_conditions=('IS_ICE', 'FUEL_PETROL', 'FUEL_DIESEL'),
+            excluded_conditions=('IS_ICE', 'FUEL_PETROL', 'FUEL_DIESEL', 'MARGIN_SCHEME'),
             supply_type='CONCESSIONAL',
             is_exempt=False,
             is_nil_rated=False,
@@ -368,7 +374,7 @@ class GSTRateScheduleService:
             effective_to=None,
             notification_ref='Notification No. 1/2017-CT(Rate) & Notif 1/2017-Compensation Cess(Rate)',
             required_conditions=(),
-            excluded_conditions=('IS_ELECTRIC',),
+            excluded_conditions=('IS_ELECTRIC', 'MARGIN_SCHEME'),
             supply_type='TAXABLE',
             is_exempt=False,
             is_nil_rated=False,
@@ -390,7 +396,7 @@ class GSTRateScheduleService:
             effective_to=None,
             notification_ref='Notif 1/2017-CT(Rate) Sched IV S.No. 188 & Notif 1/2017-Compensation Cess(Rate) Entry 52',
             required_conditions=('LARGE_SEDAN',),
-            excluded_conditions=('IS_ELECTRIC', 'IS_SUV_QUALIFIED_52B'),
+            excluded_conditions=('IS_ELECTRIC', 'IS_SUV_QUALIFIED_52B', 'MARGIN_SCHEME'),
             supply_type='TAXABLE',
             is_exempt=False,
             is_nil_rated=False,
@@ -412,7 +418,7 @@ class GSTRateScheduleService:
             effective_to=None,
             notification_ref='Notif 1/2017-CT(Rate) Sched IV S.No. 188 & Notif 1/2017-Compensation Cess(Rate) Entry 46',
             required_conditions=('SMALL_CAR_PETROL',),
-            excluded_conditions=('IS_ELECTRIC',),
+            excluded_conditions=('IS_ELECTRIC', 'MARGIN_SCHEME'),
             supply_type='TAXABLE',
             is_exempt=False,
             is_nil_rated=False,
@@ -434,7 +440,7 @@ class GSTRateScheduleService:
             effective_to=None,
             notification_ref='Notif 1/2017-CT(Rate) Sched IV S.No. 188 & Notif 1/2017-Compensation Cess(Rate) Entry 47',
             required_conditions=('SMALL_CAR_DIESEL',),
-            excluded_conditions=('IS_ELECTRIC',),
+            excluded_conditions=('IS_ELECTRIC', 'MARGIN_SCHEME'),
             supply_type='TAXABLE',
             is_exempt=False,
             is_nil_rated=False,
@@ -789,6 +795,106 @@ class GSTRateScheduleService:
             itc_eligibility='ELIGIBLE',
             itc_restriction_details='Exporter must export goods within 90 days; supplier eligible for refund under inverted duty'
         ),
+
+        # =========================================================================
+        # 13. Sublimation Paper (HSN 4809) — CBIC Circular No. 265/11/2026-GST
+        # =========================================================================
+        GSTRateRule(
+            hsn_sc='4809',
+            tariff_item='4809',
+            description='Carbon paper, self-copy paper and other copying or transfer papers (including sublimation paper)',
+            item_type='GOODS',
+            cgst_rate=Decimal('9.00'),
+            sgst_rate=Decimal('9.00'),
+            igst_rate=Decimal('18.00'),
+            cess_rate=Decimal('0.00'),
+            effective_from=date(2017, 7, 1),
+            effective_to=None,
+            notification_ref='Notification No. 1/2017-Central Tax (Rate), Schedule III, S.No. 112 & CBIC Circular No. 265/11/2026-GST',
+            required_conditions=(),
+            excluded_conditions=(),
+            supply_type='TAXABLE',
+            is_exempt=False,
+            is_nil_rated=False,
+            is_rcm=False,
+            itc_eligibility='ELIGIBLE',
+            itc_restriction_details=None
+        ),
+
+        # =========================================================================
+        # 14. Toys & Wheeled Toys (HSN 9503) — CBIC Circular No. 265/11/2026-GST
+        # =========================================================================
+        GSTRateRule(
+            hsn_sc='9503',
+            tariff_item='9503',
+            description='Tricycles, scooters, pedal cars and similar wheeled toys; dolls; other toys (Schedule II S.No. 228)',
+            item_type='GOODS',
+            cgst_rate=Decimal('6.00'),
+            sgst_rate=Decimal('6.00'),
+            igst_rate=Decimal('12.00'),
+            cess_rate=Decimal('0.00'),
+            effective_from=date(2017, 7, 1),
+            effective_to=None,
+            notification_ref='Notification No. 1/2017-Central Tax (Rate), Schedule II, S.No. 228 & CBIC Circular No. 265/11/2026-GST',
+            required_conditions=(),
+            excluded_conditions=('GENERAL_ELECTRONIC_COMPONENT', 'ARCADE_GAME_9504'),
+            supply_type='TAXABLE',
+            is_exempt=False,
+            is_nil_rated=False,
+            is_rcm=False,
+            itc_eligibility='ELIGIBLE',
+            itc_restriction_details=None
+        ),
+
+        # =========================================================================
+        # 15. Used Motor Vehicles Margin Scheme (HSN 8703) — Notif 8/2018-CT(Rate) & Cir 265
+        # =========================================================================
+        GSTRateRule(
+            hsn_sc='8703',
+            tariff_item='8703',
+            description='Used motor vehicles sold under Margin Scheme (Notification No. 8/2018-Central Tax (Rate))',
+            item_type='GOODS',
+            cgst_rate=Decimal('9.00'),
+            sgst_rate=Decimal('9.00'),
+            igst_rate=Decimal('18.00'),
+            cess_rate=Decimal('0.00'),
+            effective_from=date(2018, 1, 25),
+            effective_to=None,
+            notification_ref='Notification No. 8/2018-Central Tax (Rate) & CBIC Circular No. 265/11/2026-GST',
+            required_conditions=('MARGIN_SCHEME',),
+            excluded_conditions=(),
+            supply_type='CONCESSIONAL',
+            is_exempt=False,
+            is_nil_rated=False,
+            is_rcm=False,
+            itc_eligibility='CONDITIONAL_NO_ITC',
+            itc_restriction_details='Dealer cannot claim ITC on purchase of used vehicle; repair parts and overheads remain eligible under Section 16'
+        ),
+
+        # =========================================================================
+        # 16. Fertilisers & FCO Bio-Stimulants (HSN 3101) — Schedule I S.No. 182 & Cir 265
+        # =========================================================================
+        GSTRateRule(
+            hsn_sc='3101',
+            tariff_item='3101',
+            description='Animal or vegetable fertilisers and bio-stimulants registered under FCO 1985 (Schedule I S.No. 182)',
+            item_type='GOODS',
+            cgst_rate=Decimal('2.50'),
+            sgst_rate=Decimal('2.50'),
+            igst_rate=Decimal('5.00'),
+            cess_rate=Decimal('0.00'),
+            effective_from=date(2017, 7, 1),
+            effective_to=None,
+            notification_ref='Notification No. 1/2017-Central Tax (Rate), Schedule I, S.No. 182 & CBIC Circular No. 265/11/2026-GST',
+            required_conditions=(),
+            excluded_conditions=('UNREGISTERED_BIO_STIMULANT',),
+            supply_type='TAXABLE',
+            is_exempt=False,
+            is_nil_rated=False,
+            is_rcm=False,
+            itc_eligibility='ELIGIBLE',
+            itc_restriction_details=None
+        ),
     ]
 
     # =========================================================================
@@ -805,7 +911,13 @@ class GSTRateScheduleService:
             description='Omission of declared tariff criterion for restaurant services; replaced with Specified Premises for Financial Year based on preceding FY room supply value > Rs. 7,500 or annual opt-in.',
             status='VERIFIED_ACTIVE',
             gazette_notification='Notification No. 01/2025-Central Tax (Rate)',
-            statutory_notes='Enacted w.e.f. 01-Apr-2025 (FY 2025-26).'
+            statutory_notes='Enacted w.e.f. 01-Apr-2025 (FY 2025-26).',
+            legal_source='GAZETTED_NOTIFICATION',
+            issuing_authority='CBIC',
+            document_reference='Notification No. 01/2025-CT(Rate)',
+            affected_module='RATE_ENGINE',
+            source_url='https://cbic-gst.gov.in',
+            last_reviewed_date=date(2026, 11, 18)
         ),
         StatutoryChangeEntry(
             reference_id='56TH-01',
@@ -817,7 +929,13 @@ class GSTRateScheduleService:
             description='Chenna and paneer (pre-packaged and labelled) reduced from 5% to Nil (0% Exempt). Loose paneer remains exempt.',
             status='VERIFIED_ACTIVE',
             gazette_notification='Notification No. 10/2025-Central Tax (Rate) & 11/2025-Central Tax (Rate)',
-            statutory_notes='Enacted w.e.f. 22-Sep-2025.'
+            statutory_notes='Enacted w.e.f. 22-Sep-2025.',
+            legal_source='GAZETTED_NOTIFICATION',
+            issuing_authority='CBIC',
+            document_reference='Notification No. 10/2025-CT(Rate)',
+            affected_module='RATE_ENGINE',
+            source_url='https://cbic-gst.gov.in',
+            last_reviewed_date=date(2026, 11, 18)
         ),
         StatutoryChangeEntry(
             reference_id='56TH-02',
@@ -829,7 +947,13 @@ class GSTRateScheduleService:
             description='Cheese (other than paneer and chenna) reduced from 12% to 5%.',
             status='VERIFIED_ACTIVE',
             gazette_notification='Notification No. 10/2025-Central Tax (Rate), Schedule I, S.No. 26',
-            statutory_notes='Enacted w.e.f. 22-Sep-2025.'
+            statutory_notes='Enacted w.e.f. 22-Sep-2025.',
+            legal_source='GAZETTED_NOTIFICATION',
+            issuing_authority='CBIC',
+            document_reference='Notification No. 10/2025-CT(Rate)',
+            affected_module='RATE_ENGINE',
+            source_url='https://cbic-gst.gov.in',
+            last_reviewed_date=date(2026, 11, 18)
         ),
         StatutoryChangeEntry(
             reference_id='56TH-03',
@@ -841,7 +965,31 @@ class GSTRateScheduleService:
             description='Ultra High Temperature (UHT) milk (0401 50 00) reduced from 5% to Nil (0% Exempt).',
             status='VERIFIED_ACTIVE',
             gazette_notification='Notification No. 10/2025-Central Tax (Rate) & 11/2025-Central Tax (Rate)',
-            statutory_notes='Enacted w.e.f. 22-Sep-2025.'
+            statutory_notes='Enacted w.e.f. 22-Sep-2025.',
+            legal_source='GAZETTED_NOTIFICATION',
+            issuing_authority='CBIC',
+            document_reference='Notification No. 10/2025-CT(Rate)',
+            affected_module='RATE_ENGINE',
+            source_url='https://cbic-gst.gov.in',
+            last_reviewed_date=date(2026, 11, 18)
+        ),
+        StatutoryChangeEntry(
+            reference_id='57TH-PRESS',
+            council_meeting='57th GST Council (New Delhi)',
+            meeting_date=date(2026, 10, 8),
+            effective_date=None,
+            category='STATUTORY_REFORM',
+            hsn_sac=None,
+            description='Press Release of 57th GST Council: recommendations on decriminalization, arrest safeguards, E-way bill typo protections, and petty mismatch threshold.',
+            status='PENDING_AMENDMENT',
+            gazette_notification=None,
+            statutory_notes='Press release issued 08-Oct-2026. Non-enforceable as law until gazetted by Parliament/CBIC.',
+            legal_source='GST_COUNCIL_RECOMMENDATION',
+            issuing_authority='GST_COUNCIL',
+            document_reference='GST Council Press Release dated 08-Oct-2026',
+            affected_module='COMPLIANCE_GUIDANCE',
+            source_url='https://gstcouncil.gov.in',
+            last_reviewed_date=date(2026, 11, 18)
         ),
         StatutoryChangeEntry(
             reference_id='57TH-01',
@@ -853,7 +1001,13 @@ class GSTRateScheduleService:
             description='Decriminalization of GST offenses & prosecution threshold enhancement from Rs. 2 Crore to Rs. 5 Crore; repeal of Section 69 arrest powers for minor procedural infractions.',
             status='PENDING_AMENDMENT',
             gazette_notification=None,
-            statutory_notes='Recommendation approved in 57th Council meeting on 08-Oct-2026. Pending Finance Act amendment; not active in tax calculation engine.'
+            statutory_notes='Recommendation approved in 57th Council meeting on 08-Oct-2026. Pending Finance Act amendment; not active in tax calculation engine.',
+            legal_source='STATUTORY_AMENDMENT',
+            issuing_authority='PARLIAMENT_MOF',
+            document_reference='57th GST Council Agenda Item 4',
+            affected_module='COMPLIANCE_GUIDANCE',
+            source_url='https://gstcouncil.gov.in',
+            last_reviewed_date=date(2026, 11, 18)
         ),
         StatutoryChangeEntry(
             reference_id='57TH-02',
@@ -865,16 +1019,144 @@ class GSTRateScheduleService:
             description='Automated risk-based processing for duty credit / refund claims and enhanced GSTAT operational integration.',
             status='PENDING_NOTIFICATION',
             gazette_notification=None,
-            statutory_notes='Recommendation approved in 57th Council meeting on 08-Oct-2026. Pending CBIC procedural notification; not active in tax calculation engine.'
+            statutory_notes='Recommendation approved in 57th Council meeting on 08-Oct-2026. Pending CBIC procedural notification; not active in tax calculation engine.',
+            legal_source='GST_COUNCIL_RECOMMENDATION',
+            issuing_authority='GST_COUNCIL',
+            document_reference='57th GST Council Agenda Item 6',
+            affected_module='RETURN_PREP',
+            source_url='https://gstcouncil.gov.in',
+            last_reviewed_date=date(2026, 11, 18)
+        ),
+        StatutoryChangeEntry(
+            reference_id='CIR-265-4809',
+            council_meeting='CBIC Circular 265',
+            meeting_date=date(2026, 10, 28),
+            effective_date=date(2026, 10, 28),
+            category='CLASSIFICATION_CLARIFICATION',
+            hsn_sac='4809',
+            description='Clarification on classification and rate of sublimation paper under heading 4809 @ 18% (Schedule III S.No. 112); past periods regularised on "as is where is" basis.',
+            status='ENFORCEABLE',
+            gazette_notification=None,
+            statutory_notes='CBIC Circular No. 265/11/2026-GST issued 28-Oct-2026. 18% rate affirmed; past payments regularised.',
+            legal_source='CBIC_CIRCULAR',
+            issuing_authority='CBIC',
+            document_reference='Circular No. 265/11/2026-GST',
+            affected_module='RATE_ENGINE',
+            source_url='https://cbic-gst.gov.in',
+            last_reviewed_date=date(2026, 11, 18)
+        ),
+        StatutoryChangeEntry(
+            reference_id='CIR-265-9503',
+            council_meeting='CBIC Circular 265',
+            meeting_date=date(2026, 10, 28),
+            effective_date=date(2026, 10, 28),
+            category='CLASSIFICATION_CLARIFICATION',
+            hsn_sac='9503',
+            description='Clarification on toys under heading 9503 attracting 12% (Schedule II S.No. 228); general electronic parts remain under Chapter 85 @ 18%; arcade/video games under 9504 @ 28%.',
+            status='ENFORCEABLE',
+            gazette_notification=None,
+            statutory_notes='CBIC Circular No. 265/11/2026-GST issued 28-Oct-2026. 12% rate applies to toys.',
+            legal_source='CBIC_CIRCULAR',
+            issuing_authority='CBIC',
+            document_reference='Circular No. 265/11/2026-GST',
+            affected_module='CLASSIFICATION',
+            source_url='https://cbic-gst.gov.in',
+            last_reviewed_date=date(2026, 11, 18)
+        ),
+        StatutoryChangeEntry(
+            reference_id='CIR-265-USED-VEH',
+            council_meeting='CBIC Circular 265',
+            meeting_date=date(2026, 10, 28),
+            effective_date=date(2026, 10, 28),
+            category='CLASSIFICATION_CLARIFICATION',
+            hsn_sac='8703',
+            description='Scope of ITC restriction under Margin Scheme (Notif 8/2018-CT(Rate)): blocked strictly on used vehicle purchase; general business inputs, repair spares, and rent are eligible under Section 16.',
+            status='ENFORCEABLE',
+            gazette_notification=None,
+            statutory_notes='CBIC Circular No. 265/11/2026-GST issued 28-Oct-2026. ITC eligibility affirmed for repair spares and overheads.',
+            legal_source='CBIC_CIRCULAR',
+            issuing_authority='CBIC',
+            document_reference='Circular No. 265/11/2026-GST',
+            affected_module='ITC_ELIGIBILITY',
+            source_url='https://cbic-gst.gov.in',
+            last_reviewed_date=date(2026, 11, 18)
+        ),
+        StatutoryChangeEntry(
+            reference_id='CIR-265-3101',
+            council_meeting='CBIC Circular 265',
+            meeting_date=date(2026, 10, 28),
+            effective_date=date(2026, 10, 28),
+            category='CLASSIFICATION_CLARIFICATION',
+            hsn_sac='3101',
+            description='Bio-stimulants classified under heading 3101 attracting 5% (Schedule I S.No. 182) strictly conditional on registration under Fertiliser (Control) Order (FCO), 1985; unregistered products attract 18% under heading 3808/3824.',
+            status='ENFORCEABLE',
+            gazette_notification=None,
+            statutory_notes='CBIC Circular No. 265/11/2026-GST issued 28-Oct-2026. 5% conditional on FCO registration.',
+            legal_source='CBIC_CIRCULAR',
+            issuing_authority='CBIC',
+            document_reference='Circular No. 265/11/2026-GST',
+            affected_module='RATE_ENGINE',
+            source_url='https://cbic-gst.gov.in',
+            last_reviewed_date=date(2026, 11, 18)
+        ),
+        StatutoryChangeEntry(
+            reference_id='INS-02-2026',
+            council_meeting='CBIC Instruction 02',
+            meeting_date=date(2026, 10, 30),
+            effective_date=date(2026, 10, 30),
+            category='ADMINISTRATIVE_INSTRUCTION',
+            hsn_sac=None,
+            description='CBIC Instruction on arrest safeguards under Section 69, E-way bill interception restraint for minor clerical errors (no detention; max Rs. 1,000 Sec 125 penalty), and Rs. 10,000 threshold for issuing SCNs for petty tax mismatches.',
+            status='ADMINISTRATIVE_BINDING_ON_DEPT',
+            gazette_notification=None,
+            statutory_notes='CBIC Instruction No. 02/2026-GST issued 30-Oct-2026. Binding on field officers; non-statutory guidance only. Does not alter return calculations or tax rates.',
+            legal_source='CBIC_INSTRUCTION',
+            issuing_authority='CBIC',
+            document_reference='Instruction No. 02/2026-GST',
+            affected_module='COMPLIANCE_GUIDANCE',
+            source_url='https://cbic-gst.gov.in',
+            last_reviewed_date=date(2026, 11, 18)
         ),
     ]
 
     @classmethod
-    def get_statutory_change_register(cls, status: Optional[str] = None) -> List[StatutoryChangeEntry]:
-        """Returns registered GST Council changes, optionally filtered by enactment status."""
+    def get_statutory_change_register(
+        cls,
+        status: Optional[str] = None,
+        legal_source: Optional[str] = None,
+        affected_module: Optional[str] = None
+    ) -> List[StatutoryChangeEntry]:
+        """Returns registered GST Council and CBIC statutory changes, with optional filters."""
+        entries = cls.STATUTORY_CHANGE_REGISTER
         if status:
-            return [e for e in cls.STATUTORY_CHANGE_REGISTER if e.status == status]
-        return list(cls.STATUTORY_CHANGE_REGISTER)
+            entries = [e for e in entries if e.status == status]
+        if legal_source:
+            entries = [e for e in entries if e.legal_source == legal_source]
+        if affected_module:
+            entries = [e for e in entries if e.affected_module == affected_module]
+        return list(entries)
+
+    @classmethod
+    def get_governance_entry(cls, reference_id: str) -> Optional[StatutoryChangeEntry]:
+        """Retrieves a single governance entry by reference_id."""
+        for entry in cls.STATUTORY_CHANGE_REGISTER:
+            if entry.reference_id == reference_id:
+                return entry
+        return None
+
+    @classmethod
+    def is_legally_enforceable(cls, reference_id: str) -> bool:
+        """
+        Determines whether a statutory entry is legally enforceable in the tax engine.
+        Enforceable sources: GAZETTED_NOTIFICATION, STATUTORY_AMENDMENT (with gazette), CBIC_CIRCULAR.
+        Advisory/pending sources: GST_COUNCIL_RECOMMENDATION, CBIC_INSTRUCTION (admin only).
+        """
+        entry = cls.get_governance_entry(reference_id)
+        if not entry:
+            return False
+        if entry.status in ('VERIFIED_ACTIVE', 'ENFORCEABLE'):
+            return True
+        return False
 
     @classmethod
     def is_recommendation_gazetted(cls, reference_id: str) -> bool:
@@ -883,6 +1165,120 @@ class GSTRateScheduleService:
             if entry.reference_id == reference_id:
                 return entry.status == 'VERIFIED_ACTIVE' and bool(entry.gazette_notification)
         return False
+
+    @classmethod
+    def evaluate_margin_scheme_itc(cls, supply_category: str) -> Tuple[str, bool, str]:
+        """
+        Evaluates ITC eligibility for dealers operating under Margin Scheme (Notif 8/2018-CT(Rate) & Cir 265).
+        Returns: (itc_eligibility, is_itc_allowed, statutory_reason)
+        """
+        cat = (supply_category or '').strip().upper()
+        if cat in ('USED_VEHICLE_PURCHASE', 'USED_CAR_PURCHASE', 'PURCHASE_OF_USED_VEHICLE'):
+            return (
+                'INELIGIBLE_MARGIN_SCHEME_VEHICLE',
+                False,
+                'ITC is strictly blocked on purchase of second hand/used motor vehicles under Notification No. 8/2018-CT(Rate) and Circular No. 265/11/2026-GST.'
+            )
+        elif cat in ('REPAIR_PARTS_SPARES', 'SPARES', 'REPAIRS_AND_MAINTENANCE', 'REFURBISHMENT'):
+            return (
+                'ELIGIBLE',
+                True,
+                'ITC is eligible on spare parts, repair services, and refurbishment materials used in business under Section 16 (clarified by Circular No. 265/11/2026-GST).'
+            )
+        elif cat in ('GENERAL_OVERHEADS_RENT', 'RENT', 'OVERHEADS', 'ADMINISTRATIVE_EXPENSES'):
+            return (
+                'ELIGIBLE',
+                True,
+                'ITC is eligible on general business inputs, rent, utilities, and administrative overheads under Section 16 (clarified by Circular No. 265/11/2026-GST).'
+            )
+        return (
+            'ELIGIBLE',
+            True,
+            'ITC is eligible under Section 16 general business test.'
+        )
+
+    @classmethod
+    def evaluate_administrative_guidance(
+        cls,
+        issue_type: str,
+        context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Provides compliance guidance per CBIC Instruction No. 02/2026-GST (30-Oct-2026).
+        INVARIANT: Pure informational administrative guidance. Does NOT alter tax rates or return calculations.
+        """
+        ctx = context or {}
+        issue = (issue_type or '').strip().upper()
+
+        if issue in ('EWAY_BILL_MINOR_ERROR', 'EWB_TYPO', 'EWAY_BILL_CLERICAL'):
+            return {
+                "instruction_reference": "CBIC Instruction No. 02/2026-GST",
+                "authority": "CBIC",
+                "date": date(2026, 10, 30),
+                "guidance_type": "EWAY_BILL_ENFORCEMENT_SAFEGUARD",
+                "is_binding_on_department": True,
+                "statutory_rate_affected": False,
+                "return_calculation_affected": False,
+                "summary": "No detention of vehicle or Section 129 confiscation/penalty for minor typographical errors in E-way bill.",
+                "details": (
+                    "Field officers are restrained from detaining consignments or imposing heavy Section 129 penalties "
+                    "for minor clerical errors (such as 1-2 digit vehicle number mismatches, PIN code errors where address matches). "
+                    "Nominal penalty under Section 125 up to Rs. 1,000 may be levied without detaining goods."
+                ),
+                "action_recommended": "Produce valid tax invoice and explain clerical slip; request release under Instruction No. 02/2026-GST."
+            }
+
+        elif issue in ('ARREST_SAFEGUARD', 'SECTION_69_ARREST', 'PROSECUTION'):
+            return {
+                "instruction_reference": "CBIC Instruction No. 02/2026-GST & 57th Council Press Release",
+                "authority": "CBIC",
+                "date": date(2026, 10, 30),
+                "guidance_type": "PROSECUTION_AND_ARREST_SAFEGUARD",
+                "is_binding_on_department": True,
+                "statutory_rate_affected": False,
+                "return_calculation_affected": False,
+                "summary": "Arrest powers under Section 69 restrained strictly to habitual, organized fraud exceeding statutory threshold.",
+                "details": (
+                    "Field officers cannot invoke Section 69 arrest for technical or procedural errors, valuation disputes, "
+                    "or honest misinterpretations. Prior written approval of Principal Commissioner / Commissioner is mandatory. "
+                    "Pending legislative amendment raising threshold to Rs. 5 Crore, administrative restraint applies."
+                ),
+                "action_recommended": "Cooperate with audit/inquiry; procedural infractions are non-cognizable and protected from coercive arrest."
+            }
+
+        elif issue in ('SCN_THRESHOLD', 'NOTICE_THRESHOLD', 'PETTY_MISMATCH'):
+            tax_diff = Decimal(str(ctx.get('tax_mismatch_amount', 0)))
+            is_below_threshold = (tax_diff < Decimal('10000.00'))
+            return {
+                "instruction_reference": "CBIC Instruction No. 02/2026-GST",
+                "authority": "CBIC",
+                "date": date(2026, 10, 30),
+                "guidance_type": "SHOW_CAUSE_NOTICE_THRESHOLD",
+                "is_binding_on_department": True,
+                "statutory_rate_affected": False,
+                "return_calculation_affected": False,
+                "tax_difference_amount": float(tax_diff),
+                "is_below_statutory_threshold": is_below_threshold,
+                "summary": "Administrative threshold of Rs. 10,000 for issuing Show Cause Notices on petty tax mismatches.",
+                "details": (
+                    "Departmental officers are instructed not to initiate formal Section 73/74 SCN proceedings "
+                    "for cumulative tax discrepancies under Rs. 10,000 per financial year, advising simple reconciliation instead."
+                ),
+                "action_recommended": "Submit voluntary reconciliation clarification; formal demand barred under administrative guidance."
+            }
+
+        return {
+            "instruction_reference": "CBIC Instruction No. 02/2026-GST",
+            "authority": "CBIC",
+            "date": date(2026, 10, 30),
+            "guidance_type": "GENERAL_ADMINISTRATIVE_GUIDANCE",
+            "is_binding_on_department": True,
+            "statutory_rate_affected": False,
+            "return_calculation_affected": False,
+            "summary": "Administrative instruction binding on field formations for fair and non-harassing GST compliance administration.",
+            "details": "Protects honest taxpayers from procedural harassment and heavy-handed enforcement.",
+            "action_recommended": "Refer to CBIC Instruction No. 02/2026-GST in response to procedural notices."
+        }
 
     @classmethod
     def evaluate_vehicle_cess_criteria(
@@ -899,6 +1295,15 @@ class GSTRateScheduleService:
         """
         attrs = attributes or {}
         conds = conditions or set()
+
+        # Check margin scheme first (exempt from compensation cess under Notif 8/2018-CT(Rate))
+        if 'MARGIN_SCHEME' in conds or attrs.get('is_margin_scheme') is True:
+            return (
+                Decimal('0.00'),
+                'Notification No. 8/2018-Compensation Cess (Rate) (Margin Scheme)',
+                'Used motor vehicles under margin scheme exempt from cess',
+                False
+            )
 
         # Check electric vehicle first
         if 'IS_ELECTRIC' in conds or attrs.get('is_electric') is True or attrs.get('fuel_type') == 'ELECTRIC':
@@ -1085,6 +1490,25 @@ class GSTRateScheduleService:
             raw_conds.add('CHEESE')
         if attrs.get('is_uht') is True or (tariff_item and tariff_item.startswith('040150')):
             raw_conds.add('UHT_MILK')
+        if attrs.get('is_sublimation_paper') is True:
+            raw_conds.add('SUBLIMATION_PAPER')
+        if attrs.get('is_toy') is True:
+            raw_conds.add('TOY')
+        if attrs.get('is_margin_scheme') is True:
+            raw_conds.add('MARGIN_SCHEME')
+        if attrs.get('is_bio_stimulant') is True:
+            raw_conds.add('BIO_STIMULANT')
+        if attrs.get('is_fco_registered') is True:
+            raw_conds.add('FCO_REGISTERED')
+            raw_conds.add('FCO_REGISTERED_BIO_STIMULANT')
+        elif attrs.get('is_fco_registered') is False and attrs.get('is_bio_stimulant') is True:
+            raw_conds.add('UNREGISTERED_BIO_STIMULANT')
+        if attrs.get('is_general_electronic_part') is True:
+            raw_conds.add('GENERAL_ELECTRONIC_COMPONENT')
+        if attrs.get('is_arcade_game') is True:
+            raw_conds.add('ARCADE_GAME_9504')
+        if attrs.get('as_is_where_is') is True:
+            raw_conds.add('AS_IS_WHERE_IS_REGULARIZATION')
 
         # Evaluate SUV Cess criteria if relevant
         if clean_hsn.startswith('8703') and (app_cess > 0 or attrs):
@@ -1104,38 +1528,7 @@ class GSTRateScheduleService:
         )
 
         # -------------------------------------------------------------------------
-        # Case 1: Unrecognized / Ambiguous HSN (No statutory rule matches)
-        # -------------------------------------------------------------------------
-        if not rules:
-            return {
-                "status": "REVIEW_REQUIRED",
-                "is_statutorily_valid": True,  # Non-blocking warning flag
-                "applied_rate": float(app_rate),
-                "expected_rate": None,
-                "applied_cess": float(app_cess),
-                "expected_cess": None,
-                "matched_rules_count": 0,
-                "notification_reference": None,
-                "description": None,
-                "supply_type": "TAXABLE",
-                "is_exempt": False,
-                "is_nil_rated": False,
-                "is_zero_rated": False,
-                "is_rcm": False,
-                "itc_eligibility": "ELIGIBLE",
-                "itc_restriction_details": None,
-                "cess_applicability": "NOT_APPLICABLE",
-                "missing_attributes": ["hsn_classification"],
-                "issue": {
-                    "code": "GST_RATE_REVIEW_REQUIRED",
-                    "severity": "WARNING",
-                    "description": f"HSN/SAC code '{hsn_sc}' has no exact statutory rule match for transaction date {tx_date}. Verification recommended.",
-                    "recommendation": "Confirm applicable notification rate in CBIC tariff schedules."
-                }
-            }
-
-        # -------------------------------------------------------------------------
-        # Case 2: Special Condition Enforcements (Negative Checks)
+        # Case 1: Special Condition Enforcements (Negative Checks & Statutory Clarifications)
         # -------------------------------------------------------------------------
 
         # A. Electric Vehicles vs ICE (HSN 8703)
@@ -1621,6 +2014,264 @@ class GSTRateScheduleService:
                     "severity": "ERROR",
                     "description": "Imitation jewellery under HSN 7117 attracts 18% GST under Schedule III S.No. 223. 3% rate applies strictly to precious metals (HSN 7108/7113).",
                     "recommendation": "Apply 18% GST for imitation jewellery."
+                }
+            }
+
+        # I. Sublimation Paper (HSN 4809) — CBIC Circular No. 265/11/2026-GST
+        if clean_hsn.startswith('4809'):
+            if app_rate == Decimal('12.00'):
+                if tx_date < date(2026, 10, 28) and ('AS_IS_WHERE_IS_REGULARIZATION' in raw_conds or 'AS_IS_WHERE_IS' in raw_conds):
+                    return {
+                        "status": "VALID",
+                        "is_statutorily_valid": True,
+                        "applied_rate": 12.00,
+                        "expected_rate": 12.00,
+                        "applied_cess": float(app_cess),
+                        "expected_cess": 0.00,
+                        "matched_rules_count": len(rules),
+                        "notification_reference": "CBIC Circular No. 265/11/2026-GST (Past Period Regularisation)",
+                        "description": "Sublimation paper under heading 4809 regularised on 'as is where is' basis for periods prior to 28-Oct-2026",
+                        "supply_type": "TAXABLE",
+                        "is_exempt": False,
+                        "is_nil_rated": False,
+                        "is_zero_rated": False,
+                        "is_rcm": False,
+                        "itc_eligibility": "ELIGIBLE",
+                        "itc_restriction_details": None,
+                        "cess_applicability": "NOT_APPLICABLE",
+                        "missing_attributes": [],
+                        "issue": None
+                    }
+                else:
+                    return {
+                        "status": "STATUTORY_MISMATCH",
+                        "is_statutorily_valid": False,
+                        "applied_rate": float(app_rate),
+                        "expected_rate": 18.00,
+                        "applied_cess": float(app_cess),
+                        "expected_cess": 0.00,
+                        "matched_rules_count": len(rules),
+                        "notification_reference": "Notification No. 1/2017-Central Tax (Rate), Schedule III, S.No. 112 & Circular No. 265/11/2026-GST",
+                        "description": "Sublimation paper under heading 4809 attracts 18% GST (Schedule III S.No. 112)",
+                        "supply_type": "TAXABLE",
+                        "is_exempt": False,
+                        "is_nil_rated": False,
+                        "is_zero_rated": False,
+                        "is_rcm": False,
+                        "itc_eligibility": "ELIGIBLE",
+                        "itc_restriction_details": None,
+                        "cess_applicability": "NOT_APPLICABLE",
+                        "missing_attributes": [],
+                        "issue": {
+                            "code": "GST_STATUTORY_RATE_MISMATCH",
+                            "severity": "ERROR",
+                            "description": "Sublimation paper falls under heading 4809 attracting 18% GST (Schedule III S.No. 112), clarified by CBIC Circular No. 265/11/2026-GST. 12% is only permitted for past periods prior to 28-Oct-2026 on 'as is where is' basis.",
+                            "recommendation": "Apply 18% GST for sublimation paper under heading 4809."
+                        }
+                    }
+
+        # J. Toys (HSN 9503) — CBIC Circular No. 265/11/2026-GST
+        if clean_hsn.startswith('9503'):
+            if 'GENERAL_ELECTRONIC_COMPONENT' in raw_conds:
+                if app_rate == Decimal('12.00'):
+                    return {
+                        "status": "STATUTORY_MISMATCH",
+                        "is_statutorily_valid": False,
+                        "applied_rate": float(app_rate),
+                        "expected_rate": 18.00,
+                        "applied_cess": float(app_cess),
+                        "expected_cess": 0.00,
+                        "matched_rules_count": len(rules),
+                        "notification_reference": "Notification No. 1/2017-Central Tax (Rate), Schedule III & Circular No. 265/11/2026-GST",
+                        "description": "General electronic components/batteries not solely adapted for toys attract 18% under Chapter 85",
+                        "supply_type": "TAXABLE",
+                        "is_exempt": False,
+                        "is_nil_rated": False,
+                        "is_zero_rated": False,
+                        "is_rcm": False,
+                        "itc_eligibility": "ELIGIBLE",
+                        "itc_restriction_details": None,
+                        "cess_applicability": "NOT_APPLICABLE",
+                        "missing_attributes": [],
+                        "issue": {
+                            "code": "GST_STATUTORY_RATE_MISMATCH",
+                            "severity": "ERROR",
+                            "description": "General electronic parts and batteries not adapted solely for toys cannot claim 12% under heading 9503; they attract 18% under Chapter 85 (Schedule III) per Circular No. 265/11/2026-GST.",
+                            "recommendation": "Classify general electronic parts under Chapter 85 at 18% GST."
+                        }
+                    }
+            if 'ARCADE_GAME_9504' in raw_conds:
+                if app_rate == Decimal('12.00'):
+                    return {
+                        "status": "STATUTORY_MISMATCH",
+                        "is_statutorily_valid": False,
+                        "applied_rate": float(app_rate),
+                        "expected_rate": 28.00,
+                        "applied_cess": float(app_cess),
+                        "expected_cess": 0.00,
+                        "matched_rules_count": len(rules),
+                        "notification_reference": "Notification No. 1/2017-Central Tax (Rate), Schedule IV, S.No. 222 & Circular No. 265/11/2026-GST",
+                        "description": "Video game consoles, arcade games, and parlour games attract 28% under heading 9504",
+                        "supply_type": "TAXABLE",
+                        "is_exempt": False,
+                        "is_nil_rated": False,
+                        "is_zero_rated": False,
+                        "is_rcm": False,
+                        "itc_eligibility": "ELIGIBLE",
+                        "itc_restriction_details": None,
+                        "cess_applicability": "NOT_APPLICABLE",
+                        "missing_attributes": [],
+                        "issue": {
+                            "code": "GST_STATUTORY_RATE_MISMATCH",
+                            "severity": "ERROR",
+                            "description": "Video game consoles and arcade games are classified under heading 9504 attracting 28% GST, not 12% under heading 9503 (Circular No. 265/11/2026-GST).",
+                            "recommendation": "Classify under heading 9504 at 28% GST."
+                        }
+                    }
+
+        # K. Seaweed-Extract Bio-Stimulants & Fertilisers (HSN 3101) — CBIC Circular No. 265/11/2026-GST
+        if clean_hsn.startswith('3101'):
+            if 'UNREGISTERED_BIO_STIMULANT' in raw_conds:
+                if app_rate == Decimal('5.00'):
+                    return {
+                        "status": "STATUTORY_MISMATCH",
+                        "is_statutorily_valid": False,
+                        "applied_rate": float(app_rate),
+                        "expected_rate": 18.00,
+                        "applied_cess": float(app_cess),
+                        "expected_cess": 0.00,
+                        "matched_rules_count": len(rules),
+                        "notification_reference": "Notification No. 1/2017-CT(Rate) Schedule III S.No. 87 & Circular No. 265/11/2026-GST",
+                        "description": "Bio-stimulants not registered under FCO 1985 classified under heading 3808/3824 @ 18%",
+                        "supply_type": "TAXABLE",
+                        "is_exempt": False,
+                        "is_nil_rated": False,
+                        "is_zero_rated": False,
+                        "is_rcm": False,
+                        "itc_eligibility": "ELIGIBLE",
+                        "itc_restriction_details": None,
+                        "cess_applicability": "NOT_APPLICABLE",
+                        "missing_attributes": [],
+                        "issue": {
+                            "code": "GST_STATUTORY_RATE_MISMATCH",
+                            "severity": "ERROR",
+                            "description": "Bio-stimulants attract 5% under heading 3101 ONLY IF registered under the Fertiliser (Control) Order (FCO), 1985. Unregistered products must be classified as chemical preparations under heading 3808/3824 attracting 18% (Circular No. 265/11/2026-GST).",
+                            "recommendation": "Verify FCO 1985 registration or apply 18% GST under heading 3808/3824."
+                        }
+                    }
+            elif strict_classification and ('FCO_REGISTERED' not in raw_conds and 'FCO_REGISTERED_BIO_STIMULANT' not in raw_conds and 'BIO_STIMULANT' in raw_conds):
+                return {
+                    "status": "REVIEW_REQUIRED",
+                    "is_statutorily_valid": False,
+                    "applied_rate": float(app_rate),
+                    "expected_rate": None,
+                    "applied_cess": float(app_cess),
+                    "expected_cess": None,
+                    "matched_rules_count": len(rules),
+                    "notification_reference": "CBIC Circular No. 265/11/2026-GST",
+                    "description": "Bio-stimulant 5% rate requires FCO 1985 registration verification",
+                    "supply_type": "TAXABLE",
+                    "is_exempt": False,
+                    "is_nil_rated": False,
+                    "is_zero_rated": False,
+                    "is_rcm": False,
+                    "itc_eligibility": "ELIGIBLE",
+                    "itc_restriction_details": None,
+                    "cess_applicability": "NOT_APPLICABLE",
+                    "missing_attributes": ["is_fco_registered", "fco_license_number"],
+                    "issue": {
+                        "code": "GST_ATTRIBUTE_REQUIRED_FOR_CLASSIFICATION",
+                        "severity": "WARNING",
+                        "description": "Bio-stimulants under HSN 3101 qualify for 5% rate only with valid FCO 1985 registration per Circular No. 265/11/2026-GST. Registration attribute required.",
+                        "recommendation": "Confirm whether bio-stimulant is registered under Fertiliser (Control) Order, 1985."
+                    }
+                }
+
+        # L. Used Motor Vehicles under Margin Scheme (HSN 8703) — Notif 8/2018-CT(Rate) & Cir 265
+        if clean_hsn.startswith('8703') and 'MARGIN_SCHEME' in raw_conds:
+            if app_cess > Decimal('0.00'):
+                return {
+                    "status": "STATUTORY_MISMATCH",
+                    "is_statutorily_valid": False,
+                    "applied_rate": float(app_rate),
+                    "expected_rate": float(app_rate),
+                    "applied_cess": float(app_cess),
+                    "expected_cess": 0.00,
+                    "matched_rules_count": len(rules),
+                    "notification_reference": "Notification No. 8/2018-Central Tax (Rate) & Circular No. 265/11/2026-GST",
+                    "description": "Used motor vehicles under margin scheme are exempt from Compensation Cess",
+                    "supply_type": "CONCESSIONAL",
+                    "is_exempt": False,
+                    "is_nil_rated": False,
+                    "is_zero_rated": False,
+                    "is_rcm": False,
+                    "itc_eligibility": "CONDITIONAL_NO_ITC",
+                    "itc_restriction_details": "Dealer cannot claim ITC on purchase of used vehicle; repair parts and overheads remain eligible under Section 16",
+                    "cess_applicability": "NOT_APPLICABLE",
+                    "missing_attributes": [],
+                    "issue": {
+                        "code": "GST_COMPENSATION_CESS_MISMATCH",
+                        "severity": "ERROR",
+                        "description": "Used motor vehicles sold under Margin Scheme (Notif 8/2018-CT(Rate)) attract 0% Compensation Cess, but invoice applied cess.",
+                        "recommendation": "Update Compensation Cess to 0.00% under Notification No. 8/2018-CT(Rate)."
+                    }
+                }
+            if app_rate == Decimal('28.00'):
+                return {
+                    "status": "STATUTORY_MISMATCH",
+                    "is_statutorily_valid": False,
+                    "applied_rate": float(app_rate),
+                    "expected_rate": 18.00,
+                    "applied_cess": float(app_cess),
+                    "expected_cess": 0.00,
+                    "matched_rules_count": len(rules),
+                    "notification_reference": "Notification No. 8/2018-Central Tax (Rate) & Circular No. 265/11/2026-GST",
+                    "description": "Used motor vehicles under margin scheme attract concessional 18% or 12% on margin, not 28%",
+                    "supply_type": "CONCESSIONAL",
+                    "is_exempt": False,
+                    "is_nil_rated": False,
+                    "is_zero_rated": False,
+                    "is_rcm": False,
+                    "itc_eligibility": "CONDITIONAL_NO_ITC",
+                    "itc_restriction_details": "Dealer cannot claim ITC on purchase of used vehicle; repair parts and overheads remain eligible under Section 16",
+                    "cess_applicability": "NOT_APPLICABLE",
+                    "missing_attributes": [],
+                    "issue": {
+                        "code": "GST_STATUTORY_RATE_MISMATCH",
+                        "severity": "ERROR",
+                        "description": "Used motor vehicles under Margin Scheme attract 18% (or 12%) on margin of supply without Cess under Notification No. 8/2018-CT(Rate), not standard 28% new vehicle rate.",
+                        "recommendation": "Apply concessional Margin Scheme rate (18% or 12%) on margin with 0% cess."
+                    }
+                }
+
+        # -------------------------------------------------------------------------
+        # Case 2: Unrecognized / Ambiguous HSN (No statutory rule matches)
+        # -------------------------------------------------------------------------
+        if not rules:
+            return {
+                "status": "REVIEW_REQUIRED",
+                "is_statutorily_valid": True,  # Non-blocking warning flag
+                "applied_rate": float(app_rate),
+                "expected_rate": None,
+                "applied_cess": float(app_cess),
+                "expected_cess": None,
+                "matched_rules_count": 0,
+                "notification_reference": None,
+                "description": None,
+                "supply_type": "TAXABLE",
+                "is_exempt": False,
+                "is_nil_rated": False,
+                "is_zero_rated": False,
+                "is_rcm": False,
+                "itc_eligibility": "ELIGIBLE",
+                "itc_restriction_details": None,
+                "cess_applicability": "NOT_APPLICABLE",
+                "missing_attributes": ["hsn_classification"],
+                "issue": {
+                    "code": "GST_RATE_REVIEW_REQUIRED",
+                    "severity": "WARNING",
+                    "description": f"HSN/SAC code '{hsn_sc}' has no exact statutory rule match for transaction date {tx_date}. Verification recommended.",
+                    "recommendation": "Confirm applicable notification rate in CBIC tariff schedules."
                 }
             }
 
