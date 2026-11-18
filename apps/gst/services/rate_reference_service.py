@@ -28,6 +28,19 @@ class GSTRateRule(NamedTuple):
     itc_restriction_details: Optional[str]
 
 
+class StatutoryChangeEntry(NamedTuple):
+    reference_id: str
+    council_meeting: str  # e.g. "55th GST Council", "56th GST Council", "57th GST Council"
+    meeting_date: date
+    effective_date: Optional[date]
+    category: str  # 'RATE_CHANGE', 'EXEMPTION', 'COMPLIANCE', 'STATUTORY_REFORM'
+    hsn_sac: Optional[str]
+    description: str
+    status: str  # 'VERIFIED_ACTIVE', 'PENDING_NOTIFICATION', 'PENDING_AMENDMENT'
+    gazette_notification: Optional[str]
+    statutory_notes: str
+
+
 class GSTRateScheduleService:
     """
     Authoritative Effective-Dated Statutory GST Rate Reference & Rule Hardening Engine (Round 2.2.2).
@@ -246,7 +259,7 @@ class GSTRateScheduleService:
             itc_eligibility='INELIGIBLE_SEC_17_5',
             itc_restriction_details='Supplier cannot take ITC (Notif 46/2017); Recipient blocked under Section 17(5)(b)(i)'
         ),
-        # Current: 15-Nov-2017 onwards — Restaurants in Specified Premises (Hotel declared tariff >= Rs.7500/night)
+        # Historical: 15-Nov-2017 to 31-Mar-2025 — Restaurants in Hotel Premises with Declared Tariff >= Rs. 7,500
         GSTRateRule(
             hsn_sc='9963',
             tariff_item='996332',
@@ -257,9 +270,32 @@ class GSTRateScheduleService:
             igst_rate=Decimal('18.00'),
             cess_rate=Decimal('0.00'),
             effective_from=date(2017, 11, 15),
-            effective_to=None,
+            effective_to=date(2025, 3, 31),
             notification_ref='Notification No. 11/2017-CT(Rate) S.No. 7(vi) as amended by Notif 20/2019-CT(Rate)',
             required_conditions=('HOTEL_TARIFF_GTE_7500',),
+            excluded_conditions=('STANDALONE_RESTAURANT',),
+            supply_type='TAXABLE',
+            is_exempt=False,
+            is_nil_rated=False,
+            is_rcm=False,
+            itc_eligibility='ELIGIBLE',
+            itc_restriction_details='Eligible for supplier; recipient blocked under Section 17(5)(b)(i) unless outward supply category'
+        ),
+        # Current: 01-Apr-2025 onwards (FY 2025-26) — "Specified Premises" (55th GST Council)
+        # Declared tariff definition omitted; replaced with actual value of supply in preceding FY > Rs. 7,500 or annual Opt-In
+        GSTRateRule(
+            hsn_sc='9963',
+            tariff_item='996332',
+            description='Restaurant services located in specified premises (preceding FY room value > Rs. 7,500/day or annual opt-in)',
+            item_type='SERVICES',
+            cgst_rate=Decimal('9.00'),
+            sgst_rate=Decimal('9.00'),
+            igst_rate=Decimal('18.00'),
+            cess_rate=Decimal('0.00'),
+            effective_from=date(2025, 4, 1),
+            effective_to=None,
+            notification_ref='Notification No. 01/2025-Central Tax (Rate) (55th GST Council)',
+            required_conditions=('HOTEL_SPECIFIED_PREMISES',),
             excluded_conditions=('STANDALONE_RESTAURANT',),
             supply_type='TAXABLE',
             is_exempt=False,
@@ -591,21 +627,66 @@ class GSTRateScheduleService:
             itc_eligibility='ZERO_ITC',
             itc_restriction_details='Exempt supply under Section 11; no ITC under Section 17(2)'
         ),
-        # Current: 18-Jul-2022 onwards — Pre-Packaged and Labelled (5%)
+        # Historical: 18-Jul-2022 to 21-Sep-2025 — Pre-Packaged and Labelled Paneer & Cheese (5%)
         GSTRateRule(
             hsn_sc='0406',
             tariff_item='0406',
-            description='Paneer and cheese when pre-packaged and labelled',
+            description='Paneer and cheese when pre-packaged and labelled (prior to 22-Sep-2025 rationalisation)',
             item_type='GOODS',
             cgst_rate=Decimal('2.50'),
             sgst_rate=Decimal('2.50'),
             igst_rate=Decimal('5.00'),
             cess_rate=Decimal('0.00'),
             effective_from=date(2022, 7, 18),
-            effective_to=None,
+            effective_to=date(2025, 9, 21),
             notification_ref='Notification No. 6/2022-Central Tax (Rate), Schedule I, S.No. 26',
             required_conditions=(),
             excluded_conditions=('LOOSE_UNPACKAGED',),
+            supply_type='TAXABLE',
+            is_exempt=False,
+            is_nil_rated=False,
+            is_rcm=False,
+            itc_eligibility='ELIGIBLE',
+            itc_restriction_details=None
+        ),
+        # Current: 22-Sep-2025 onwards — Chenna or Paneer (pre-packaged or loose) (0% Exempt)
+        # Reduced from 5% to Nil (0% Exempt) under 56th GST Council recommendations
+        GSTRateRule(
+            hsn_sc='0406',
+            tariff_item='0406',
+            description='Chenna or paneer, whether pre-packaged and labelled or loose (56th GST Council)',
+            item_type='GOODS',
+            cgst_rate=Decimal('0.00'),
+            sgst_rate=Decimal('0.00'),
+            igst_rate=Decimal('0.00'),
+            cess_rate=Decimal('0.00'),
+            effective_from=date(2025, 9, 22),
+            effective_to=None,
+            notification_ref='Notification No. 10/2025-CT(Rate) & 11/2025-CT(Rate) (56th GST Council)',
+            required_conditions=(),
+            excluded_conditions=('CHEESE',),
+            supply_type='EXEMPT',
+            is_exempt=True,
+            is_nil_rated=False,
+            is_rcm=False,
+            itc_eligibility='ZERO_ITC',
+            itc_restriction_details='Exempt supply under Section 11; no ITC under Section 17(2)'
+        ),
+        # Current: 22-Sep-2025 onwards — Cheese (HSN 0406) reduced from 12% to 5%
+        GSTRateRule(
+            hsn_sc='0406',
+            tariff_item='0406',
+            description='Cheese (other than paneer and chenna)',
+            item_type='GOODS',
+            cgst_rate=Decimal('2.50'),
+            sgst_rate=Decimal('2.50'),
+            igst_rate=Decimal('5.00'),
+            cess_rate=Decimal('0.00'),
+            effective_from=date(2025, 9, 22),
+            effective_to=None,
+            notification_ref='Notification No. 10/2025-Central Tax (Rate), Schedule I, S.No. 26',
+            required_conditions=('CHEESE',),
+            excluded_conditions=('PANEER', 'CHENNA'),
             supply_type='TAXABLE',
             is_exempt=False,
             is_nil_rated=False,
@@ -638,18 +719,18 @@ class GSTRateScheduleService:
             itc_eligibility='ZERO_ITC',
             itc_restriction_details='Unconditional statutory exemption; no ITC allowed under Section 17(2)'
         ),
-        # UHT Milk (HSN 0401 50 00) — 5% Taxable
+        # Historical: 01-Jul-2017 to 21-Sep-2025 — UHT Milk (HSN 0401 50 00) (5% Taxable)
         GSTRateRule(
             hsn_sc='0401',
             tariff_item='04015000',
-            description='Ultra High Temperature (UHT) milk',
+            description='Ultra High Temperature (UHT) milk (prior to 22-Sep-2025 rationalisation)',
             item_type='GOODS',
             cgst_rate=Decimal('2.50'),
             sgst_rate=Decimal('2.50'),
             igst_rate=Decimal('5.00'),
             cess_rate=Decimal('0.00'),
             effective_from=date(2017, 7, 1),
-            effective_to=None,
+            effective_to=date(2025, 9, 21),
             notification_ref='Notification No. 1/2017-Central Tax (Rate), Schedule I, S.No. 7',
             required_conditions=('UHT_MILK',),
             excluded_conditions=(),
@@ -659,6 +740,29 @@ class GSTRateScheduleService:
             is_rcm=False,
             itc_eligibility='ELIGIBLE',
             itc_restriction_details=None
+        ),
+        # Current: 22-Sep-2025 onwards — UHT Milk (HSN 0401 50 00) (0% Exempt)
+        # Reduced from 5% to Nil (0% Exempt) under 56th GST Council recommendations
+        GSTRateRule(
+            hsn_sc='0401',
+            tariff_item='04015000',
+            description='Ultra High Temperature (UHT) milk (56th GST Council)',
+            item_type='GOODS',
+            cgst_rate=Decimal('0.00'),
+            sgst_rate=Decimal('0.00'),
+            igst_rate=Decimal('0.00'),
+            cess_rate=Decimal('0.00'),
+            effective_from=date(2025, 9, 22),
+            effective_to=None,
+            notification_ref='Notification No. 10/2025-CT(Rate) & 11/2025-CT(Rate) (56th GST Council)',
+            required_conditions=('UHT_MILK',),
+            excluded_conditions=(),
+            supply_type='EXEMPT',
+            is_exempt=True,
+            is_nil_rated=False,
+            is_rcm=False,
+            itc_eligibility='ZERO_ITC',
+            itc_restriction_details='Exempt supply under Section 11; no ITC under Section 17(2)'
         ),
 
         # =========================================================================
@@ -686,6 +790,99 @@ class GSTRateScheduleService:
             itc_restriction_details='Exporter must export goods within 90 days; supplier eligible for refund under inverted duty'
         ),
     ]
+
+    # =========================================================================
+    # Statutory Change Register (GST Council Tracking & Current-Law Status)
+    # =========================================================================
+    STATUTORY_CHANGE_REGISTER: List[StatutoryChangeEntry] = [
+        StatutoryChangeEntry(
+            reference_id='55TH-01',
+            council_meeting='55th GST Council (Jaisalmer)',
+            meeting_date=date(2024, 12, 21),
+            effective_date=date(2025, 4, 1),
+            category='RATE_CHANGE',
+            hsn_sac='9963',
+            description='Omission of declared tariff criterion for restaurant services; replaced with Specified Premises for Financial Year based on preceding FY room supply value > Rs. 7,500 or annual opt-in.',
+            status='VERIFIED_ACTIVE',
+            gazette_notification='Notification No. 01/2025-Central Tax (Rate)',
+            statutory_notes='Enacted w.e.f. 01-Apr-2025 (FY 2025-26).'
+        ),
+        StatutoryChangeEntry(
+            reference_id='56TH-01',
+            council_meeting='56th GST Council (New Delhi)',
+            meeting_date=date(2025, 9, 3),
+            effective_date=date(2025, 9, 22),
+            category='EXEMPTION',
+            hsn_sac='0406',
+            description='Chenna and paneer (pre-packaged and labelled) reduced from 5% to Nil (0% Exempt). Loose paneer remains exempt.',
+            status='VERIFIED_ACTIVE',
+            gazette_notification='Notification No. 10/2025-Central Tax (Rate) & 11/2025-Central Tax (Rate)',
+            statutory_notes='Enacted w.e.f. 22-Sep-2025.'
+        ),
+        StatutoryChangeEntry(
+            reference_id='56TH-02',
+            council_meeting='56th GST Council (New Delhi)',
+            meeting_date=date(2025, 9, 3),
+            effective_date=date(2025, 9, 22),
+            category='RATE_CHANGE',
+            hsn_sac='0406',
+            description='Cheese (other than paneer and chenna) reduced from 12% to 5%.',
+            status='VERIFIED_ACTIVE',
+            gazette_notification='Notification No. 10/2025-Central Tax (Rate), Schedule I, S.No. 26',
+            statutory_notes='Enacted w.e.f. 22-Sep-2025.'
+        ),
+        StatutoryChangeEntry(
+            reference_id='56TH-03',
+            council_meeting='56th GST Council (New Delhi)',
+            meeting_date=date(2025, 9, 3),
+            effective_date=date(2025, 9, 22),
+            category='EXEMPTION',
+            hsn_sac='0401',
+            description='Ultra High Temperature (UHT) milk (0401 50 00) reduced from 5% to Nil (0% Exempt).',
+            status='VERIFIED_ACTIVE',
+            gazette_notification='Notification No. 10/2025-Central Tax (Rate) & 11/2025-Central Tax (Rate)',
+            statutory_notes='Enacted w.e.f. 22-Sep-2025.'
+        ),
+        StatutoryChangeEntry(
+            reference_id='57TH-01',
+            council_meeting='57th GST Council (New Delhi)',
+            meeting_date=date(2026, 10, 8),
+            effective_date=None,
+            category='STATUTORY_REFORM',
+            hsn_sac=None,
+            description='Decriminalization of GST offenses & prosecution threshold enhancement from Rs. 2 Crore to Rs. 5 Crore; repeal of Section 69 arrest powers for minor procedural infractions.',
+            status='PENDING_AMENDMENT',
+            gazette_notification=None,
+            statutory_notes='Recommendation approved in 57th Council meeting on 08-Oct-2026. Pending Finance Act amendment; not active in tax calculation engine.'
+        ),
+        StatutoryChangeEntry(
+            reference_id='57TH-02',
+            council_meeting='57th GST Council (New Delhi)',
+            meeting_date=date(2026, 10, 8),
+            effective_date=None,
+            category='COMPLIANCE',
+            hsn_sac=None,
+            description='Automated risk-based processing for duty credit / refund claims and enhanced GSTAT operational integration.',
+            status='PENDING_NOTIFICATION',
+            gazette_notification=None,
+            statutory_notes='Recommendation approved in 57th Council meeting on 08-Oct-2026. Pending CBIC procedural notification; not active in tax calculation engine.'
+        ),
+    ]
+
+    @classmethod
+    def get_statutory_change_register(cls, status: Optional[str] = None) -> List[StatutoryChangeEntry]:
+        """Returns registered GST Council changes, optionally filtered by enactment status."""
+        if status:
+            return [e for e in cls.STATUTORY_CHANGE_REGISTER if e.status == status]
+        return list(cls.STATUTORY_CHANGE_REGISTER)
+
+    @classmethod
+    def is_recommendation_gazetted(cls, reference_id: str) -> bool:
+        """Verifies whether a statutory recommendation has been gazetted and enacted."""
+        for entry in cls.STATUTORY_CHANGE_REGISTER:
+            if entry.reference_id == reference_id:
+                return entry.status == 'VERIFIED_ACTIVE' and bool(entry.gazette_notification)
+        return False
 
     @classmethod
     def evaluate_vehicle_cess_criteria(
@@ -877,6 +1074,17 @@ class GSTRateScheduleService:
             raw_conds.add('LOOSE_UNPACKAGED')
         if attrs.get('is_merchant_export') is True or clean_hsn.upper() == 'MERCHANT_EXPORT' or 'MERCHANT_EXPORT' in clean_hsn.upper():
             raw_conds.add('MERCHANT_EXPORT')
+        # Restaurant condition normalization (Specified Premises / Declared Tariff)
+        if any(c in raw_conds for c in ('HOTEL_TARIFF_GTE_7500', 'PRECEDING_FY_TARIFF_GTE_7500', 'HOTEL_OPTED_IN_SPECIFIED_PREMISES', 'HOTEL_SPECIFIED_PREMISES', 'SPECIFIED_PREMISES')):
+            raw_conds.add('HOTEL_SPECIFIED_PREMISES')
+            raw_conds.add('HOTEL_TARIFF_GTE_7500')
+        if attrs.get('hotel_tariff_gte_7500') is True or attrs.get('specified_premises') is True or attrs.get('preceding_fy_tariff_gte_7500') is True or attrs.get('hotel_opted_in') is True:
+            raw_conds.add('HOTEL_SPECIFIED_PREMISES')
+            raw_conds.add('HOTEL_TARIFF_GTE_7500')
+        if attrs.get('is_cheese') is True:
+            raw_conds.add('CHEESE')
+        if attrs.get('is_uht') is True or (tariff_item and tariff_item.startswith('040150')):
+            raw_conds.add('UHT_MILK')
 
         # Evaluate SUV Cess criteria if relevant
         if clean_hsn.startswith('8703') and (app_cess > 0 or attrs):
@@ -1114,8 +1322,12 @@ class GSTRateScheduleService:
 
         # D. Restaurant Services (SAC 9963)
         if clean_hsn.startswith('9963') and tx_date >= date(2017, 11, 15):
+            has_hotel_premise = bool({'HOTEL_TARIFF_GTE_7500', 'HOTEL_SPECIFIED_PREMISES', 'PRECEDING_FY_TARIFF_GTE_7500', 'HOTEL_OPTED_IN_SPECIFIED_PREMISES', 'SPECIFIED_PREMISES'}.intersection(raw_conds))
+            is_post_2025 = (tx_date >= date(2025, 4, 1))
+            notif_ref = "Notification No. 01/2025-Central Tax (Rate) (55th GST Council)" if is_post_2025 else "Notification No. 46/2017-Central Tax (Rate)"
+            premise_desc = "hotel premises qualifying as Specified Premises (preceding FY supply value > Rs. 7,500/day or annual opt-in)" if is_post_2025 else "hotel premises with declared tariff >= Rs. 7,500/night"
             # If 18% applied to standalone restaurant
-            if app_rate == Decimal('18.00') and ('STANDALONE_RESTAURANT' in raw_conds or 'HOTEL_TARIFF_GTE_7500' not in raw_conds):
+            if app_rate == Decimal('18.00') and ('STANDALONE_RESTAURANT' in raw_conds or not has_hotel_premise):
                 if 'STANDALONE_RESTAURANT' in raw_conds:
                     return {
                         "status": "STATUTORY_MISMATCH",
@@ -1125,7 +1337,7 @@ class GSTRateScheduleService:
                         "applied_cess": float(app_cess),
                         "expected_cess": 0.00,
                         "matched_rules_count": len(rules),
-                        "notification_reference": "Notification No. 46/2017-Central Tax (Rate)",
+                        "notification_reference": notif_ref,
                         "description": "Standalone restaurant services attract 5% GST without ITC",
                         "supply_type": "TAXABLE",
                         "is_exempt": False,
@@ -1139,11 +1351,12 @@ class GSTRateScheduleService:
                         "issue": {
                             "code": "GST_STATUTORY_RATE_MISMATCH",
                             "severity": "ERROR",
-                            "description": "Standalone restaurant services post 15-Nov-2017 attract 5% without ITC under Notif 46/2017-CT(Rate). 18% rate applies exclusively to restaurants in hotel premises with tariff >= Rs.7,500/night.",
+                            "description": f"Standalone restaurant services post 15-Nov-2017 attract 5% without ITC under Notif 46/2017-CT(Rate). 18% rate applies exclusively to restaurants located in {premise_desc}.",
                             "recommendation": "Update restaurant rate to 5% without ITC."
                         }
                     }
                 elif strict_classification:
+                    missing_attr = ["hotel_specified_premises", "preceding_fy_tariff"] if is_post_2025 else ["hotel_declared_tariff"]
                     return {
                         "status": "REVIEW_REQUIRED",
                         "is_statutorily_valid": False,
@@ -1152,8 +1365,8 @@ class GSTRateScheduleService:
                         "applied_cess": float(app_cess),
                         "expected_cess": None,
                         "matched_rules_count": len(rules),
-                        "notification_reference": "Notification No. 46/2017-Central Tax (Rate) & 20/2019-CT(Rate)",
-                        "description": "Restaurant service 18% requires hotel declared tariff >= Rs. 7,500/night",
+                        "notification_reference": notif_ref,
+                        "description": f"Restaurant service 18% requires {premise_desc}",
                         "supply_type": "TAXABLE",
                         "is_exempt": False,
                         "is_nil_rated": False,
@@ -1162,12 +1375,12 @@ class GSTRateScheduleService:
                         "itc_eligibility": "INELIGIBLE_SEC_17_5",
                         "itc_restriction_details": "Section 17(5)(b)(i) blocked credit",
                         "cess_applicability": "NOT_APPLICABLE",
-                        "missing_attributes": ["hotel_declared_tariff"],
+                        "missing_attributes": missing_attr,
                         "issue": {
                             "code": "GST_ATTRIBUTE_REQUIRED_FOR_CLASSIFICATION",
                             "severity": "WARNING",
-                            "description": "Restaurant services under SAC 9963 attract 5% without ITC unless located in hotel premises with declared tariff >= Rs.7,500/night. Specify declared tariff attribute to justify 18% rate.",
-                            "recommendation": "Confirm whether restaurant is located in hotel premises with room tariff >= Rs.7,500."
+                            "description": f"Restaurant services under SAC 9963 attract 5% without ITC unless located in {premise_desc}. Provide qualification attributes to justify 18% rate.",
+                            "recommendation": f"Confirm whether restaurant satisfies {premise_desc} criteria."
                         }
                     }
 
@@ -1201,62 +1414,186 @@ class GSTRateScheduleService:
                     }
                 }
 
-        # F. Dairy / Paneer (HSN 0406)
-        if clean_hsn.startswith('0406') and tx_date >= date(2022, 7, 18):
-            if 'LOOSE_UNPACKAGED' in raw_conds and app_rate == Decimal('5.00'):
-                return {
-                    "status": "STATUTORY_MISMATCH",
-                    "is_statutorily_valid": False,
-                    "applied_rate": float(app_rate),
-                    "expected_rate": 0.00,
-                    "applied_cess": float(app_cess),
-                    "expected_cess": 0.00,
-                    "matched_rules_count": len(rules),
-                    "notification_reference": "Notification No. 2/2017-CT(Rate) S.No. 27 as amended by Notif 7/2022-CT(Rate)",
-                    "description": "Unpackaged / loose paneer is unconditionally exempt (0%)",
-                    "supply_type": "EXEMPT",
-                    "is_exempt": True,
-                    "is_nil_rated": False,
-                    "is_zero_rated": False,
-                    "is_rcm": False,
-                    "itc_eligibility": "ZERO_ITC",
-                    "itc_restriction_details": "Exempt supply under Section 11; no ITC under Section 17(2)",
-                    "cess_applicability": "NOT_APPLICABLE",
-                    "missing_attributes": [],
-                    "issue": {
-                        "code": "GST_STATUTORY_RATE_MISMATCH",
-                        "severity": "ERROR",
-                        "description": "Unpackaged / loose paneer (other than pre-packaged and labelled) is exempt (0%) under Notif 7/2022-CT(Rate), but 5% was applied.",
-                        "recommendation": "Update rate to 0% (Exempt) for loose unpackaged paneer."
+        # F. Dairy / Paneer / Cheese (HSN 0406)
+        if clean_hsn.startswith('0406'):
+            # Historical Period: 18-Jul-2022 to 21-Sep-2025
+            if date(2022, 7, 18) <= tx_date < date(2025, 9, 22):
+                if 'LOOSE_UNPACKAGED' in raw_conds and app_rate == Decimal('5.00'):
+                    return {
+                        "status": "STATUTORY_MISMATCH",
+                        "is_statutorily_valid": False,
+                        "applied_rate": float(app_rate),
+                        "expected_rate": 0.00,
+                        "applied_cess": float(app_cess),
+                        "expected_cess": 0.00,
+                        "matched_rules_count": len(rules),
+                        "notification_reference": "Notification No. 2/2017-CT(Rate) S.No. 27 as amended by Notif 7/2022-CT(Rate)",
+                        "description": "Unpackaged / loose paneer is unconditionally exempt (0%)",
+                        "supply_type": "EXEMPT",
+                        "is_exempt": True,
+                        "is_nil_rated": False,
+                        "is_zero_rated": False,
+                        "is_rcm": False,
+                        "itc_eligibility": "ZERO_ITC",
+                        "itc_restriction_details": "Exempt supply under Section 11; no ITC under Section 17(2)",
+                        "cess_applicability": "NOT_APPLICABLE",
+                        "missing_attributes": [],
+                        "issue": {
+                            "code": "GST_STATUTORY_RATE_MISMATCH",
+                            "severity": "ERROR",
+                            "description": "Unpackaged / loose paneer (other than pre-packaged and labelled) is exempt (0%) under Notif 7/2022-CT(Rate), but 5% was applied.",
+                            "recommendation": "Update rate to 0% (Exempt) for loose unpackaged paneer."
+                        }
                     }
-                }
-            if 'PRE_PACKAGED' in raw_conds and app_rate == Decimal('0.00'):
-                return {
-                    "status": "STATUTORY_MISMATCH",
-                    "is_statutorily_valid": False,
-                    "applied_rate": float(app_rate),
-                    "expected_rate": 5.00,
-                    "applied_cess": float(app_cess),
-                    "expected_cess": 0.00,
-                    "matched_rules_count": len(rules),
-                    "notification_reference": "Notification No. 6/2022-Central Tax (Rate), Schedule I, S.No. 26",
-                    "description": "Pre-packaged and labelled paneer attracts 5% GST w.e.f. 18-Jul-2022",
-                    "supply_type": "TAXABLE",
-                    "is_exempt": False,
-                    "is_nil_rated": False,
-                    "is_zero_rated": False,
-                    "is_rcm": False,
-                    "itc_eligibility": "ELIGIBLE",
-                    "itc_restriction_details": None,
-                    "cess_applicability": "NOT_APPLICABLE",
-                    "missing_attributes": [],
-                    "issue": {
-                        "code": "GST_STATUTORY_RATE_MISMATCH",
-                        "severity": "ERROR",
-                        "description": "Pre-packaged and labelled paneer attracts 5% GST w.e.f. 18-Jul-2022 under Notif 6/2022-CT(Rate). Exemption is withdrawn.",
-                        "recommendation": "Apply statutory 5% GST for pre-packaged and labelled paneer."
+                if 'PRE_PACKAGED' in raw_conds and app_rate == Decimal('0.00'):
+                    return {
+                        "status": "STATUTORY_MISMATCH",
+                        "is_statutorily_valid": False,
+                        "applied_rate": float(app_rate),
+                        "expected_rate": 5.00,
+                        "applied_cess": float(app_cess),
+                        "expected_cess": 0.00,
+                        "matched_rules_count": len(rules),
+                        "notification_reference": "Notification No. 6/2022-Central Tax (Rate), Schedule I, S.No. 26",
+                        "description": "Pre-packaged and labelled paneer attracts 5% GST between 18-Jul-2022 and 21-Sep-2025",
+                        "supply_type": "TAXABLE",
+                        "is_exempt": False,
+                        "is_nil_rated": False,
+                        "is_zero_rated": False,
+                        "is_rcm": False,
+                        "itc_eligibility": "ELIGIBLE",
+                        "itc_restriction_details": None,
+                        "cess_applicability": "NOT_APPLICABLE",
+                        "missing_attributes": [],
+                        "issue": {
+                            "code": "GST_STATUTORY_RATE_MISMATCH",
+                            "severity": "ERROR",
+                            "description": "Pre-packaged and labelled paneer attracts 5% GST between 18-Jul-2022 and 21-Sep-2025 under Notif 6/2022-CT(Rate). Exemption was withdrawn during this period.",
+                            "recommendation": "Apply statutory 5% GST for pre-packaged and labelled paneer."
+                        }
                     }
-                }
+            # Current Period: 22-Sep-2025 onwards (56th GST Council Rationalisation)
+            elif tx_date >= date(2025, 9, 22):
+                is_cheese = ('CHEESE' in raw_conds)
+                if not is_cheese:
+                    # Both loose and pre-packaged paneer / chenna are 0% EXEMPT
+                    if app_rate == Decimal('5.00'):
+                        return {
+                            "status": "STATUTORY_MISMATCH",
+                            "is_statutorily_valid": False,
+                            "applied_rate": float(app_rate),
+                            "expected_rate": 0.00,
+                            "applied_cess": float(app_cess),
+                            "expected_cess": 0.00,
+                            "matched_rules_count": len(rules),
+                            "notification_reference": "Notification No. 10/2025-CT(Rate) & 11/2025-CT(Rate) (56th GST Council)",
+                            "description": "Chenna and paneer (both pre-packaged and loose) is exempt (0%) w.e.f. 22-Sep-2025",
+                            "supply_type": "EXEMPT",
+                            "is_exempt": True,
+                            "is_nil_rated": False,
+                            "is_zero_rated": False,
+                            "is_rcm": False,
+                            "itc_eligibility": "ZERO_ITC",
+                            "itc_restriction_details": "Exempt supply under Section 11; no ITC under Section 17(2)",
+                            "cess_applicability": "NOT_APPLICABLE",
+                            "missing_attributes": [],
+                            "issue": {
+                                "code": "GST_STATUTORY_RATE_MISMATCH",
+                                "severity": "ERROR",
+                                "description": "Paneer and chenna (including pre-packaged and labelled) was reduced from 5% to Nil (0% Exempt) w.e.f. 22-Sep-2025 under Notification No. 10/2025-CT(Rate) & 11/2025-CT(Rate) (56th GST Council). 5% tax was incorrectly applied.",
+                                "recommendation": "Update tax rate to 0% (Exempt) for paneer/chenna."
+                            }
+                        }
+                else:
+                    # Cheese reduced from 12% to 5%
+                    if app_rate == Decimal('12.00'):
+                        return {
+                            "status": "STATUTORY_MISMATCH",
+                            "is_statutorily_valid": False,
+                            "applied_rate": float(app_rate),
+                            "expected_rate": 5.00,
+                            "applied_cess": float(app_cess),
+                            "expected_cess": 0.00,
+                            "matched_rules_count": len(rules),
+                            "notification_reference": "Notification No. 10/2025-Central Tax (Rate), Schedule I, S.No. 26",
+                            "description": "Cheese attracts 5% GST w.e.f. 22-Sep-2025 (reduced from 12%)",
+                            "supply_type": "TAXABLE",
+                            "is_exempt": False,
+                            "is_nil_rated": False,
+                            "is_zero_rated": False,
+                            "is_rcm": False,
+                            "itc_eligibility": "ELIGIBLE",
+                            "itc_restriction_details": None,
+                            "cess_applicability": "NOT_APPLICABLE",
+                            "missing_attributes": [],
+                            "issue": {
+                                "code": "GST_STATUTORY_RATE_MISMATCH",
+                                "severity": "ERROR",
+                                "description": "Cheese under HSN 0406 was reduced from 12% to 5% w.e.f. 22-Sep-2025 under Notification No. 10/2025-CT(Rate) (56th GST Council). 12% tax was incorrectly applied.",
+                                "recommendation": "Update tax rate to 5% for cheese."
+                            }
+                        }
+
+        # H. Milk (HSN 0401) — Fresh vs UHT Milk Effective-Dated Transitions
+        if clean_hsn.startswith('0401'):
+            is_uht = ('UHT_MILK' in raw_conds) or (tariff_item and tariff_item.startswith('040150'))
+            if is_uht:
+                # Prior to 22-Sep-2025: UHT milk was taxable at 5%
+                if tx_date < date(2025, 9, 22) and app_rate == Decimal('0.00'):
+                    return {
+                        "status": "STATUTORY_MISMATCH",
+                        "is_statutorily_valid": False,
+                        "applied_rate": float(app_rate),
+                        "expected_rate": 5.00,
+                        "applied_cess": float(app_cess),
+                        "expected_cess": 0.00,
+                        "matched_rules_count": len(rules),
+                        "notification_reference": "Notification No. 1/2017-Central Tax (Rate), Schedule I, S.No. 7",
+                        "description": "UHT milk attracts 5% GST prior to 22-Sep-2025",
+                        "supply_type": "TAXABLE",
+                        "is_exempt": False,
+                        "is_nil_rated": False,
+                        "is_zero_rated": False,
+                        "is_rcm": False,
+                        "itc_eligibility": "ELIGIBLE",
+                        "itc_restriction_details": None,
+                        "cess_applicability": "NOT_APPLICABLE",
+                        "missing_attributes": [],
+                        "issue": {
+                            "code": "GST_STATUTORY_RATE_MISMATCH",
+                            "severity": "ERROR",
+                            "description": "UHT milk attracts 5% GST under Schedule I S.No. 7 prior to 22-Sep-2025, but 0% was applied.",
+                            "recommendation": "Apply 5% GST for UHT milk prior to 22-Sep-2025."
+                        }
+                    }
+                # On/After 22-Sep-2025: UHT milk reduced to Nil (0% Exempt) under 56th GST Council
+                elif tx_date >= date(2025, 9, 22) and app_rate == Decimal('5.00'):
+                    return {
+                        "status": "STATUTORY_MISMATCH",
+                        "is_statutorily_valid": False,
+                        "applied_rate": float(app_rate),
+                        "expected_rate": 0.00,
+                        "applied_cess": float(app_cess),
+                        "expected_cess": 0.00,
+                        "matched_rules_count": len(rules),
+                        "notification_reference": "Notification No. 10/2025-CT(Rate) & 11/2025-CT(Rate) (56th GST Council)",
+                        "description": "UHT milk is exempt (0%) w.e.f. 22-Sep-2025",
+                        "supply_type": "EXEMPT",
+                        "is_exempt": True,
+                        "is_nil_rated": False,
+                        "is_zero_rated": False,
+                        "is_rcm": False,
+                        "itc_eligibility": "ZERO_ITC",
+                        "itc_restriction_details": "Exempt supply under Section 11; no ITC under Section 17(2)",
+                        "cess_applicability": "NOT_APPLICABLE",
+                        "missing_attributes": [],
+                        "issue": {
+                            "code": "GST_STATUTORY_RATE_MISMATCH",
+                            "severity": "ERROR",
+                            "description": "Ultra High Temperature (UHT) milk was reduced from 5% to Nil (0% Exempt) w.e.f. 22-Sep-2025 under Notification No. 10/2025-CT(Rate) & 11/2025-CT(Rate) (56th GST Council). 5% tax was incorrectly applied.",
+                            "recommendation": "Update tax rate to 0% (Exempt) for UHT milk."
+                        }
+                    }
 
         # G. Imitation Jewellery (HSN 7117) vs Precious Jewellery (HSN 7113)
         if clean_hsn.startswith('7117') and app_rate == Decimal('3.00'):
