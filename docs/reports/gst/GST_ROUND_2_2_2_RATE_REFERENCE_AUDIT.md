@@ -4,7 +4,7 @@
 **Repository:** `https://github.com/prakhar2207/Vouch`  
 **Active Working Branch:** `fix/stage4-12-day6-remediation`  
 **Base Commit:** `3da71e4` (verified running on Render staging)  
-**Remediation & Hardening Commit:** `[to be recorded upon commit]`  
+**Remediation & Hardening Commit:** `9319ff9`  
 **Staging Backend URL:** `https://vouch-u3u7.onrender.com`  
 **Staging Database:** Neon PostgreSQL `neondb_staging` (`sanitized_target: neondb_staging`, `identity_fingerprint: 6f4741bdaaf4`)  
 **Staging Frontend:** `https://srilekh.com`  
