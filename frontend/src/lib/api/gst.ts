@@ -138,6 +138,173 @@ export interface GSTAuditLogItem {
   created_at: string;
 }
 
+export interface GSTPayloadValidationIssue {
+  error_code: string;
+  severity: 'ERROR' | 'WARNING' | 'INFORMATION';
+  section: string;
+  record_identifier: string;
+  description: string;
+  recommended_correction: string;
+}
+
+export interface GSTPayloadValidationResult {
+  is_valid: boolean;
+  blocking_errors_count: number;
+  warnings_count: number;
+  conformance_standard: string;
+  validated_at: string;
+  issues: GSTPayloadValidationIssue[];
+}
+
+export interface OfficialGSTR1Payload {
+  gstin: string;
+  fp: string;
+  version?: string;
+  cur_gt?: number;
+  gt?: number;
+  b2b?: Array<{
+    ctin: string;
+    inv: Array<{
+      inum: string;
+      idt: string;
+      val: number;
+      pos: string;
+      rchrg: string;
+      inv_typ: string;
+      itms: Array<{
+        num: number;
+        itm_det: {
+          rt: number;
+          txval: number;
+          iamt: number;
+          camt: number;
+          samt: number;
+          csamt: number;
+        };
+      }>;
+    }>;
+  }>;
+  b2cl?: Array<{
+    pos: string;
+    inv: Array<{
+      inum: string;
+      idt: string;
+      val: number;
+      inv_typ: string;
+      itms: Array<{
+        num: number;
+        itm_det: {
+          rt: number;
+          txval: number;
+          iamt: number;
+          csamt: number;
+        };
+      }>;
+    }>;
+  }>;
+  b2cs?: Array<{
+    sply_ty: string;
+    pos: string;
+    typ?: string;
+    rt: number;
+    txval: number;
+    iamt: number;
+    camt: number;
+    samt: number;
+    csamt: number;
+  }>;
+  cdnr?: any[];
+  cdnur?: any[];
+  exp?: any[];
+  nil?: {
+    inv: Array<{
+      nil_amt: number;
+      expt_amt: number;
+      ngsup_amt: number;
+    }>;
+  };
+  hsn?: {
+    data: Array<{
+      num: number;
+      hsn_sc: string;
+      desc?: string;
+      uqc?: string;
+      qty?: number;
+      val?: number;
+      txval: number;
+      iamt: number;
+      camt: number;
+      samt: number;
+      csamt: number;
+    }>;
+  };
+  doc_issue?: {
+    doc_det: Array<{
+      doc_num: number;
+      doc_typ: string;
+      from: string;
+      to: string;
+      totnum: number;
+      canc: number;
+      net_issue: number;
+    }>;
+  };
+}
+
+export interface OfficialGSTR3BPayload {
+  gstin: string;
+  ret_period: string;
+  filing_typ: 'GSTR3B';
+  version?: string;
+  sup_details: {
+    osup_det: { txval: number; iamt: number; camt: number; samt: number; csamt: number };
+    osup_zero: { txval: number; iamt: number; csamt: number };
+    osup_nil_exmp: { txval: number };
+    isup_rev: { txval: number; iamt: number; camt: number; samt: number; csamt: number };
+    osup_nongst: { txval: number };
+  };
+  inter_sup: {
+    unreg_details: Array<{ pos: string; txval: number; iamt: number }>;
+    comp_details: any[];
+    uin_details: any[];
+  };
+  itc_elg: {
+    itc_avl: {
+      import_goods: { iamt: number; csamt: number };
+      import_services: { iamt: number; csamt: number };
+      isup_rev: { iamt: number; camt: number; samt: number; csamt: number };
+      isd: { iamt: number; camt: number; samt: number; csamt: number };
+      all_other: { txval?: number; iamt: number; camt: number; samt: number; csamt: number };
+    };
+    itc_rev: {
+      rule42_43: { iamt: number; camt: number; samt: number; csamt: number };
+      others: { iamt: number; camt: number; samt: number; csamt: number };
+    };
+    itc_net: { iamt: number; camt: number; samt: number; csamt: number };
+    itc_inelg: {
+      as_per_sec_17_5: { iamt: number; camt: number; samt: number; csamt: number };
+      others: { iamt: number; camt: number; samt: number; csamt: number };
+    };
+  };
+  inward_sup: {
+    isup_details: Array<{ ty: string; inter: number; intra: number }>;
+  };
+}
+
+export interface GSTExportResult {
+  success: boolean;
+  return_type: string;
+  return_period: string;
+  format: 'JSON' | 'REVIEW_REPORT' | 'RECON_REPORT';
+  conformance_standard?: string;
+  payload_hash?: string;
+  validation_summary?: GSTPayloadValidationResult;
+  payload?: OfficialGSTR1Payload | OfficialGSTR3BPayload | any;
+  exported_at?: string;
+  error?: string;
+  drift_detected?: boolean;
+}
+
 export const gstApi = {
   /**
    * Unified GSTIN Verification against Sandbox / Cache with Luhn check and enrichment preview
@@ -502,7 +669,7 @@ export const gstApi = {
     return res.data;
   },
 
-  async exportWorkspace(companyId: string, period: string, returnType: string = 'GSTR1', format: string = 'JSON', regId?: string) {
+  async exportWorkspace(companyId: string, period: string, returnType: string = 'GSTR1', format: string = 'JSON', regId?: string): Promise<GSTExportResult> {
     const url = `${API_BASE_URL}/api/v1/gst/workspace/${companyId}/export/`;
     const res = await axios.post(url, { period, return_type: returnType, format, registration_id: regId }, { headers: getHeaders(companyId) });
     return res.data;

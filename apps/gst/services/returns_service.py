@@ -443,6 +443,7 @@ class GSTReturnsService:
         official_json = {
             "gstin": supplier_gstin,
             "fp": period_code,
+            "version": "GST3.1.2",
             "cur_gt": float(total_txval + total_tax),
             "b2b": b2b_payload,
             "b2cl": b2cl_list,
@@ -832,19 +833,32 @@ class GSTReturnsService:
                     itc_cess += cs
 
         # Table 3.2 Interstate to unregistered
+        inter_unreg_map = defaultdict(lambda: {"txval": Decimal('0.00'), "iamt": Decimal('0.00')})
         interstate_unreg_taxable = Decimal('0.00')
         interstate_unreg_igst = Decimal('0.00')
         for b2cl in sales_data.get("official_gstr1_json", {}).get("b2cl", []):
+            pos = str(b2cl.get("pos", ""))
             for inv in b2cl.get("inv", []):
                 for itm in inv.get("itms", []):
                     det = itm.get("itm_det", {})
-                    interstate_unreg_taxable += Decimal(str(det.get("txval", 0)))
-                    interstate_unreg_igst += Decimal(str(det.get("iamt", 0)))
+                    tx = Decimal(str(det.get("txval", 0)))
+                    ig = Decimal(str(det.get("iamt", 0)))
+                    interstate_unreg_taxable += tx
+                    interstate_unreg_igst += ig
+                    if pos:
+                        inter_unreg_map[pos]["txval"] += tx
+                        inter_unreg_map[pos]["iamt"] += ig
 
         for b2cs in sales_data.get("official_gstr1_json", {}).get("b2cs", []):
             if b2cs.get("sply_ty") == "INTER":
-                interstate_unreg_taxable += Decimal(str(b2cs.get("txval", 0)))
-                interstate_unreg_igst += Decimal(str(b2cs.get("iamt", 0)))
+                pos = str(b2cs.get("pos", ""))
+                tx = Decimal(str(b2cs.get("txval", 0)))
+                ig = Decimal(str(b2cs.get("iamt", 0)))
+                interstate_unreg_taxable += tx
+                interstate_unreg_igst += ig
+                if pos:
+                    inter_unreg_map[pos]["txval"] += tx
+                    inter_unreg_map[pos]["iamt"] += ig
 
         # Zero-rated supplies (exports) and nil/exempt summaries from GSTR-1
         exp_txval = Decimal('0.00')
@@ -948,10 +962,16 @@ class GSTReturnsService:
             "non_gst_supplies": {"taxable_value": float(ngsup_amt)}
         }
 
+        unreg_details = [
+            {"pos": str(pos).zfill(2), "txval": float(vals["txval"]), "iamt": float(vals["iamt"])}
+            for pos, vals in sorted(inter_unreg_map.items()) if vals["txval"] > 0 or vals["iamt"] > 0
+        ]
+
         table_3_2 = {
             "supplies_to_unregistered": {
                 "taxable_value": float(interstate_unreg_taxable),
-                "igst": float(interstate_unreg_igst)
+                "igst": float(interstate_unreg_igst),
+                "details": unreg_details
             },
             "supplies_to_composition": {"taxable_value": 0.00, "igst": 0.00},
             "supplies_to_uin": {"taxable_value": 0.00, "igst": 0.00}
@@ -986,6 +1006,10 @@ class GSTReturnsService:
                 "sgst": float(itc_sgst + inward_rcm_sgst),
                 "cess": float(itc_cess),
                 "total": float(itc_igst + itc_cgst + itc_sgst + itc_cess + inward_rcm_igst + inward_rcm_cgst + inward_rcm_sgst)
+            },
+            "itc_ineligible": {
+                "as_per_sec_17_5": {"igst": 0.00, "cgst": 0.00, "sgst": 0.00, "cess": 0.00},
+                "others": {"igst": 0.00, "cgst": 0.00, "sgst": 0.00, "cess": 0.00}
             }
         }
 
@@ -996,6 +1020,20 @@ class GSTReturnsService:
             },
             "non_gst_inward": {"interstate": 0.00, "intrastate": 0.00}
         }
+
+        supplier_gstin = (
+            registration.gstin if registration
+            else (company.gstin or 'URP')
+        )
+
+        official_gstr3b_json = cls.build_official_gstr3b_json(
+            gstin=supplier_gstin,
+            period_code=period_code,
+            table_3_1=table_3_1,
+            inter_unreg_map=inter_unreg_map,
+            table_4_itc=table_4_itc,
+            table_5=table_5
+        )
 
         filing_record = GSTFilingRecord.objects.filter(
             company=company,
@@ -1015,7 +1053,168 @@ class GSTReturnsService:
             "tax_payable": net_cash_summary,
             "filing_status": filing_record.status if filing_record else "DRAFT",
             "arn": filing_record.arn if filing_record else None,
-            "submitted_at": filing_record.submitted_at.isoformat() if filing_record else None
+            "submitted_at": filing_record.submitted_at.isoformat() if filing_record else None,
+            "official_gstr3b_json": official_gstr3b_json
+        }
+
+    @classmethod
+    def build_official_gstr3b_json(
+        cls,
+        gstin: str,
+        period_code: str,
+        table_3_1: Dict[str, Any],
+        inter_unreg_map: Dict[str, Dict[str, Decimal]],
+        table_4_itc: Dict[str, Any],
+        table_5: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Builds official GSTR-3B offline utility JSON compliant with GSTN Schema v1.4.
+        Sections:
+        - sup_details: Table 3.1 outward and inward RCM supplies
+        - inter_sup: Table 3.2 interstate supplies to unregistered/composition/UIN
+        - itc_elg: Table 4 eligible ITC, reversals, net ITC, and ineligible ITC
+        - inward_sup: Table 5 inward nil-rated, exempt, and non-GST supplies
+        """
+        outward = table_3_1.get("outward_taxable_supplies", {})
+        zero_rated = table_3_1.get("zero_rated_supplies", {})
+        nil_exmp = table_3_1.get("nil_exempt_supplies", {})
+        rcm = table_3_1.get("inward_rcm_supplies", {})
+        nongst = table_3_1.get("non_gst_supplies", {})
+
+        unreg_details = [
+            {
+                "pos": str(pos).zfill(2),
+                "txval": float(vals["txval"]),
+                "iamt": float(vals["iamt"])
+            }
+            for pos, vals in sorted(inter_unreg_map.items())
+            if vals["txval"] > 0 or vals["iamt"] > 0
+        ]
+
+        itc_avl = table_4_itc.get("itc_available", {})
+        itc_rev = table_4_itc.get("itc_reversed", {})
+        itc_net = table_4_itc.get("net_itc_available", {})
+        itc_inelg = table_4_itc.get("itc_ineligible", {})
+
+        inward_nil = table_5.get("inward_nil_exempt", {})
+        non_gst_inward = table_5.get("non_gst_inward", {})
+
+        return {
+            "gstin": gstin,
+            "ret_period": period_code,
+            "filing_typ": "GSTR3B",
+            "version": "GST3B1.4",
+            "sup_details": {
+                "osup_det": {
+                    "txval": float(outward.get("taxable_value", 0.0)),
+                    "iamt": float(outward.get("igst", 0.0)),
+                    "camt": float(outward.get("cgst", 0.0)),
+                    "samt": float(outward.get("sgst", 0.0)),
+                    "csamt": float(outward.get("cess", 0.0))
+                },
+                "osup_zero": {
+                    "txval": float(zero_rated.get("taxable_value", 0.0)),
+                    "iamt": float(zero_rated.get("igst", 0.0)),
+                    "csamt": float(zero_rated.get("cess", 0.0))
+                },
+                "osup_nil_exmp": {
+                    "txval": float(nil_exmp.get("taxable_value", 0.0))
+                },
+                "isup_rev": {
+                    "txval": float(rcm.get("taxable_value", 0.0)),
+                    "iamt": float(rcm.get("igst", 0.0)),
+                    "camt": float(rcm.get("cgst", 0.0)),
+                    "samt": float(rcm.get("sgst", 0.0)),
+                    "csamt": float(rcm.get("cess", 0.0))
+                },
+                "osup_nongst": {
+                    "txval": float(nongst.get("taxable_value", 0.0))
+                }
+            },
+            "inter_sup": {
+                "unreg_details": unreg_details,
+                "comp_details": [],
+                "uin_details": []
+            },
+            "itc_elg": {
+                "itc_avl": {
+                    "import_goods": {
+                        "iamt": float(itc_avl.get("import_goods", {}).get("igst", 0.0)),
+                        "csamt": float(itc_avl.get("import_goods", {}).get("cess", 0.0))
+                    },
+                    "import_services": {
+                        "iamt": float(itc_avl.get("import_services", {}).get("igst", 0.0)),
+                        "csamt": float(itc_avl.get("import_services", {}).get("cess", 0.0))
+                    },
+                    "isup_rev": {
+                        "iamt": float(itc_avl.get("inward_rcm", {}).get("igst", 0.0)),
+                        "camt": float(itc_avl.get("inward_rcm", {}).get("cgst", 0.0)),
+                        "samt": float(itc_avl.get("inward_rcm", {}).get("sgst", 0.0)),
+                        "csamt": float(itc_avl.get("inward_rcm", {}).get("cess", 0.0))
+                    },
+                    "isd": {
+                        "iamt": float(itc_avl.get("inward_isd", {}).get("igst", 0.0)),
+                        "camt": float(itc_avl.get("inward_isd", {}).get("cgst", 0.0)),
+                        "samt": float(itc_avl.get("inward_isd", {}).get("sgst", 0.0)),
+                        "csamt": float(itc_avl.get("inward_isd", {}).get("cess", 0.0))
+                    },
+                    "all_other": {
+                        "txval": float(itc_avl.get("all_other_itc", {}).get("taxable_value", 0.0)),
+                        "iamt": float(itc_avl.get("all_other_itc", {}).get("igst", 0.0)),
+                        "camt": float(itc_avl.get("all_other_itc", {}).get("cgst", 0.0)),
+                        "samt": float(itc_avl.get("all_other_itc", {}).get("sgst", 0.0)),
+                        "csamt": float(itc_avl.get("all_other_itc", {}).get("cess", 0.0))
+                    }
+                },
+                "itc_rev": {
+                    "rule42_43": {
+                        "iamt": float(itc_rev.get("as_per_rules_42_43", {}).get("igst", 0.0)),
+                        "camt": float(itc_rev.get("as_per_rules_42_43", {}).get("cgst", 0.0)),
+                        "samt": float(itc_rev.get("as_per_rules_42_43", {}).get("sgst", 0.0)),
+                        "csamt": float(itc_rev.get("as_per_rules_42_43", {}).get("cess", 0.0))
+                    },
+                    "others": {
+                        "iamt": float(itc_rev.get("others", {}).get("igst", 0.0)),
+                        "camt": float(itc_rev.get("others", {}).get("cgst", 0.0)),
+                        "samt": float(itc_rev.get("others", {}).get("sgst", 0.0)),
+                        "csamt": float(itc_rev.get("others", {}).get("cess", 0.0))
+                    }
+                },
+                "itc_net": {
+                    "iamt": float(itc_net.get("igst", 0.0)),
+                    "camt": float(itc_net.get("cgst", 0.0)),
+                    "samt": float(itc_net.get("sgst", 0.0)),
+                    "csamt": float(itc_net.get("cess", 0.0))
+                },
+                "itc_inelg": {
+                    "as_per_sec_17_5": {
+                        "iamt": float(itc_inelg.get("as_per_sec_17_5", {}).get("igst", 0.0)),
+                        "camt": float(itc_inelg.get("as_per_sec_17_5", {}).get("cgst", 0.0)),
+                        "samt": float(itc_inelg.get("as_per_sec_17_5", {}).get("sgst", 0.0)),
+                        "csamt": float(itc_inelg.get("as_per_sec_17_5", {}).get("cess", 0.0))
+                    },
+                    "others": {
+                        "iamt": float(itc_inelg.get("others", {}).get("igst", 0.0)),
+                        "camt": float(itc_inelg.get("others", {}).get("cgst", 0.0)),
+                        "samt": float(itc_inelg.get("others", {}).get("sgst", 0.0)),
+                        "csamt": float(itc_inelg.get("others", {}).get("cess", 0.0))
+                    }
+                }
+            },
+            "inward_sup": {
+                "isup_details": [
+                    {
+                        "ty": "GST",
+                        "inter": float(inward_nil.get("interstate", 0.0)),
+                        "intra": float(inward_nil.get("intrastate", 0.0))
+                    },
+                    {
+                        "ty": "NON_GST",
+                        "inter": float(non_gst_inward.get("interstate", 0.0)),
+                        "intra": float(non_gst_inward.get("intrastate", 0.0))
+                    }
+                ]
+            }
         }
 
     @classmethod

@@ -1,3 +1,4 @@
+import json
 import hashlib
 import logging
 from typing import Dict, Any, Optional, List
@@ -6,6 +7,7 @@ from apps.companies.models import Company
 from apps.gst.models import GSTRegistration, GSTReturnWorkspace
 from apps.gst.services.returns_service import GSTReturnsService
 from apps.gst.services.validation_service import GSTValidationService
+from apps.gst.services.payload_validator import GSTPayloadValidator
 from apps.accounting.models import Voucher
 from apps.accounting.services.effective_voucher_service import EffectiveVoucherService
 
@@ -261,24 +263,137 @@ class GSTWorkspaceService:
         export_format: str = 'JSON'
     ) -> Dict[str, Any]:
         """
-        Exports official return schema payload (JSON or structured dictionary for Excel).
-        Updates status to EXPORTED.
+        Exports official return schema payload (JSON or structured audit report).
+        Enforces:
+        1. Drift Guard: Rejects export if source vouchers have drifted since draft generation.
+        2. Payload Validation: Validates payload with GSTPayloadValidator against GSTN offline tool schemas.
+        3. Deterministic SHA-256 Checksum: Calculates tamper-evident hash over exported JSON payload.
+        4. Workspace State: Transitions status to EXPORTED.
+        5. Multiple Formats: Supports 'JSON' (official schema) and 'REVIEW_REPORT' (human audit).
         """
+        fmt = (export_format or 'JSON').strip().upper()
+
         if not workspace.draft_payload:
             cls.generate_draft(workspace)
 
+        # 1. Drift Guard
+        if workspace.is_stale or cls.check_drift(workspace):
+            return {
+                "success": False,
+                "error": "Source vouchers have drifted since draft generation. Please regenerate draft before export.",
+                "drift_detected": True,
+                "status": workspace.status
+            }
+
+        # 2. Extract Official Return Payload
+        if workspace.return_type == 'GSTR1':
+            official_payload = workspace.draft_payload.get("official_gstr1_json", {})
+        elif workspace.return_type == 'GSTR3B':
+            official_payload = workspace.draft_payload.get("official_gstr3b_json", {})
+        else:
+            official_payload = workspace.draft_payload
+
+        # 3. Payload Pre-Export Validation
+        validation_result = GSTPayloadValidator.validate_payload(
+            return_type=workspace.return_type,
+            payload=official_payload
+        )
+
+        if not validation_result.get("is_valid", False):
+            return {
+                "success": False,
+                "error": f"Pre-export validation failed with {validation_result.get('blocking_errors_count', 0)} blocking error(s).",
+                "validation_result": validation_result,
+                "status": workspace.status
+            }
+
+        # 4. Status Transition to EXPORTED
         workspace.status = 'EXPORTED'
         workspace.save(update_fields=['status', 'updated_at'])
 
-        if workspace.return_type == 'GSTR1':
-            official_payload = workspace.draft_payload.get("official_gstr1_json", {})
+        # 5. Deterministic Payload Hash
+        payload_canonical = json.dumps(official_payload, sort_keys=True, separators=(',', ':'))
+        payload_hash = hashlib.sha256(payload_canonical.encode('utf-8')).hexdigest()
+
+        # 6. Format Content Selection
+        if fmt == 'REVIEW_REPORT':
+            content = cls._build_human_review_report(workspace, payload_hash)
         else:
-            official_payload = workspace.draft_payload
+            content = official_payload
 
         return {
             "success": True,
             "return_type": workspace.return_type,
             "return_period": workspace.return_period,
-            "format": export_format,
-            "payload": official_payload
+            "format": fmt,
+            "conformance_standard": validation_result.get("conformance_standard"),
+            "payload_hash": payload_hash,
+            "validation_summary": {
+                "is_valid": validation_result.get("is_valid"),
+                "blocking_errors_count": validation_result.get("blocking_errors_count"),
+                "warnings_count": validation_result.get("warnings_count"),
+                "issues": validation_result.get("issues", [])
+            },
+            "payload": content,
+            "exported_at": timezone.now().isoformat()
         }
+
+    @classmethod
+    def _build_human_review_report(
+        cls,
+        workspace: GSTReturnWorkspace,
+        payload_hash: str
+    ) -> Dict[str, Any]:
+        """
+        Builds a human-readable, accountant-verifiable audit report of the return.
+        """
+        reg_gstin = workspace.gst_registration.gstin if workspace.gst_registration else (workspace.company.gstin or 'URP')
+        reg_state = workspace.gst_registration.state_name if workspace.gst_registration else (workspace.company.state or 'Default')
+
+        report: Dict[str, Any] = {
+            "title": f"SriLekh GST Return Audit & Review Report — {workspace.return_type}",
+            "header": {
+                "company_name": workspace.company.name,
+                "gstin": reg_gstin,
+                "state": reg_state,
+                "return_type": workspace.return_type,
+                "return_period": workspace.return_period,
+                "financial_year": workspace.financial_year,
+                "status": workspace.status,
+                "payload_sha256": payload_hash,
+                "generated_at": workspace.last_generated_at.isoformat() if workspace.last_generated_at else timezone.now().isoformat()
+            },
+            "statutory_declaration": (
+                "Certified that the figures and tax classifications reported herein are extracted directly "
+                "from double-entry general ledger vouchers and line items in strict mathematical equilibrium, "
+                "in conformity with the CGST Act 2017 and applicable rules."
+            )
+        }
+
+        if workspace.return_type == 'GSTR1':
+            s = workspace.draft_payload.get("summary", {})
+            report["summary"] = {
+                "total_taxable_value": s.get("total_taxable_value", 0.0),
+                "total_igst": s.get("total_igst", 0.0),
+                "total_cgst": s.get("total_cgst", 0.0),
+                "total_sgst": s.get("total_sgst", 0.0),
+                "total_tax": s.get("total_tax", 0.0),
+                "total_invoice_value": s.get("total_invoice_value", 0.0),
+                "counts": {
+                    "b2b_invoices": s.get("b2b_invoices_count", 0),
+                    "b2cl_invoices": s.get("b2cl_invoices_count", 0),
+                    "b2cs_groups": s.get("b2cs_groups_count", 0),
+                    "credit_notes": s.get("credit_notes_count", 0),
+                    "debit_notes": s.get("debit_notes_count", 0)
+                }
+            }
+        elif workspace.return_type == 'GSTR3B':
+            report["table_3_1_supplies"] = workspace.draft_payload.get("table_3_1", {})
+            report["table_3_2_interstate"] = workspace.draft_payload.get("table_3_2", {})
+            report["table_4_itc"] = workspace.draft_payload.get("table_4_itc", {})
+            report["table_5_inward_nil"] = workspace.draft_payload.get("table_5", {})
+            report["tax_payable"] = workspace.draft_payload.get("tax_payable", {})
+            report["rule88a_setoff"] = workspace.draft_payload.get("rule88a_setoff", {})
+            report["ledger_reconciliation"] = workspace.draft_payload.get("ledger_reconciliation", {})
+
+        return report
