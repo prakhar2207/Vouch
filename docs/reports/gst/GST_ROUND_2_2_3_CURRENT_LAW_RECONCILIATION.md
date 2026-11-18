@@ -28,8 +28,9 @@ This Round 2.2.3 audit independently reconciles SriLekh's tax rate reference eng
 
 ## 2. Baseline State & Staging Deployment Verification
 
-Prior to implementing Round 2.2.3 changes, the repository and live staging deployment were verified:
+Prior to implementing Round 2.2.3 changes, the baseline repository and live staging deployment were verified. Following implementation and push of commit `23ab7a5`, live Render staging deployment was verified:
 
+### Baseline Verification (Base `4774c30b`):
 | Inspection Check | Expected Target | Live Verified State | Status |
 | :--- | :--- | :--- | :--- |
 | **Git Working Branch** | `fix/stage4-12-day6-remediation` | `fix/stage4-12-day6-remediation` | **PASS** |
@@ -38,6 +39,18 @@ Prior to implementing Round 2.2.3 changes, the repository and live staging deplo
 | **Render Staging Service** | `https://vouch-u3u7.onrender.com` | HTTP 200 OK | **PASS** |
 | **Deployed Staging Commit** | `4774c30b` | `4774c30b` | **PASS** |
 | **Database Identity** | `neondb_staging` | `neondb_staging` (isolated) | **PASS** |
+| **Database Fingerprint** | `6f4741bdaaf4` | `6f4741bdaaf4` | **PASS** |
+| **Database Migrations** | Status: `up_to_date`, unapplied: 0 | Status: `up_to_date`, unapplied: 0 | **PASS** |
+
+### Post-Implementation Live Staging Deployment Verification (`23ab7a55`):
+| Staging Deployment Attribute | Expected Target | Live Verified State | Status |
+| :--- | :--- | :--- | :--- |
+| **Render Staging Endpoint** | `https://vouch-u3u7.onrender.com/api/v1/health/environment/` | HTTP 200 OK | **PASS** |
+| **Running Service** | `SriLekh Accounting Engine` | `SriLekh Accounting Engine` | **PASS** |
+| **Environment** | `staging` | `staging` | **PASS** |
+| **Running Version** | `1.0.2` | `1.0.2` | **PASS** |
+| **Deployed Commit Hash** | `23ab7a55` | `23ab7a55` | **PASS** |
+| **Target Database** | `neondb_staging` | `neondb_staging` (isolated) | **PASS** |
 | **Database Fingerprint** | `6f4741bdaaf4` | `6f4741bdaaf4` | **PASS** |
 | **Database Migrations** | Status: `up_to_date`, unapplied: 0 | Status: `up_to_date`, unapplied: 0 | **PASS** |
 
