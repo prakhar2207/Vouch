@@ -3,9 +3,57 @@ from decimal import Decimal
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
+from django.core.exceptions import ValidationError
+from django.db.models.signals import pre_delete
+from django.dispatch import receiver
 from apps.companies.models import Company
 from apps.accounting.models import Voucher
 from apps.gst.encryption import EncryptedTextField
+
+
+class ProtectedGSTAllocationQuerySet(models.QuerySet):
+    """Guarantees QuerySet.delete() cannot bulk-delete active, reported, or superseded allocations."""
+    def delete(self):
+        for alloc in self:
+            if alloc.status in ['APPROVED', 'REPORTED', 'FILED'] or alloc.is_active:
+                raise ValidationError(
+                    f"Statutory Compliance Invariant: Cannot bulk-delete active or reported GST reporting allocation '{alloc.id}'."
+                )
+            if alloc.supersedes.exists() or alloc.superseded_by:
+                raise ValidationError(
+                    f"Statutory Compliance Invariant: Cannot bulk-delete historical allocation '{alloc.id}' in supersession chain."
+                )
+        return super().delete()
+
+
+class ProtectedGSTWorkspaceQuerySet(models.QuerySet):
+    """Guarantees QuerySet.delete() cannot bulk-delete exported, filed, or reviewed return workspaces."""
+    def delete(self):
+        for ws in self:
+            if ws.status in ['EXPORTED', 'FILED', 'REVIEWED']:
+                raise ValidationError(
+                    f"Statutory Audit Invariant: Cannot bulk-delete GST return workspace for period '{ws.return_period}' in '{ws.status}' status."
+                )
+        return super().delete()
+
+
+class ProtectedGSTSnapshotQuerySet(models.QuerySet):
+    """Guarantees QuerySet.delete() cannot bulk-delete exported snapshot archives."""
+    def delete(self):
+        raise ValidationError(
+            "Statutory Compliance Invariant: GST workspace export snapshots are immutable historical records and cannot be bulk-deleted."
+        )
+
+
+class ProtectedGSTFilingRecordQuerySet(models.QuerySet):
+    """Guarantees QuerySet.delete() cannot bulk-delete filed return records."""
+    def delete(self):
+        for rec in self:
+            if rec.status in ['FILED', 'SUBMITTED', 'SUBMITTING']:
+                raise ValidationError(
+                    f"Statutory Audit Invariant: Cannot bulk-delete GST filing record '{rec.id}' in '{rec.status}' status."
+                )
+        return super().delete()
 
 
 class CompanyGSTConfig(models.Model):
@@ -444,6 +492,15 @@ class GSTFilingRecord(models.Model):
     submitted_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = ProtectedGSTFilingRecordQuerySet.as_manager()
+
+    def delete(self, *args, **kwargs):
+        if self.status in ['FILED', 'SUBMITTED', 'SUBMITTING']:
+            raise ValidationError(
+                f"Statutory Audit Invariant: Cannot delete GST filing record '{self.id}' in '{self.status}' status."
+            )
+        super().delete(*args, **kwargs)
+
     class Meta:
         ordering = ['-submitted_at']
         indexes = [
@@ -605,6 +662,8 @@ class GSTReturnWorkspace(models.Model):
             )
         super().delete(*args, **kwargs)
 
+    objects = ProtectedGSTWorkspaceQuerySet.as_manager()
+
     def __str__(self):
         reg = self.gst_registration.gstin if self.gst_registration else "Default"
         return f"{self.company.name} [{reg}] {self.return_type} ({self.return_period}) - {self.status}"
@@ -623,6 +682,16 @@ class GSTReportingAllocation(models.Model):
         ('SERVICE_COMPLETION', 'Service Completion / Acceptance Certificate'),
     )
 
+    RECEIPT_DOCUMENT_TYPE_CHOICES = (
+        ('GRN', 'Goods Receipt Note'),
+        ('DELIVERY_CHALLAN', 'Delivery Challan'),
+        ('EWAY_BILL', 'E-Way Bill Proof of Delivery'),
+        ('SERVICE_COMPLETION', 'Service Completion / Acceptance Certificate'),
+        ('INVOICE_PHYSICAL_COPY', 'Endorsed Physical Invoice'),
+        ('NONE', 'No Affirmative Receipt Evidence'),
+        ('OTHER', 'Other Affirmative Receipt Evidence'),
+    )
+
     EVENT_TYPE_CHOICES = (
         ('OUTWARD_SUPPLY', 'Outward Supply (GSTR-1 Table 4/5/6/7)'),
         ('INWARD_ITC', 'Inward Supply / Eligible ITC (GSTR-3B Table 4A)'),
@@ -638,6 +707,7 @@ class GSTReportingAllocation(models.Model):
         ('ITC_REVERSAL_OTHER', 'ITC Reversal - Other Statutory Grounds (Table 4B2)'),
         ('ITC_RECLAIM', 'ITC Reclaim of Previously Reversed Credit (Table 4D1)'),
         ('INTERNAL_ACCOUNTING_REVERSAL', 'Internal Non-GST Accounting Reversal Journal (Exempt from GSTR-1 Table 9B)'),
+        ('COMMERCIAL_CREDIT_NOTE', 'Commercial Credit Note without tax liability reduction (Exempt from Table 9B)'),
     )
 
     ALLOCATION_REASON_CHOICES = (
@@ -648,8 +718,12 @@ class GSTReportingAllocation(models.Model):
         ('STATUTORY_DEADLINE_EXCEEDED', 'Statutory Outward Amendment Deadline Exceeded (Section 37(3))'),
         ('GOODS_SERVICES_NOT_RECEIVED', 'Section 16(2)(b): Goods/Services Not Received'),
         ('PARTIAL_LOT_PENDING_LAST_INSTALMENT', 'First Proviso to Section 16(2): Goods in lots/instalments (last lot pending)'),
+        ('PARTIAL_RECEIPT_PROPORTIONATE', 'Section 16(2)(b): Partial Consignment Received (Proportionate ITC Claim)'),
+        ('REVOCATION_SECTION_16_6', 'Section 16(6): 30-Day Window Following Registration Revocation Order'),
+        ('INELIGIBLE_SECTION_17_5', 'Section 17(5): Ineligible Blocked Credit at Inception'),
         ('MANUAL_REALLOCATION', 'Manual Reallocation by Accountant/CA'),
         ('REVERSAL_CREDIT_NOTE', 'Statutory Section 34 Credit Note Reversal'),
+        ('COMMERCIAL_CREDIT_NOTE_NO_TAX', 'Commercial Credit Note without tax liability reduction'),
         ('REVERSAL_INTERNAL_JOURNAL', 'Internal Accounting Reversal Journal (Exempt from GST Return Tables)'),
         ('REVERSAL_RULE_37', 'Rule 37 Reversal (180 days non-payment)'),
         ('REVERSAL_RULE_37A', 'Rule 37A Reversal (Supplier default in GSTR-3B)'),
@@ -682,11 +756,22 @@ class GSTReportingAllocation(models.Model):
     voucher_date = models.DateField(db_index=True)
     entry_date = models.DateField(default=timezone.now)
 
-    # Section 16(2)(b) Goods/Service Receipt Evidence
+    # Section 16(2)(b) Goods/Service Receipt Evidence (Fails closed by default: False)
     goods_received_date = models.DateField(null=True, blank=True, db_index=True)
-    is_receipt_confirmed = models.BooleanField(default=True, db_index=True)
+    is_receipt_confirmed = models.BooleanField(default=False, db_index=True)
     receipt_type = models.CharField(max_length=25, choices=RECEIPT_TYPE_CHOICES, default='SINGLE')
-    last_instalment_received = models.BooleanField(default=True, db_index=True)
+    last_instalment_received = models.BooleanField(default=False, db_index=True)
+    receipt_document_number = models.CharField(max_length=100, blank=True, default='')
+    receipt_document_type = models.CharField(max_length=30, choices=RECEIPT_DOCUMENT_TYPE_CHOICES, default='NONE')
+    receipt_confirmed_at = models.DateTimeField(null=True, blank=True)
+    receipt_confirmed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='confirmed_gst_receipts'
+    )
+    partial_received_fraction = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('1.0000'))
 
     original_period = models.CharField(max_length=10, db_index=True)   # MMYYYY derived from voucher_date
     assigned_period = models.CharField(max_length=10, db_index=True)   # MMYYYY tax reporting period
@@ -730,6 +815,19 @@ class GSTReportingAllocation(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    objects = ProtectedGSTAllocationQuerySet.as_manager()
+
+    def delete(self, *args, **kwargs):
+        if self.status in ['APPROVED', 'REPORTED', 'FILED'] or self.is_active:
+            raise ValidationError(
+                f"Statutory Compliance Invariant: Cannot delete active or reported GST reporting allocation '{self.id}'."
+            )
+        if self.supersedes.exists() or self.superseded_by:
+            raise ValidationError(
+                f"Statutory Compliance Invariant: Cannot delete historical allocation '{self.id}' in supersession chain."
+            )
+        super().delete(*args, **kwargs)
 
     class Meta:
         ordering = ['-assigned_period', '-created_at']
@@ -785,5 +883,52 @@ class GSTWorkspaceExportSnapshot(models.Model):
 
     def __str__(self):
         return f"{self.company.name} {self.return_type} ({self.return_period}) [{self.export_format}] - {self.payload_hash[:12]}"
+
+    objects = ProtectedGSTSnapshotQuerySet.as_manager()
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError(
+            "Statutory Compliance Invariant: GST workspace export snapshots are immutable historical records and cannot be deleted."
+        )
+
+
+# =============================================================================
+# Statutory Audit Deletion Protection Signals (Multi-Layer Defense)
+# =============================================================================
+
+@receiver(pre_delete, sender=GSTReportingAllocation)
+def protect_gst_allocation_pre_delete(sender, instance, **kwargs):
+    if instance.status in ['APPROVED', 'REPORTED', 'FILED'] or instance.is_active:
+        raise ValidationError(
+            f"Statutory Compliance Invariant: Cannot delete active or reported GST reporting allocation '{instance.id}'."
+        )
+    if instance.supersedes.exists() or instance.superseded_by:
+        raise ValidationError(
+            f"Statutory Compliance Invariant: Cannot delete historical allocation '{instance.id}' in supersession chain."
+        )
+
+
+@receiver(pre_delete, sender=GSTWorkspaceExportSnapshot)
+def protect_gst_snapshot_pre_delete(sender, instance, **kwargs):
+    raise ValidationError(
+        "Statutory Compliance Invariant: GST workspace export snapshots are immutable historical records and cannot be deleted."
+    )
+
+
+@receiver(pre_delete, sender=GSTReturnWorkspace)
+def protect_gst_workspace_pre_delete(sender, instance, **kwargs):
+    if instance.status in ['EXPORTED', 'FILED', 'REVIEWED']:
+        raise ValidationError(
+            f"Statutory Audit Invariant: Cannot delete GST return workspace for period '{instance.return_period}' "
+            f"in '{instance.status}' status. Historical tax returns and signed-off workspaces are immutable."
+        )
+
+
+@receiver(pre_delete, sender=GSTFilingRecord)
+def protect_gst_filing_record_pre_delete(sender, instance, **kwargs):
+    if instance.status in ['FILED', 'SUBMITTED', 'SUBMITTING']:
+        raise ValidationError(
+            f"Statutory Audit Invariant: Cannot delete GST filing record '{instance.id}' in '{instance.status}' status."
+        )
 
 

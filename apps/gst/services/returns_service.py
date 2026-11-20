@@ -334,6 +334,10 @@ class GSTReturnsService:
                         group["csamt"] += quantize_amount(getattr(itm, 'cess_amount', 0))
 
             elif v.voucher_type in ['CREDIT_NOTE', 'DEBIT_NOTE']:
+                # Statutory Defense: Commercial credit notes without tax adjustment are excluded from Table 9B
+                if v.voucher_type == 'CREDIT_NOTE' and not voucher_has_tax:
+                    continue
+
                 nt_type = "C" if v.voucher_type == 'CREDIT_NOTE' else "D"
                 orig_inv = getattr(v, 'original_invoice', None)
                 orig_num = orig_inv.voucher_number if orig_inv else (v.reference_number or f"{v.voucher_number}-REF")
