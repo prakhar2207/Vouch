@@ -26,5 +26,5 @@ Issuer Information:
 --
 SriLekh Technologies
 https://srilekh.com
-Support: support@srilekh.com
+Support: admin@srilekh.com
 Sender: admin@srilekh.com

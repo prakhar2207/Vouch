@@ -16,5 +16,5 @@ If you did not initiate this request, you can safely ignore this email. No accou
 --
 SriLekh Technologies
 https://srilekh.com
-Support: support@srilekh.com
+Support: admin@srilekh.com
 Sender: admin@srilekh.com

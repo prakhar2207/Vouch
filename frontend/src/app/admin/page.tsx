@@ -108,6 +108,10 @@ export default function SuperadminPortalPage() {
     name: string;
   } | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
+  const [bulkDeleteModalOpen, setBulkDeleteModalOpen] = useState(false);
+  const [bulkDeleteConfirmationText, setBulkDeleteConfirmationText] = useState("");
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
 
   // 1. Authenticate and check permissions
@@ -304,6 +308,7 @@ export default function SuperadminPortalPage() {
         toast.success("Company Deleted", res.data?.message || "Company permanently deleted.");
         setCompanies((prev) => prev.filter((c) => c.id !== deleteTarget.id));
         setCompaniesCount((prev) => Math.max(0, prev - 1));
+        setSelectedCompanyIds((prev) => prev.filter((id) => id !== deleteTarget.id));
         fetchMetrics();
       } else {
         const res = await axios.delete(
@@ -321,6 +326,60 @@ export default function SuperadminPortalPage() {
       toast.error("Delete Failed", errorMsg);
     } finally {
       setDeleting(false);
+    }
+  };
+
+  // Selection helpers for companies
+  const handleSelectCompany = (id: string) => {
+    setSelectedCompanyIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleSelectAllCompanies = () => {
+    if (selectedCompanyIds.length === companies.length && companies.length > 0) {
+      setSelectedCompanyIds([]);
+    } else {
+      setSelectedCompanyIds(companies.map((c) => c.id));
+    }
+  };
+
+  const handleBulkDeleteCompanies = async () => {
+    if (selectedCompanyIds.length === 0) return;
+    if (bulkDeleteConfirmationText.trim().toUpperCase() !== "DELETE") {
+      toast.error("Confirmation Required", "Please type DELETE to confirm batch deletion.");
+      return;
+    }
+
+    setBulkDeleting(true);
+    try {
+      const token = getAccessToken();
+      const headers = { Authorization: `Bearer ${token}` };
+      const res = await axios.post(
+        `${API_BASE_URL}/api/v1/superadmin/companies/bulk-delete/`,
+        { company_ids: selectedCompanyIds },
+        { headers }
+      );
+
+      if (res.data?.success) {
+        const deletedCount = res.data?.deleted_count || 0;
+        const skipped = res.data?.skipped || [];
+        toast.success(
+          "Companies Deleted",
+          res.data?.message || `Permanently deleted ${deletedCount} company tenant(s).`
+        );
+        setSelectedCompanyIds([]);
+        setBulkDeleteModalOpen(false);
+        setBulkDeleteConfirmationText("");
+        fetchCompanies();
+        fetchMetrics();
+      }
+    } catch (err: any) {
+      const errorMsg =
+        err.response?.data?.error || err.response?.data?.detail || err.message || "Batch deletion failed";
+      toast.error("Batch Delete Failed", errorMsg);
+    } finally {
+      setBulkDeleting(false);
     }
   };
 
@@ -602,7 +661,7 @@ export default function SuperadminPortalPage() {
         {/* TAB 1: COMPANIES DIRECTORY */}
         {activeTab === "companies" && (
           <div className="space-y-4">
-            {/* Filter bar */}
+            {/* Filter bar & Batch Action Controls */}
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-card border border-border p-3 rounded-2xl shadow-2xs">
               <div className="relative w-full sm:w-80">
                 <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
@@ -615,7 +674,21 @@ export default function SuperadminPortalPage() {
                 />
               </div>
 
-              <div className="flex items-center gap-2 w-full sm:w-auto">
+              <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
+                {selectedCompanyIds.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulkDeleteConfirmationText("");
+                      setBulkDeleteModalOpen(true);
+                    }}
+                    className="px-3 py-1.5 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Selected ({selectedCompanyIds.length})</span>
+                  </button>
+                )}
+
                 <select
                   value={companyStatusFilter}
                   onChange={(e) => setCompanyStatusFilter(e.target.value)}
@@ -634,6 +707,20 @@ export default function SuperadminPortalPage() {
                 <table className="w-full text-left text-xs">
                   <thead className="bg-muted/50 border-b border-border text-muted-foreground uppercase text-[10px] tracking-wider">
                     <tr>
+                      <th className="p-3.5 w-10 text-center">
+                        <input
+                          type="checkbox"
+                          checked={companies.length > 0 && selectedCompanyIds.length === companies.length}
+                          ref={(el) => {
+                            if (el) {
+                              el.indeterminate = selectedCompanyIds.length > 0 && selectedCompanyIds.length < companies.length;
+                            }
+                          }}
+                          onChange={handleSelectAllCompanies}
+                          className="w-4 h-4 rounded border-border text-purple-600 focus:ring-purple-500 cursor-pointer accent-purple-600"
+                          title={selectedCompanyIds.length === companies.length ? "Deselect all" : "Select all visible companies"}
+                        />
+                      </th>
                       <th className="p-3.5 font-bold">Company / Firm Name</th>
                       <th className="p-3.5 font-bold">GSTIN &amp; State</th>
                       <th className="p-3.5 font-bold">Owner / Contact</th>
@@ -646,76 +733,95 @@ export default function SuperadminPortalPage() {
                   <tbody className="divide-y divide-border/60">
                     {companies.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="p-8 text-center text-muted-foreground italic">
+                        <td colSpan={8} className="p-8 text-center text-muted-foreground italic">
                           No companies found matching criteria.
                         </td>
                       </tr>
                     ) : (
-                      companies.map((c) => (
-                        <tr key={c.id} className="hover:bg-muted/30 transition-colors">
-                          <td className="p-3.5">
-                            <div className="font-bold text-foreground text-sm">{c.name}</div>
-                            <div className="text-[11px] text-muted-foreground font-mono">
-                              ID: {c.id.substring(0, 8)}... | {c.members_count} member{c.members_count > 1 ? "s" : ""} | {c.products_count} SKU{c.products_count > 1 ? "s" : ""}
-                            </div>
-                          </td>
-                          <td className="p-3.5 font-mono">
-                            <div className="font-semibold text-foreground">{c.gstin || "Unregistered"}</div>
-                            <div className="text-[11px] text-muted-foreground">State Code: {c.state_code || "—"}</div>
-                          </td>
-                          <td className="p-3.5">
-                            <div className="font-medium text-foreground">{c.owner?.name || c.email || "—"}</div>
-                            <div className="text-[11px] text-muted-foreground font-mono">{c.owner?.email || c.phone || "—"}</div>
-                          </td>
-                          <td className="p-3.5 text-center font-mono font-bold text-foreground">
-                            {c.vouchers_count}
-                          </td>
-                          <td className="p-3.5 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                            ₹{c.sales_volume.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                          </td>
-                          <td className="p-3.5 text-center">
-                            <span
-                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                c.is_active
-                                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
-                                  : "bg-rose-500/10 text-rose-500 border border-rose-500/20"
-                              }`}
-                            >
-                              {c.is_active ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
-                              <span>{c.is_active ? "Active" : "Suspended"}</span>
-                            </span>
-                          </td>
-                          <td className="p-3.5 text-right whitespace-nowrap">
-                            <div className="flex items-center justify-end gap-1.5">
-                              {/* Toggle Active Button */}
-                              <button
-                                type="button"
-                                onClick={() => handleToggleCompanyStatus(c.id)}
-                                disabled={actionLoading === `company-${c.id}`}
-                                className={`px-2 py-1 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
+                      companies.map((c) => {
+                        const isSelected = selectedCompanyIds.includes(c.id);
+                        return (
+                          <tr
+                            key={c.id}
+                            className={`transition-colors cursor-pointer ${
+                              isSelected
+                                ? "bg-purple-500/10 dark:bg-purple-500/15"
+                                : "hover:bg-muted/30"
+                            }`}
+                            onClick={() => handleSelectCompany(c.id)}
+                          >
+                            <td className="p-3.5 text-center" onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => handleSelectCompany(c.id)}
+                                className="w-4 h-4 rounded border-border text-purple-600 focus:ring-purple-500 cursor-pointer accent-purple-600"
+                              />
+                            </td>
+                            <td className="p-3.5">
+                              <div className="font-bold text-foreground text-sm">{c.name}</div>
+                              <div className="text-[11px] text-muted-foreground font-mono">
+                                ID: {c.id.substring(0, 8)}... | {c.members_count} member{c.members_count > 1 ? "s" : ""} | {c.products_count} SKU{c.products_count > 1 ? "s" : ""}
+                              </div>
+                            </td>
+                            <td className="p-3.5 font-mono">
+                              <div className="font-semibold text-foreground">{c.gstin || "Unregistered"}</div>
+                              <div className="text-[11px] text-muted-foreground">State Code: {c.state_code || "—"}</div>
+                            </td>
+                            <td className="p-3.5">
+                              <div className="font-medium text-foreground">{c.owner?.name || c.email || "—"}</div>
+                              <div className="text-[11px] text-muted-foreground font-mono">{c.owner?.email || c.phone || "—"}</div>
+                            </td>
+                            <td className="p-3.5 text-center font-mono font-bold text-foreground">
+                              {c.vouchers_count}
+                            </td>
+                            <td className="p-3.5 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                              ₹{c.sales_volume.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="p-3.5 text-center">
+                              <span
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
                                   c.is_active
-                                    ? "bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 border-amber-500/20"
-                                    : "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 border-emerald-500/20"
+                                    ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                                    : "bg-rose-500/10 text-rose-500 border border-rose-500/20"
                                 }`}
                               >
-                                {c.is_active ? "Suspend" : "Activate"}
-                              </button>
+                                {c.is_active ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                                <span>{c.is_active ? "Active" : "Suspended"}</span>
+                              </span>
+                            </td>
+                            <td className="p-3.5 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                              <div className="flex items-center justify-end gap-1.5">
+                                {/* Toggle Active Button */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleCompanyStatus(c.id)}
+                                  disabled={actionLoading === `company-${c.id}`}
+                                  className={`px-2 py-1 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
+                                    c.is_active
+                                      ? "bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 border-amber-500/20"
+                                      : "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 border-emerald-500/20"
+                                  }`}
+                                >
+                                  {c.is_active ? "Suspend" : "Activate"}
+                                </button>
 
-                              {/* Delete Company Button */}
-                              <button
-                                type="button"
-                                onClick={() => setDeleteTarget({ type: "company", id: c.id, name: c.name })}
-                                disabled={actionLoading === `company-${c.id}` || deleting}
-                                className="px-2 py-1 rounded-lg text-xs font-semibold bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 border border-rose-500/20 transition-colors cursor-pointer flex items-center gap-1"
-                                title={`Permanently delete company ${c.name}`}
-                              >
-                                <Trash2 className="w-3 h-3" />
-                                <span>Delete</span>
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))
+                                {/* Delete Company Button */}
+                                <button
+                                  type="button"
+                                  onClick={() => setDeleteTarget({ type: "company", id: c.id, name: c.name })}
+                                  disabled={actionLoading === `company-${c.id}` || deleting}
+                                  className="px-2 py-1 rounded-lg text-xs font-semibold bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 border border-rose-500/20 transition-colors cursor-pointer flex items-center gap-1"
+                                  title={`Permanently delete company ${c.name}`}
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                  <span>Delete</span>
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -1109,6 +1215,132 @@ export default function SuperadminPortalPage() {
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Bulk Delete Confirmation Modal */}
+        {bulkDeleteModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="bulk-delete-dialog-title"
+              className="w-full max-w-lg bg-card border border-border shadow-2xl rounded-2xl p-6 space-y-4 animate-in zoom-in-95 duration-150"
+            >
+              <div className="flex items-start gap-3">
+                <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-500 shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div className="space-y-1">
+                  <h3 id="bulk-delete-dialog-title" className="text-base font-bold text-foreground">
+                    Batch Delete {selectedCompanyIds.length} Company Tenant{selectedCompanyIds.length > 1 ? "s" : ""}?
+                  </h3>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    You have selected <strong className="text-foreground">{selectedCompanyIds.length}</strong> company account{selectedCompanyIds.length > 1 ? "s" : ""} for permanent deletion.
+                  </p>
+                </div>
+              </div>
+
+              {/* Scrollable list of companies to be deleted */}
+              <div className="max-h-48 overflow-y-auto space-y-1.5 border border-border/80 rounded-xl p-2.5 bg-muted/20">
+                {companies
+                  .filter((c) => selectedCompanyIds.includes(c.id))
+                  .map((c) => (
+                    <div
+                      key={c.id}
+                      className="flex items-center justify-between text-xs p-2 rounded-lg bg-card border border-border/60"
+                    >
+                      <div className="min-w-0 pr-2">
+                        <div className="font-bold text-foreground truncate">{c.name}</div>
+                        <div className="text-[10px] text-muted-foreground font-mono">
+                          ID: {c.id.substring(0, 8)}... | {c.vouchers_count} vouchers | {c.products_count} SKUs
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
+                        {c.gstin || "NO GSTIN"}
+                      </span>
+                    </div>
+                  ))}
+              </div>
+
+              <div className="p-3 bg-rose-500/5 border border-rose-500/15 rounded-xl text-xs text-rose-600 dark:text-rose-400 space-y-1">
+                <div className="font-bold flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  <span>Irreversible Permanent Purge</span>
+                </div>
+                <p>
+                  This will completely cascade-delete all selected tenants and all their dependent data: vouchers, double-entry ledger postings, inventory items, bank statements, invoices, and audit logs. Protected production and sandbox tenants will be automatically protected.
+                </p>
+              </div>
+
+              {/* Confirmation input guard */}
+              <div className="space-y-1.5 pt-1">
+                <label className="text-xs font-semibold text-foreground">
+                  To confirm batch deletion, type <span className="font-mono text-rose-600 dark:text-rose-400 font-bold">DELETE</span> below:
+                </label>
+                <input
+                  type="text"
+                  placeholder="Type DELETE"
+                  value={bulkDeleteConfirmationText}
+                  onChange={(e) => setBulkDeleteConfirmationText(e.target.value)}
+                  className="w-full bg-background border border-border focus:border-rose-500 focus:ring-1 focus:ring-rose-500 rounded-xl px-3 py-2 text-xs font-mono font-bold text-foreground outline-none transition-all placeholder:font-normal placeholder:text-muted-foreground"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBulkDeleteModalOpen(false);
+                    setBulkDeleteConfirmationText("");
+                  }}
+                  disabled={bulkDeleting}
+                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-muted hover:bg-muted/80 text-foreground transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkDeleteCompanies}
+                  disabled={bulkDeleting || bulkDeleteConfirmationText.trim().toUpperCase() !== "DELETE"}
+                  className="px-4 py-2 text-xs font-bold rounded-xl bg-rose-600 hover:bg-rose-700 text-white shadow-md flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Trash2 className={`w-3.5 h-3.5 ${bulkDeleting ? "animate-spin" : ""}`} />
+                  <span>{bulkDeleting ? "Deleting Companies..." : `Permanently Delete ${selectedCompanyIds.length} Companies`}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Floating Bulk Action Bar */}
+        {selectedCompanyIds.length > 0 && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-card/95 backdrop-blur-md border border-border shadow-2xl rounded-2xl px-5 py-3 flex items-center gap-4 animate-in slide-in-from-bottom-4 duration-200">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+              <span className="text-xs font-bold text-foreground">
+                {selectedCompanyIds.length} compan{selectedCompanyIds.length > 1 ? "ies" : "y"} selected
+              </span>
+            </div>
+            <div className="h-4 w-[1px] bg-border" />
+            <button
+              type="button"
+              onClick={() => setSelectedCompanyIds([])}
+              className="text-xs font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+            >
+              Deselect All
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setBulkDeleteConfirmationText("");
+                setBulkDeleteModalOpen(true);
+              }}
+              className="px-3.5 py-1.5 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 shadow-sm flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete Selected ({selectedCompanyIds.length})</span>
+            </button>
           </div>
         )}
       </main>

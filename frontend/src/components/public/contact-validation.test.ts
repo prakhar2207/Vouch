@@ -76,7 +76,7 @@ test("Contact form validation & mailto handoff", async (t) => {
     assert.equal(sanitizeSingleLine("Test\r\nBcc: evil@attacker.com\x00"), "Test Bcc: evil@attacker.com");
 
     const prepared = buildPreparedInquiry(baseValid);
-    assert.ok(prepared.mailtoHref.startsWith("mailto:support@srilekh.com?"));
+    assert.ok(prepared.mailtoHref.startsWith("mailto:admin@srilekh.com?"));
     assert.ok(prepared.mailtoHref.includes(encodeURIComponent("[SriLekh Contact] Pricing inquiry")));
     assert.equal(prepared.isMailtoTruncated, false);
 

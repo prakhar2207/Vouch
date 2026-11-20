@@ -464,17 +464,23 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = 52428800
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 10000
 
 # Email Configuration
-EMAIL_BACKEND = env('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend' if DEBUG else 'django.core.mail.backends.smtp.EmailBackend')
+RESEND_API_KEY = env('RESEND_API_KEY', default=None)
+if RESEND_API_KEY:
+    EMAIL_BACKEND = env('EMAIL_BACKEND', default='apps.notifications.backends.resend_backend.ResendEmailBackend')
+else:
+    EMAIL_BACKEND = env('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend' if DEBUG else 'django.core.mail.backends.smtp.EmailBackend')
+
 EMAIL_HOST = env('EMAIL_HOST', default='smtp.gmail.com')
 EMAIL_PORT = env.int('EMAIL_PORT', default=587)
 EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS', default=True)
+EMAIL_USE_SSL = env.bool('EMAIL_USE_SSL', default=False)
 EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
 EMAIL_TIMEOUT = env.int('EMAIL_TIMEOUT', default=10)
 DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='SriLekh <admin@srilekh.com>')
 
 # Frontend URL for viral claim / invitation links
-EMAIL_REPLY_TO = env('EMAIL_REPLY_TO', default='support@srilekh.com')
+EMAIL_REPLY_TO = env('EMAIL_REPLY_TO', default='admin@srilekh.com')
 
 # Application URLs
 FRONTEND_URL = env('FRONTEND_URL', default='https://srilekh.com' if not DEBUG else 'http://localhost:3000')

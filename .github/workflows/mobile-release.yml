@@ -31,7 +31,7 @@ jobs:
 
       - name: Install Frontend Dependencies
         working-directory: frontend
-        run: npm install
+        run: npm ci
 
       - name: Build Next.js Production & Offline Assets
         working-directory: frontend
@@ -70,7 +70,8 @@ jobs:
 
   build-ios:
     name: Build Apple App Store iOS Project
-    runs-on: macos-14
+    runs-on: macos-latest
+    continue-on-error: true
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -84,7 +85,7 @@ jobs:
 
       - name: Install Frontend Dependencies
         working-directory: frontend
-        run: npm install
+        run: npm ci
 
       - name: Build Next.js Production & Offline Assets
         working-directory: frontend

@@ -3,8 +3,13 @@ name: Stage Verification CI (Security, PG18 DR, Redis/Celery & Android AAB)
 on:
   push:
     branches:
+      - 'main'
       - 'feat/**'
       - 'fix/**'
+      - 'audit/**'
+  pull_request:
+    branches:
+      - 'main'
   workflow_dispatch:
 
 concurrency:
@@ -149,7 +154,7 @@ jobs:
       - name: Install, Audit & Test Frontend
         working-directory: frontend
         run: |
-          npm install
+          npm ci
           npm audit --omit=dev
           npx tsc --noEmit
           npm test

@@ -335,6 +335,28 @@ export default function PrintInvoicePage() {
   const [viewportWidth, setViewportWidth] = useState<number>(typeof window !== 'undefined' ? window.innerWidth : 794);
   const [sheetHeight, setSheetHeight] = useState<number>(1123);
   const sheetRef = React.useRef<HTMLDivElement>(null);
+  const [isPrinting, setIsPrinting] = useState<boolean>(false);
+
+  useEffect(() => {
+    const handleBeforePrint = () => setIsPrinting(true);
+    const handleAfterPrint = () => setIsPrinting(false);
+    window.addEventListener('beforeprint', handleBeforePrint);
+    window.addEventListener('afterprint', handleAfterPrint);
+    return () => {
+      window.removeEventListener('beforeprint', handleBeforePrint);
+      window.removeEventListener('afterprint', handleAfterPrint);
+    };
+  }, []);
+
+  const handlePrintClick = () => {
+    setIsPrinting(true);
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        window.print();
+        setTimeout(() => setIsPrinting(false), 1000);
+      }, 80);
+    });
+  };
 
   // Dynamic QR Code & Recipient Status
   const [qrMode, setQrMode] = useState<'SMART' | 'UPI' | 'E-INVOICE'>('SMART');
@@ -1338,7 +1360,7 @@ export default function PrintInvoicePage() {
   const isMobile = viewportWidth < 794;
   const padding = viewportWidth < 640 ? 16 : 32;
   const scale = isMobile ? Math.min(1, Math.max(0.35, (viewportWidth - padding) / 794)) : 1;
-  const activeScale = scaleMode === 'fit' && isMobile ? scale : 1;
+  const activeScale = isPrinting ? 1 : (scaleMode === 'fit' && isMobile ? scale : 1);
 
   const renderA4Sheet = (sheet: SheetConfig, sheetIndex: number, totalSheets: number) => {
     const isSinglePage = sheet.isFirstPage && sheet.isLastPage;
@@ -1822,13 +1844,16 @@ export default function PrintInvoicePage() {
               box-sizing: border-box !important;
               display: block !important;
               width: 100% !important;
-              height: 100vh !important;
-              max-height: 100vh !important;
+              max-width: 100% !important;
+              min-width: 0 !important;
+              height: auto !important;
+              min-height: 100% !important;
+              max-height: none !important;
               padding: 6mm 6mm !important;
               margin: 0 !important;
               page-break-inside: avoid !important;
               break-inside: avoid !important;
-              overflow: hidden !important;
+              overflow: visible !important;
             }
             .invoice-print-wrapper:not(:last-child) {
               page-break-after: always !important;
@@ -1839,28 +1864,39 @@ export default function PrintInvoicePage() {
               break-after: auto !important;
             }
             .invoice-print-wrapper > div {
-              height: 100% !important;
-              max-height: 100% !important;
+              box-sizing: border-box !important;
+              width: 100% !important;
+              max-width: 100% !important;
+              min-width: 0 !important;
+              height: auto !important;
+              min-height: 100% !important;
+              max-height: none !important;
+              overflow: visible !important;
+              position: static !important;
+              margin: 0 !important;
+              transform: none !important;
             }
             #invoice-sheet, .invoice-print-sheet {
+              box-sizing: border-box !important;
               position: static !important;
               transform: none !important;
               width: 100% !important;
               max-width: 100% !important;
-              height: 100% !important;
-              max-height: 100% !important;
-              min-height: 0 !important;
+              min-width: 0 !important;
+              height: auto !important;
+              min-height: 100% !important;
+              max-height: none !important;
               padding: 0 !important;
               margin: 0 !important;
               box-shadow: none !important;
               display: flex !important;
               flex-direction: column !important;
               justify-content: space-between !important;
-              box-sizing: border-box !important;
               page-break-inside: avoid !important;
               break-inside: avoid !important;
               page-break-after: auto !important;
               break-after: auto !important;
+              overflow: visible !important;
             }
             #invoice-sheet > .border-2, .invoice-print-sheet > .border-2 {
               height: 100% !important;
@@ -1985,7 +2021,7 @@ export default function PrintInvoicePage() {
                 <Download className="w-4 h-4 text-primary" />
               </button>
               <button
-                onClick={() => window.print()}
+                onClick={handlePrintClick}
                 className="bg-primary text-primary-foreground hover:bg-primary/90 p-2 rounded-lg text-xs font-bold flex items-center justify-center cursor-pointer"
                 title="Print"
               >
@@ -2425,7 +2461,7 @@ export default function PrintInvoicePage() {
 
             {/* Print Button */}
             <button
-              onClick={() => window.print()}
+              onClick={handlePrintClick}
               className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm transition-all cursor-pointer"
             >
               <Printer className="w-4 h-4" />
@@ -2757,7 +2793,7 @@ export default function PrintInvoicePage() {
                         }
                       : undefined
                   }
-                  className="print:block print:w-full print:h-full print:max-h-full print:overflow-hidden transition-all flex justify-center"
+                  className="print:block print:w-full print:h-full print:max-h-full print:overflow-visible transition-all flex justify-center"
                 >
                   {renderA4Sheet(sheet, sheetIdx, allSheets.length)}
                 </div>
