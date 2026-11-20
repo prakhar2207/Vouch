@@ -6,10 +6,10 @@ from apps.accounting.models import Voucher
 from apps.gst.encryption import EncryptedTextField
 
 
-
 class CompanyGSTConfig(models.Model):
     PROVIDER_CHOICES = (
         ('MOCK', 'Mock / Sandbox Provider (Offline & Testing)'),
+        ('SANDBOX_CO_IN', 'Sandbox by Quicko (api.sandbox.co.in)'),
         ('CLEAR', 'Clear (ClearTax API Gateway)'),
         ('MASTERS_INDIA', 'Masters India GST Gateway'),
         ('CASHFREE', 'Cashfree Verification Gateway'),
@@ -21,9 +21,16 @@ class CompanyGSTConfig(models.Model):
     provider = models.CharField(max_length=30, choices=PROVIDER_CHOICES, default='MOCK')
     is_sandbox = models.BooleanField(default=True)
     
-    # API Gateway Credentials (Fernet AES-256 Encrypted at Rest)
+    # Legacy / Generic API Gateway Credentials (Fernet AES-256 Encrypted at Rest)
     api_key = EncryptedTextField(blank=True, default='')
     api_secret = EncryptedTextField(blank=True, default='')
+
+    # Dedicated Sandbox by Quicko Gateway Credentials (Fernet AES-256 Encrypted at Rest)
+    sandbox_api_key = EncryptedTextField(blank=True, default='')
+    sandbox_api_secret = EncryptedTextField(blank=True, default='')
+    sandbox_base_url = models.CharField(max_length=255, default='https://api.sandbox.co.in')
+    sandbox_access_token = EncryptedTextField(blank=True, default='')
+    sandbox_token_expires_at = models.DateTimeField(null=True, blank=True)
     
     # E-Way Bill NIC Credentials (Fernet AES-256 Encrypted at Rest)
     eway_username = models.CharField(max_length=100, blank=True, default='')
@@ -44,6 +51,111 @@ class CompanyGSTConfig(models.Model):
         return f"{self.company.name} GST Config ({self.provider}, Sandbox={self.is_sandbox})"
 
 
+class GSTRegistration(models.Model):
+    """
+    Multi-state / Multi-GSTIN entity model.
+    A company may maintain distinct GST registrations across different Indian states or union territories.
+    Every GST return, e-invoice, and e-way bill operation explicitly references its GST registration.
+    """
+    TAXPAYER_TYPE_CHOICES = (
+        ('REGULAR', 'Regular Taxpayer'),
+        ('COMPOSITION', 'Composition Scheme'),
+        ('ISD', 'Input Service Distributor'),
+        ('SEZ_DEVELOPER', 'SEZ Developer'),
+        ('SEZ_UNIT', 'SEZ Unit'),
+        ('CASUAL', 'Casual Taxable Person'),
+        ('NON_RESIDENT', 'Non-Resident Taxable Person'),
+    )
+
+    STATUS_CHOICES = (
+        ('ACTIVE', 'Active'),
+        ('SUSPENDED', 'Suspended'),
+        ('CANCELLED', 'Cancelled'),
+        ('INACTIVE', 'Inactive'),
+    )
+
+    VERIFICATION_STATUS_CHOICES = (
+        ('NOT_VERIFIED', 'Not Verified'),
+        ('PENDING', 'Verification Pending'),
+        ('VERIFIED', 'Verified'),
+        ('INVALID', 'Invalid GSTIN'),
+        ('INACTIVE', 'Inactive Registration'),
+        ('FAILED', 'Verification Failed'),
+        ('PROVIDER_UNAVAILABLE', 'Provider Unavailable'),
+        ('EXPIRED', 'Verification Expired'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='gst_registrations')
+    
+    gstin = models.CharField(max_length=15, db_index=True)
+    legal_name = models.CharField(max_length=255)
+    trade_name = models.CharField(max_length=255, blank=True, default='')
+    
+    state_code = models.CharField(max_length=2, db_index=True)  # e.g., '27', '09'
+    state_name = models.CharField(max_length=100)
+    
+    address = models.TextField(blank=True, default='')
+    pincode = models.CharField(max_length=10, blank=True, default='')
+    
+    taxpayer_type = models.CharField(max_length=30, choices=TAXPAYER_TYPE_CHOICES, default='REGULAR')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='ACTIVE')
+    registration_date = models.DateField(null=True, blank=True)
+    
+    # Verification details
+    verification_status = models.CharField(
+        max_length=30,
+        choices=VERIFICATION_STATUS_CHOICES,
+        default='NOT_VERIFIED',
+        db_index=True
+    )
+    last_verified_at = models.DateTimeField(null=True, blank=True)
+    provider_reference_id = models.CharField(max_length=100, blank=True, default='')
+
+    is_primary = models.BooleanField(default=False)
+    
+    # Portal compliance / OTP username & cached session token
+    taxpayer_username = models.CharField(max_length=100, blank=True, default='')
+    auth_token = EncryptedTextField(blank=True, default='')
+    token_expires_at = models.DateTimeField(null=True, blank=True)
+    
+    # E-Invoice NIC / IRP credentials
+    einvoice_username = models.CharField(max_length=100, blank=True, default='')
+    einvoice_password = EncryptedTextField(blank=True, default='')
+    
+    # E-Way Bill NIC credentials
+    eway_username = models.CharField(max_length=100, blank=True, default='')
+    eway_password = EncryptedTextField(blank=True, default='')
+
+    # Authorized users for this registration (optional restriction)
+    authorized_users = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        blank=True,
+        related_name='authorized_gst_registrations'
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-is_primary', 'state_code']
+        unique_together = ('company', 'gstin')
+        indexes = [
+            models.Index(fields=['company', 'gstin']),
+            models.Index(fields=['company', 'state_code']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['company'],
+                condition=models.Q(is_primary=True),
+                name='unique_primary_gstin_per_company'
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.gstin} ({self.state_name}) - {self.company.name} [{self.status}]"
+
+
 class EWayBillRecord(models.Model):
     STATUS_CHOICES = (
         ('ACTIVE', 'Active'),
@@ -61,6 +173,13 @@ class EWayBillRecord(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='eway_bills')
+    gst_registration = models.ForeignKey(
+        GSTRegistration,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='eway_bills'
+    )
     voucher = models.ForeignKey(Voucher, on_delete=models.CASCADE, related_name='eway_bills')
     
     ewb_number = models.CharField(max_length=20, unique=True, db_index=True)
@@ -108,6 +227,13 @@ class EInvoiceRecord(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='einvoices')
+    gst_registration = models.ForeignKey(
+        GSTRegistration,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='einvoices'
+    )
     voucher = models.OneToOneField(Voucher, on_delete=models.CASCADE, related_name='einvoice_record')
     
     irn = models.CharField(max_length=64, unique=True, db_index=True)
@@ -162,6 +288,13 @@ class GSTR2BImport(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='gstr2b_imports')
+    gst_registration = models.ForeignKey(
+        GSTRegistration,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='gstr2b_imports'
+    )
     return_period = models.CharField(max_length=10, db_index=True)  # e.g. "082026" or "2026-08"
     financial_year = models.CharField(max_length=10, blank=True, default='')  # e.g. "2026-27"
     file_format = models.CharField(max_length=10, choices=FILE_FORMAT_CHOICES, default='JSON')
@@ -191,11 +324,26 @@ class GSTR2BRecord(models.Model):
         ('MATCHED', 'Matched in Books'),
         ('MISMATCHED', 'Value / Tax Mismatch'),
         ('MISSING_IN_BOOKS', 'Missing in Purchase Books'),
+        ('MISSING_IN_2B', 'Missing in GSTR-2B'),
+        ('TAX_MISMATCH', 'Tax Breakdown Mismatch'),
+        ('GSTIN_MISMATCH', 'GSTIN Mismatch'),
+        ('DOC_NUM_MISMATCH', 'Invoice Number Format Mismatch'),
+        ('DATE_MISMATCH', 'Invoice Date Mismatch'),
+        ('DUPLICATE', 'Duplicate Invoice'),
+        ('INELIGIBLE_ITC', 'Blocked / Ineligible ITC'),
+        ('PARTIAL_MATCH', 'Partial Match'),
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     import_batch = models.ForeignKey(GSTR2BImport, on_delete=models.CASCADE, related_name='records')
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='gstr2b_records', db_index=True)
+    gst_registration = models.ForeignKey(
+        GSTRegistration,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='gstr2b_records'
+    )
     
     supplier_gstin = models.CharField(max_length=15, db_index=True)
     supplier_name = models.CharField(max_length=255, blank=True, default='')
@@ -223,12 +371,19 @@ class GSTR2BRecord(models.Model):
     match_status = models.CharField(max_length=30, choices=MATCH_STATUS_CHOICES, default='MISSING_IN_BOOKS')
     mismatch_details = models.JSONField(default=dict, blank=True)
     
+    # Audit & User Action tracking
+    is_reviewed = models.BooleanField(default=False)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='reviewed_gstr2b_records')
+    review_notes = models.TextField(blank=True, default='')
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         indexes = [
             models.Index(fields=['company', 'supplier_gstin', 'normalized_invoice_number']),
+            models.Index(fields=['company', 'match_status']),
         ]
 
     def __str__(self):
@@ -259,6 +414,13 @@ class GSTFilingRecord(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='gst_filings')
+    gst_registration = models.ForeignKey(
+        GSTRegistration,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='gst_filings'
+    )
     return_type = models.CharField(max_length=20, choices=RETURN_TYPE_CHOICES, default='GSTR1')
     return_period = models.CharField(max_length=20, db_index=True)  # e.g., "082026", "2026-08", "2025-26"
     financial_year = models.CharField(max_length=15, blank=True, default='')
@@ -288,4 +450,151 @@ class GSTFilingRecord(models.Model):
 
     def __str__(self):
         return f"{self.company.name} - {self.return_type} ({self.return_period}) [{self.status}] ARN: {self.arn or 'N/A'}"
+
+
+class GSTAuditLog(models.Model):
+    """
+    Cryptographically timestamped audit log of all outbound GST provider requests and compliance events.
+    Never persists plaintext secrets, API keys, passwords, or taxpayer OTPs.
+    """
+    ACTION_CHOICES = (
+        ('AUTH_TOKEN', 'Provider Authentication Token Exchange'),
+        ('GSTIN_VERIFY', 'Taxpayer GSTIN Verification'),
+        ('PORTAL_OTP_REQUEST', 'Taxpayer Portal OTP Request'),
+        ('PORTAL_OTP_VERIFY', 'Taxpayer Portal OTP Verification'),
+        ('GSTR1_PREPARE', 'GSTR-1 Outward Supply Preparation'),
+        ('GSTR1_SUBMIT', 'GSTR-1 Direct Portal Submission'),
+        ('GSTR1_STATUS', 'GSTR-1 Portal Processing Status Check'),
+        ('GSTR2B_FETCH', 'GSTR-2B Statement Fetch'),
+        ('GSTR2B_RECONCILE', 'GSTR-2B Purchase Register Reconciliation'),
+        ('EINVOICE_GENERATE', 'e-Invoice IRN Generation'),
+        ('EINVOICE_CANCEL', 'e-Invoice IRN Cancellation'),
+        ('EWAYBILL_GENERATE', 'e-Way Bill Generation'),
+        ('EWAYBILL_UPDATE_VEHICLE', 'e-Way Bill Vehicle Update'),
+        ('EWAYBILL_CANCEL', 'e-Way Bill Cancellation'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='gst_audit_logs')
+    gst_registration = models.ForeignKey(
+        GSTRegistration,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='gst_audit_logs'
+    )
+    
+    action = models.CharField(max_length=50, choices=ACTION_CHOICES, db_index=True)
+    correlation_id = models.CharField(max_length=64, db_index=True)
+    endpoint = models.CharField(max_length=255)
+    http_method = models.CharField(max_length=10, default='POST')
+    
+    status_code = models.PositiveIntegerField(null=True, blank=True)
+    is_success = models.BooleanField(default=True)
+    
+    # Redacted JSON summaries
+    request_summary = models.JSONField(default=dict, blank=True)
+    response_summary = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True, default='')
+    
+    performed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='gst_audit_events'
+    )
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['company', 'action', '-created_at']),
+            models.Index(fields=['correlation_id']),
+        ]
+
+    def __str__(self):
+        return f"[{self.action}] {self.company.name} - Success={self.is_success} ({self.created_at.strftime('%Y-%m-%d %H:%M:%S')})"
+
+
+class GSTReturnWorkspace(models.Model):
+    """
+    Unified GST Workspace model tracking return period lifecycle, draft snapshots,
+    pre-filing validations, and voucher drift detection.
+    
+    Lifecycle Statuses:
+    NOT_STARTED -> DRAFT -> VALIDATION_REQUIRED -> READY_FOR_REVIEW -> REVIEWED -> EXPORTED
+    """
+    STATUS_CHOICES = (
+        ('NOT_STARTED', 'Not Started'),
+        ('DRAFT', 'Draft Generated'),
+        ('VALIDATION_REQUIRED', 'Validation Required'),
+        ('READY_FOR_REVIEW', 'Ready for Review'),
+        ('REVIEWED', 'Reviewed & Approved'),
+        ('EXPORTED', 'Exported'),
+    )
+
+    RETURN_TYPE_CHOICES = (
+        ('GSTR1', 'GSTR-1 (Outward Supplies)'),
+        ('GSTR3B', 'GSTR-3B (Monthly Summary)'),
+        ('GSTR2B_RECON', 'GSTR-2B Reconciliation'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='gst_return_workspaces')
+    gst_registration = models.ForeignKey(
+        GSTRegistration,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='return_workspaces'
+    )
+    financial_year = models.CharField(max_length=15, db_index=True)  # e.g. "2026-27"
+    return_period = models.CharField(max_length=20, db_index=True)   # e.g. "082026" or "2026-08"
+    return_type = models.CharField(max_length=20, choices=RETURN_TYPE_CHOICES, default='GSTR1', db_index=True)
+
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='NOT_STARTED', db_index=True)
+
+    sales_data_available = models.BooleanField(default=False)
+    purchase_data_available = models.BooleanField(default=False)
+    unclassified_count = models.PositiveIntegerField(default=0)
+    validation_error_count = models.PositiveIntegerField(default=0)
+    validation_warning_count = models.PositiveIntegerField(default=0)
+
+    tax_liability_summary = models.JSONField(default=dict, blank=True)
+    itc_summary = models.JSONField(default=dict, blank=True)
+    reconciliation_status = models.CharField(max_length=30, default='NOT_STARTED')
+    validation_errors = models.JSONField(default=list, blank=True)
+
+    # Snapshot and Drift Detection
+    source_voucher_hash = models.CharField(max_length=64, blank=True, default='')
+    is_stale = models.BooleanField(default=False)
+    draft_payload = models.JSONField(default=dict, blank=True)
+    last_generated_at = models.DateTimeField(null=True, blank=True)
+
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reviewed_gst_workspaces'
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-return_period', 'return_type']
+        unique_together = ('company', 'gst_registration', 'return_type', 'return_period')
+        indexes = [
+            models.Index(fields=['company', 'return_type', 'return_period']),
+            models.Index(fields=['company', 'status']),
+            models.Index(fields=['company', 'financial_year']),
+        ]
+
+    def __str__(self):
+        reg = self.gst_registration.gstin if self.gst_registration else "Default"
+        return f"{self.company.name} [{reg}] {self.return_type} ({self.return_period}) - {self.status}"
 

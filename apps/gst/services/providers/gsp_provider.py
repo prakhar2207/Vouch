@@ -12,6 +12,17 @@ class GSPProvider(GSTGatewayProvider):
     (e.g., Clear, Masters India, Cashfree, Karza, Sandbox.co.in).
     """
 
+    @property
+    def capabilities(self):
+        from .base import GSTCapability
+        return {
+            GSTCapability.GSTIN_LOOKUP.value,
+            GSTCapability.EWAY_BILL_GENERATE.value,
+            GSTCapability.EWAY_BILL_UPDATE_VEHICLE.value,
+            GSTCapability.EWAY_BILL_CANCEL.value,
+            GSTCapability.EINVOICE_GENERATE.value,
+        }
+
     def __init__(self, config):
         super().__init__(config)
         self.api_key = config.api_key if config else ''

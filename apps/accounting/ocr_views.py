@@ -105,6 +105,30 @@ class OCRExtractAPIView(APIView):
         cache.set(ocr_rate_key, current_reqs + 1, timeout=60)
 
         scan_mode = request.data.get('scan_mode', 'auto')
+
+        # 6. Commercial Tier Entitlement & Daily Quota Enforcement
+        from apps.billing.services.entitlement_service import EntitlementService
+        is_deep = (str(scan_mode).strip().lower() == 'deep')
+        limit_key = 'ocr_deep_daily' if is_deep else 'ocr_fast_daily'
+        metric_name = 'ocr_deep_scans' if is_deep else 'ocr_fast_scans'
+
+        allowed, current_count, max_limit = EntitlementService.check_and_increment_usage(
+            company_id=company.id,
+            metric=metric_name,
+            limit_key=limit_key
+        )
+        if not allowed:
+            model_name = "Handwritten Bill OCR (Deep Model)" if is_deep else "Printed Bill & Bank OCR (Fast Model)"
+            return Response({
+                "success": False,
+                "error": f"Daily {model_name} quota exceeded ({current_count}/{max_limit} scans used today). Please upgrade your subscription plan at /pricing for higher scan limits.",
+                "quota_exceeded": True,
+                "metric": metric_name,
+                "current_usage": current_count,
+                "daily_limit": max_limit,
+                "upgrade_url": "/pricing"
+            }, status=status.HTTP_403_FORBIDDEN)
+
         is_async = (request.data.get('async') is True or request.query_params.get('async', '').lower() == 'true')
 
         if is_async:

@@ -92,6 +92,7 @@ INSTALLED_APPS = [
     'apps.notifications',
     'apps.superadmin',
     'apps.common',
+    'apps.billing',
 ]
 
 AUTH_USER_MODEL = 'accounts.User'
@@ -550,4 +551,22 @@ LOGGING = {
         },
     },
 }
+
+# Razorpay Payment Gateway & Subscriptions Configuration
+RAZORPAY_KEY_ID = env.str('RAZORPAY_KEY_ID', default='rzp_test_srilekh_staging')
+RAZORPAY_KEY_SECRET = env.str('RAZORPAY_KEY_SECRET', default='test_secret_srilekh_12345')
+RAZORPAY_WEBHOOK_SECRET = env.str('RAZORPAY_WEBHOOK_SECRET', default='test_webhook_secret_67890')
+RAZORPAY_ENVIRONMENT = env.str('RAZORPAY_ENVIRONMENT', default='test').strip().lower()
+
+# Sandbox by Quicko GST Integration Configuration
+SANDBOX_API_KEY = env.str('SANDBOX_API_KEY', default=env.str('GST_SANDBOX_API_KEY', default='')).strip()
+SANDBOX_API_SECRET = env.str('SANDBOX_API_SECRET', default=env.str('GST_SANDBOX_API_SECRET', default='')).strip()
+SANDBOX_BASE_URL = env.str('SANDBOX_BASE_URL', default=env.str('GST_SANDBOX_BASE_URL', default='https://api.sandbox.co.in')).strip()
+GST_ENCRYPTION_KEY = env.str('GST_ENCRYPTION_KEY', default=env.str('GST_CREDENTIAL_KEY', default='')).strip()
+
+GST_SANDBOX_API_KEY = SANDBOX_API_KEY
+GST_SANDBOX_API_SECRET = SANDBOX_API_SECRET
+GST_SANDBOX_BASE_URL = SANDBOX_BASE_URL
+GST_CREDENTIAL_KEY = GST_ENCRYPTION_KEY
+
 

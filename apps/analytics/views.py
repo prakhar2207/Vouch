@@ -1,8 +1,11 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
 from apps.accounts.permissions import get_authorized_company, IsCompanyMember
+from apps.billing.permissions import RequiresFeature
 from .services.ai_service import AnalyticsEngine
+
 
 class InsightsAPIView(APIView):
     permission_classes = [IsAuthenticated, IsCompanyMember]
@@ -10,10 +13,14 @@ class InsightsAPIView(APIView):
     def get(self, request, company_id=None):
         try:
             company = get_authorized_company(request, company_id=company_id)
+            RequiresFeature.enforce(request, company, 'bi_sales_timeline', 'Sales Timeline & Trends', 'Growth')
             data = AnalyticsEngine.get_full_insights(company)
             return Response({"success": True, "data": data})
+        except PermissionDenied:
+            raise
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
+
 
 class RFMAnalysisView(APIView):
     permission_classes = [IsAuthenticated, IsCompanyMember]
@@ -21,10 +28,14 @@ class RFMAnalysisView(APIView):
     def get(self, request, company_id):
         try:
             company = get_authorized_company(request, company_id=company_id)
+            RequiresFeature.enforce(request, company, 'bi_rfm_segmentation', 'RFM Customer Segmentation Matrix', 'Pro AI')
             data = AnalyticsEngine.get_rfm_segments(company)
             return Response({"success": True, "data": data})
+        except PermissionDenied:
+            raise
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
+
 
 class SalesForecastView(APIView):
     permission_classes = [IsAuthenticated, IsCompanyMember]
@@ -32,11 +43,15 @@ class SalesForecastView(APIView):
     def get(self, request, company_id=None):
         try:
             company = get_authorized_company(request, company_id=company_id)
+            RequiresFeature.enforce(request, company, 'bi_sales_forecast', 'AI Predictive Sales Forecast (30-Day Projections)', 'Pro AI')
             days = int(request.query_params.get('days', 30))
             data = AnalyticsEngine.forecast_sales(company, days=days)
             return Response({"success": True, "data": data})
+        except PermissionDenied:
+            raise
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
+
 
 class MonthlyComparisonView(APIView):
     permission_classes = [IsAuthenticated, IsCompanyMember]
@@ -44,11 +59,15 @@ class MonthlyComparisonView(APIView):
     def get(self, request, company_id=None):
         try:
             company = get_authorized_company(request, company_id=company_id)
+            RequiresFeature.enforce(request, company, 'bi_monthly_trajectory', 'Monthly Revenue & Margin Trajectory', 'Growth')
             days = int(request.query_params.get('days', 30))
             forecast = AnalyticsEngine.forecast_sales(company, days=days)
             return Response({"success": True, "data": forecast.get("monthly_comparison")})
+        except PermissionDenied:
+            raise
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
+
 
 class DashboardSummaryView(APIView):
     permission_classes = [IsAuthenticated, IsCompanyMember]
@@ -59,15 +78,15 @@ class DashboardSummaryView(APIView):
             from decimal import Decimal
             from apps.accounting.models import Voucher
             company = get_authorized_company(request, company_id=company_id)
-            
+
             total_sales = Voucher.objects.filter(
                 company=company, voucher_type='SALES', status='POSTED'
             ).aggregate(Sum('total_amount'))['total_amount__sum'] or Decimal('0.00')
-            
+
             total_purchases = Voucher.objects.filter(
                 company=company, voucher_type='PURCHASE', status='POSTED'
             ).aggregate(Sum('total_amount'))['total_amount__sum'] or Decimal('0.00')
-            
+
             return Response({
                 "success": True,
                 "data": {
@@ -75,6 +94,8 @@ class DashboardSummaryView(APIView):
                     "total_purchase_volume": total_purchases
                 }
             })
+        except PermissionDenied:
+            raise
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
 
@@ -86,6 +107,7 @@ class CashCycleSnapshotView(APIView):
         try:
             from .models import CashCycleSnapshot
             company = get_authorized_company(request, company_id=company_id)
+            RequiresFeature.enforce(request, company, 'bi_cash_cycle', 'Cash Conversion Cycle Analytics', 'Enterprise')
             snapshots = CashCycleSnapshot.objects.filter(company=company).order_by('recorded_date')
             data = [
                 {
@@ -107,12 +129,15 @@ class CashCycleSnapshotView(APIView):
                 for s in snapshots
             ]
             return Response({"success": True, "data": data})
+        except PermissionDenied:
+            raise
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
 
     def post(self, request, company_id):
         try:
             company = get_authorized_company(request, company_id=company_id)
+            RequiresFeature.enforce(request, company, 'bi_cash_cycle', 'Cash Conversion Cycle Analytics', 'Enterprise')
             period_label = request.data.get('period_label')
             notes = request.data.get('notes')
             snapshot = AnalyticsEngine.record_cash_cycle_snapshot(company, period_label=period_label, notes=notes)
@@ -131,7 +156,7 @@ class CashCycleSnapshotView(APIView):
                     "date": snapshot.recorded_date.strftime('%Y-%m-%d')
                 }
             })
+        except PermissionDenied:
+            raise
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
-
-

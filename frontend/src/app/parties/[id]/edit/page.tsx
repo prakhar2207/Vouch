@@ -11,6 +11,7 @@ import StateSelect from '@/components/StateSelect';
 import ConfirmModal from '@/components/modals/ConfirmModal';
 import { useToast } from '@/context/ToastContext';
 import { Trash2 } from 'lucide-react';
+import GSTINVerifyDialog from '@/components/gst/GSTINVerifyDialog';
 
 export default function EditPartyPage() {
   const router = useRouter();
@@ -225,7 +226,24 @@ export default function EditPartyPage() {
 
             {/* GSTIN */}
             <div>
-              <label className="block text-xs font-semibold text-foreground/80 uppercase tracking-wider mb-1.5">GSTIN Number</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-semibold text-foreground/80 uppercase tracking-wider">GSTIN Number</label>
+                <GSTINVerifyDialog
+                  gstin={formData.gstin}
+                  partyId={partyId as string}
+                  currentPartyName={formData.name}
+                  currentStateCode={formData.state_code}
+                  currentAddress={formData.address}
+                  onApply={(updates) => {
+                    setFormData(prev => ({
+                      ...prev,
+                      ...(updates.name ? { name: updates.name } : {}),
+                      ...(updates.state_code ? { state_code: updates.state_code } : {}),
+                      ...(updates.address ? { address: updates.address } : {})
+                    }));
+                  }}
+                />
+              </div>
               <input
                 type="text"
                 maxLength={15}
