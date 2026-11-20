@@ -53,10 +53,10 @@ class PriorPeriodGSTScenarioTests(unittest.TestCase):
         ws.status = 'EXPORTED'
         ws.save(update_fields=['status'])
         
-        # generate_draft can be called on EXPORTED workspace, updating draft_payload
+        # generate_draft can be called on EXPORTED workspace, transitioning status back to DRAFT for review
         res = GSTWorkspaceService.generate_draft(ws)
         ws.refresh_from_db()
-        self.assertEqual(ws.status, 'EXPORTED')
+        self.assertEqual(ws.status, 'DRAFT')
         self.assertIsNotNone(ws.draft_payload)
         self.assertFalse(ws.is_stale)
 
