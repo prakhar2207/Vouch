@@ -34,7 +34,8 @@ class GSTValidationService:
         registration: Optional[GSTRegistration],
         start_date,
         end_date,
-        return_type: str = 'GSTR1'
+        return_type: str = 'GSTR1',
+        return_period: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Scans all relevant vouchers for the return period and categorizes them into:
@@ -53,17 +54,46 @@ class GSTValidationService:
 
         voucher_types = ['SALES', 'CREDIT_NOTE', 'DEBIT_NOTE'] if return_type == 'GSTR1' else ['SALES', 'PURCHASE', 'CREDIT_NOTE', 'DEBIT_NOTE']
 
-        vouchers = Voucher.objects.filter(
+        period_str = return_period or start_date.strftime('%m%Y')
+        from apps.gst.services.allocation_service import GSTAllocationService
+        GSTAllocationService.ensure_allocations_for_period(company, period_str)
+
+        allocations = GSTAllocationService.get_allocations_for_period(
             company=company,
-            voucher_type__in=voucher_types,
-            voucher_date__gte=start_date,
-            voucher_date__lte=end_date,
-            status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        ).select_related('party_ledger').prefetch_related('items__product').order_by('voucher_date', 'voucher_number')
+            return_type=return_type,
+            period=period_str,
+            registration=registration,
+            only_eligible=True
+        ).filter(
+            voucher__voucher_type__in=voucher_types
+        ).select_related('voucher__party_ledger').prefetch_related('voucher__items__product')
+
+        vouchers = [
+            alloc.voucher for alloc in allocations
+            if alloc.voucher and alloc.voucher.status in EffectiveVoucherService.ACTIVE_STATUSES
+        ]
+        vouchers.sort(key=lambda v: (v.voucher_date, v.voucher_number))
 
         errors: List[Dict[str, Any]] = []
         warnings: List[Dict[str, Any]] = []
         info_items: List[Dict[str, Any]] = []
+
+        excluded = GSTAllocationService.get_excluded_allocations_for_period(
+            company=company,
+            period=period_str,
+            return_type=return_type
+        )
+        for ex in excluded:
+            info_items.append({
+                "error_code": "GST_STATUTORY_EXCLUSION",
+                "severity": "INFO",
+                "description": f"Voucher '{ex['voucher_number']}' excluded from {return_type} return: {ex['exclusion_reason']} ({ex['statutory_rule']})",
+                "voucher_id": ex['voucher_id'],
+                "voucher_number": ex['voucher_number'],
+                "return_section": "Statutory Eligibility",
+                "recommended_correction": "Review Section 16(4) / 37(3) statutory rules or reallocate to a valid period.",
+                "requires_manual_review": False
+            })
 
         seen_invoice_numbers = set()
         clean_vouchers_count = 0

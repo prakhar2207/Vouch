@@ -47,6 +47,8 @@ from .views import (
     GSTReconciliationSummaryAPIView,
     GSTReconciliationRecordsAPIView,
     GSTReconciliationManualMatchAPIView,
+    GSTReportingAllocationListAPIView,
+    GSTReportingReallocateAPIView,
 )
 from .itc_views import (
     GSTR2BUploadView,
@@ -137,4 +139,8 @@ urlpatterns = [
 
     # 10. Audit History
     path('audit-logs/<uuid:company_id>/', GSTAuditLogsAPIView.as_view(), name='gst_audit_logs'),
+
+    # 11. GST Reporting Allocations & Reallocation Engine (Round 2.5)
+    path('allocations/<uuid:company_id>/', GSTReportingAllocationListAPIView.as_view(), name='gst_allocations_list'),
+    path('allocations/<uuid:company_id>/reallocate/', GSTReportingReallocateAPIView.as_view(), name='gst_allocations_reallocate'),
 ]

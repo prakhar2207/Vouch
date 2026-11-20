@@ -1695,3 +1695,146 @@ class GSTReconciliationManualMatchAPIView(APIView):
             "record": GSTR2BRecordSerializer(record).data
         })
 
+
+class GSTReportingAllocationListAPIView(APIView):
+    """
+    GET /api/v1/gst/allocations/<uuid:company_id>/
+    Lists GST reporting allocations for a company and period with statutory metadata.
+    Query params:
+    - assigned_period: e.g. 022026
+    - status: PENDING | APPROVED | EXCLUDED | SUPERSEDED | ALL
+    - event_type: OUTWARD_SUPPLY | INWARD_ITC | INWARD_RCM | CREDIT_NOTE | DEBIT_NOTE
+    - is_active: true | false (default: true)
+    """
+    permission_classes = [IsAuthenticated, CanViewGST]
+
+    def get(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        assigned_period = request.query_params.get('assigned_period')
+        status_filter = request.query_params.get('status', 'ALL').strip().upper()
+        event_type = request.query_params.get('event_type')
+        is_active_param = request.query_params.get('is_active', 'true').strip().lower()
+
+        from apps.gst.models import GSTReportingAllocation
+        from apps.gst.services.allocation_service import GSTAllocationService
+
+        if assigned_period:
+            clean_period = assigned_period.strip().replace('-', '').replace('/', '')
+            GSTAllocationService.ensure_allocations_for_period(company, clean_period)
+            qs = GSTReportingAllocation.objects.filter(company=company, assigned_period=clean_period)
+        else:
+            qs = GSTReportingAllocation.objects.filter(company=company)
+
+        if is_active_param in ('true', '1', 'yes'):
+            qs = qs.filter(is_active=True)
+        elif is_active_param in ('false', '0', 'no'):
+            qs = qs.filter(is_active=False)
+
+        if status_filter and status_filter != 'ALL':
+            qs = qs.filter(status=status_filter)
+
+        if event_type:
+            qs = qs.filter(event_type=event_type.strip().upper())
+
+        qs = qs.select_related('voucher', 'voucher__party_ledger', 'superseded_by').order_by('-created_at')[:300]
+
+        allocations_data = []
+        for alloc in qs:
+            v = alloc.voucher
+            allocations_data.append({
+                "id": str(alloc.id),
+                "voucher_id": str(v.id) if v else None,
+                "voucher_number": v.voucher_number if v else "",
+                "voucher_type": v.voucher_type if v else "",
+                "voucher_date": alloc.voucher_date.strftime('%Y-%m-%d'),
+                "entry_date": alloc.entry_date.strftime('%Y-%m-%d'),
+                "original_period": alloc.original_period,
+                "assigned_period": alloc.assigned_period,
+                "financial_year": alloc.financial_year,
+                "event_type": alloc.event_type,
+                "allocation_reason": alloc.allocation_reason,
+                "status": alloc.status,
+                "is_statutorily_eligible": alloc.is_statutorily_eligible,
+                "statutory_rule": alloc.statutory_rule,
+                "statutory_notes": alloc.statutory_notes,
+                "exclusion_reason": alloc.exclusion_reason,
+                "taxable_value": float(alloc.taxable_value),
+                "igst_amount": float(alloc.igst_amount),
+                "cgst_amount": float(alloc.cgst_amount),
+                "sgst_amount": float(alloc.sgst_amount),
+                "cess_amount": float(alloc.cess_amount),
+                "total_tax": float(alloc.total_tax),
+                "is_active": alloc.is_active,
+                "superseded_by_id": str(alloc.superseded_by_id) if alloc.superseded_by_id else None,
+                "created_at": alloc.created_at.isoformat(),
+            })
+
+        return Response({
+            "success": True,
+            "count": len(allocations_data),
+            "allocations": allocations_data
+        })
+
+
+class GSTReportingReallocateAPIView(APIView):
+    """
+    POST /api/v1/gst/allocations/<uuid:company_id>/reallocate/
+    Reallocates a voucher to a different GST return period with statutory validation.
+    Body:
+    {
+        "voucher_id": "<uuid>",
+        "target_period": "032026",
+        "reason": "Accountant deferred reporting to March 2026"
+    }
+    """
+    permission_classes = [IsAuthenticated, CanPrepareGST]
+
+    def post(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        voucher_id = request.data.get('voucher_id')
+        target_period = request.data.get('target_period')
+        reason = request.data.get('reason', 'Manual accountant reallocation')
+
+        if not voucher_id:
+            return Response({"success": False, "error": "voucher_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not target_period:
+            return Response({"success": False, "error": "target_period is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            voucher = Voucher.objects.get(id=voucher_id, company=company)
+        except Voucher.DoesNotExist:
+            return Response({"success": False, "error": "Voucher not found for this company."}, status=status.HTTP_404_NOT_FOUND)
+
+        from apps.gst.services.allocation_service import GSTAllocationService
+        try:
+            new_alloc = GSTAllocationService.reallocate_voucher(
+                voucher=voucher,
+                target_period=target_period,
+                reason=reason,
+                user=request.user
+            )
+        except ValueError as e:
+            return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"success": False, "error": f"Reallocation failed: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            "success": True,
+            "message": f"Voucher {voucher.voucher_number} successfully reallocated to period {new_alloc.assigned_period}.",
+            "allocation": {
+                "id": str(new_alloc.id),
+                "voucher_id": str(voucher.id),
+                "voucher_number": voucher.voucher_number,
+                "original_period": new_alloc.original_period,
+                "assigned_period": new_alloc.assigned_period,
+                "financial_year": new_alloc.financial_year,
+                "allocation_reason": new_alloc.allocation_reason,
+                "status": new_alloc.status,
+                "is_statutorily_eligible": new_alloc.is_statutorily_eligible,
+                "statutory_rule": new_alloc.statutory_rule,
+                "taxable_value": float(new_alloc.taxable_value),
+                "total_tax": float(new_alloc.total_tax),
+                "is_active": new_alloc.is_active,
+            }
+        })
+

@@ -105,14 +105,34 @@ class GSTReturnsService:
             else (company.state_code or (supplier_gstin[:2] if len(supplier_gstin) >= 2 and supplier_gstin[:2].isdigit() else '09'))
         ).zfill(2)
 
-        # Query all active posted sales and credit/debit notes
-        vouchers = Voucher.objects.filter(
+        # Query all active posted sales and credit/debit notes via reporting allocations
+        from apps.gst.services.allocation_service import GSTAllocationService
+        # Ensure legacy vouchers have allocations
+        GSTAllocationService.ensure_allocations_for_period(company, period_code)
+
+        # Query all active posted outward vouchers via reporting allocations
+        allocations = GSTAllocationService.get_allocations_for_period(
             company=company,
-            voucher_type__in=['SALES', 'CREDIT_NOTE', 'DEBIT_NOTE'],
-            voucher_date__gte=start_date,
-            voucher_date__lte=end_date,
-            status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        ).select_related('party_ledger').prefetch_related('items__product').order_by('voucher_date', 'voucher_number')
+            return_type='GSTR1',
+            period=period_code,
+            registration=registration,
+            only_eligible=True
+        ).filter(
+            event_type__in=['OUTWARD_SUPPLY', 'CREDIT_NOTE', 'DEBIT_NOTE']
+        ).select_related('voucher__party_ledger').prefetch_related('voucher__items__product')
+
+        vouchers = [
+            alloc.voucher for alloc in allocations
+            if alloc.voucher and alloc.voucher.status in EffectiveVoucherService.ACTIVE_STATUSES
+        ]
+        # Sort deterministically by invoice date and invoice number
+        vouchers.sort(key=lambda v: (v.voucher_date, v.voucher_number))
+
+        excluded_outward = GSTAllocationService.get_excluded_allocations_for_period(
+            company=company,
+            period=period_code,
+            return_type='GSTR1'
+        )
 
         # GSTR-1 Section Buckets
         b2b_by_recipient = defaultdict(list)
@@ -382,14 +402,27 @@ class GSTReturnsService:
                 clean_invoices_count += 1
 
         # Check for Statutory Advances (Table 11A & Table 11B)
-        advance_vouchers = Voucher.objects.filter(
+        advance_allocations = GSTAllocationService.get_allocations_for_period(
             company=company,
-            voucher_type__in=['RECEIPT', 'PAYMENT'],
-            voucher_date__gte=start_date,
-            voucher_date__lte=end_date,
-            status__in=EffectiveVoucherService.ACTIVE_STATUSES,
-            is_advance=True
-        )
+            return_type='GSTR1',
+            period=period_code,
+            registration=registration,
+            only_eligible=True
+        ).filter(event_type__in=['ADVANCE_RECEIVED', 'ADVANCE_ADJUSTED']).select_related('voucher')
+
+        advance_vouchers = [
+            alloc.voucher for alloc in advance_allocations
+            if alloc.voucher and alloc.voucher.status in EffectiveVoucherService.ACTIVE_STATUSES
+        ]
+        if not advance_vouchers:
+            advance_vouchers = list(Voucher.objects.filter(
+                company=company,
+                voucher_type__in=['RECEIPT', 'PAYMENT'],
+                voucher_date__gte=start_date,
+                voucher_date__lte=end_date,
+                status__in=EffectiveVoucherService.ACTIVE_STATUSES,
+                is_advance=True
+            ))
         for av in advance_vouchers:
             adv_pos = (av.buyer_state_code or company_state).zfill(2)
             adv_taxable = quantize_amount(av.total_amount)
@@ -545,6 +578,8 @@ class GSTReturnsService:
                 "b2cs_groups_count": len(b2cs_payload),
                 "credit_notes_count": len(cn_numbers),
                 "debit_notes_count": len(dn_numbers),
+                "excluded_vouchers_count": len(excluded_outward),
+                "excluded_vouchers": excluded_outward,
             },
             "filing_status": filing_record.status if filing_record else "DRAFT",
             "arn": filing_record.arn if filing_record else None,
@@ -716,7 +751,8 @@ class GSTReturnsService:
         start_date: date,
         end_date: date,
         calculated_outward: Dict[str, Decimal],
-        calculated_itc: Dict[str, Decimal]
+        calculated_itc: Dict[str, Decimal],
+        period_code: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Reconciles calculated GSTR taxes against General Ledger balances for the tax period.
@@ -770,6 +806,41 @@ class GSTReturnsService:
         c_in_sgst = calculated_itc.get("sgst", Decimal('0.00'))
         c_in_igst = calculated_itc.get("itc_igst", calculated_itc.get("igst", Decimal('0.00')))
 
+        # Timing difference calculation (prior-period vouchers allocated to this return period)
+        timing_differences = {
+            "has_prior_period_allocations": False,
+            "outward_prior_period_tax": 0.00,
+            "inward_prior_period_tax": 0.00,
+            "notes": ""
+        }
+        if period_code:
+            from apps.gst.models import GSTReportingAllocation
+            prior_allocs = GSTReportingAllocation.objects.filter(
+                company=company,
+                assigned_period=period_code,
+                is_active=True,
+                is_statutorily_eligible=True
+            ).exclude(original_period=period_code)
+            if prior_allocs.exists():
+                outward_prior = prior_allocs.filter(event_type__in=['OUTWARD_SUPPLY', 'CREDIT_NOTE', 'DEBIT_NOTE'])
+                inward_prior = prior_allocs.filter(event_type__in=['INWARD_ITC', 'INWARD_RCM'])
+                out_tax = sum(Decimal(str(a.total_tax)) for a in outward_prior)
+                in_tax = sum(Decimal(str(a.total_tax)) for a in inward_prior)
+                timing_differences["has_prior_period_allocations"] = True
+                timing_differences["outward_prior_period_tax"] = float(out_tax)
+                timing_differences["inward_prior_period_tax"] = float(in_tax)
+                timing_differences["notes"] = f"Timing difference: {prior_allocs.count()} transaction(s) from earlier accounting periods reported in {period_code}."
+
+        is_reconciled = (
+            abs(c_out_cgst - output_cgst_ledger_balance) <= Decimal('1.00') and
+            abs(c_out_sgst - output_sgst_ledger_balance) <= Decimal('1.00') and
+            abs(c_out_igst - output_igst_ledger_balance) <= Decimal('1.00')
+        )
+        if not is_reconciled and timing_differences["has_prior_period_allocations"]:
+            tot_out_var = (c_out_cgst - output_cgst_ledger_balance) + (c_out_sgst - output_sgst_ledger_balance) + (c_out_igst - output_igst_ledger_balance)
+            explained = abs(tot_out_var - Decimal(str(timing_differences["outward_prior_period_tax"]))) <= Decimal('2.00')
+            timing_differences["variance_fully_explained_by_timing"] = explained
+
         return {
             "output_tax_reconciliation": {
                 "cgst": {
@@ -805,11 +876,8 @@ class GSTReturnsService:
                     "variance": float(c_in_igst - input_igst_ledger_balance)
                 }
             },
-            "is_fully_reconciled": (
-                abs(c_out_cgst - output_cgst_ledger_balance) <= Decimal('1.00') and
-                abs(c_out_sgst - output_sgst_ledger_balance) <= Decimal('1.00') and
-                abs(c_out_igst - output_igst_ledger_balance) <= Decimal('1.00')
-            )
+            "is_fully_reconciled": is_reconciled,
+            "timing_differences": timing_differences
         }
 
     @classmethod
@@ -840,13 +908,29 @@ class GSTReturnsService:
         outward_cess = Decimal('0.00')
 
         # 2. Inward Supplies & Eligible ITC
-        purchase_vouchers = Voucher.objects.filter(
+        from apps.gst.services.allocation_service import GSTAllocationService
+        GSTAllocationService.ensure_allocations_for_period(company, period_code)
+
+        inward_allocations = GSTAllocationService.get_allocations_for_period(
             company=company,
-            voucher_type='PURCHASE',
-            voucher_date__gte=start_date,
-            voucher_date__lte=end_date,
-            status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        ).prefetch_related('items')
+            return_type='GSTR3B',
+            period=period_code,
+            registration=registration,
+            only_eligible=True
+        ).filter(
+            event_type__in=['INWARD_ITC', 'INWARD_RCM']
+        ).select_related('voucher').prefetch_related('voucher__items')
+
+        purchase_vouchers = [
+            alloc.voucher for alloc in inward_allocations
+            if alloc.voucher and alloc.voucher.status in EffectiveVoucherService.ACTIVE_STATUSES
+        ]
+
+        excluded_inward = GSTAllocationService.get_excluded_allocations_for_period(
+            company=company,
+            period=period_code,
+            return_type='GSTR3B'
+        )
 
         itc_taxable = Decimal('0.00')
         itc_igst = Decimal('0.00')
@@ -988,7 +1072,8 @@ class GSTReturnsService:
             start_date=start_date,
             end_date=end_date,
             calculated_outward={"cgst": outward_cgst, "sgst": outward_sgst, "igst": outward_igst + exp_igst},
-            calculated_itc={"cgst": itc_cgst + inward_rcm_cgst, "sgst": itc_sgst + inward_rcm_sgst, "igst": itc_igst + inward_rcm_igst}
+            calculated_itc={"cgst": itc_cgst + inward_rcm_cgst, "sgst": itc_sgst + inward_rcm_sgst, "igst": itc_igst + inward_rcm_igst},
+            period_code=period_code
         )
 
         table_3_1 = {
@@ -1062,7 +1147,14 @@ class GSTReturnsService:
             },
             "itc_ineligible": {
                 "as_per_sec_17_5": {"igst": 0.00, "cgst": 0.00, "sgst": 0.00, "cess": 0.00},
-                "others": {"igst": 0.00, "cgst": 0.00, "sgst": 0.00, "cess": 0.00}
+                "others": {
+                    "igst": 0.00,
+                    "cgst": 0.00,
+                    "sgst": 0.00,
+                    "cess": 0.00,
+                    "total_excluded_tax": float(sum(Decimal(str(x.get("total_tax", 0))) for x in excluded_inward)),
+                    "excluded_vouchers_count": len(excluded_inward)
+                }
             }
         }
 
@@ -1104,6 +1196,12 @@ class GSTReturnsService:
             "rule88a_setoff": setoff_result,
             "ledger_reconciliation": ledger_recon,
             "tax_payable": net_cash_summary,
+            "excluded_itc": {
+                "total_excluded_vouchers": len(excluded_inward),
+                "excluded_items": excluded_inward,
+                "total_excluded_taxable": float(sum(Decimal(str(x.get("taxable_value", 0))) for x in excluded_inward)),
+                "total_excluded_tax": float(sum(Decimal(str(x.get("total_tax", 0))) for x in excluded_inward)),
+            },
             "filing_status": filing_record.status if filing_record else "DRAFT",
             "arn": filing_record.arn if filing_record else None,
             "submitted_at": filing_record.submitted_at.isoformat() if filing_record else None,
