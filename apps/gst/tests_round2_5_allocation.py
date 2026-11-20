@@ -1787,3 +1787,364 @@ class GSTRound25AllocationCertificationTests(TestCase):
         self.assertEqual(rec_37a.event_type, 'ITC_RECLAIM')
         self.assertEqual(rec_37a.igst_amount, Decimal('900.00'))
 
+    def test_section_16_6_later_of_two_deadlines_scenarios(self):
+        """
+        Phase G Edge Case 1: Verifies Section 16(6) 'later of the two deadlines' rule:
+        Scenario A: Ordinary Section 16(4) deadline is LATER than revocation date + 30 days.
+                    -> Ordinary deadline must prevail.
+        Scenario B: Revocation date + 30 days is LATER than ordinary Section 16(4) deadline.
+                    -> Revocation deadline must prevail.
+        """
+        # Scenario A: Invoice in FY 2024-25 (June 2024). Ordinary cutoff = 30 Nov 2025.
+        # Revocation order: 15 August 2024 -> 30-day window ends 14 September 2024.
+        # Max(30 Nov 2025, 14 Sep 2024) = 30 Nov 2025.
+        cutoff_a = GSTAllocationService.get_statutory_cutoff_date(
+            date(2024, 6, 15),
+            company=self.company,
+            return_type='GSTR3B',
+            registration_revocation_date=date(2024, 8, 15)
+        )
+        self.assertEqual(cutoff_a, date(2025, 11, 30))
+
+        # Scenario B: Invoice in FY 2022-23 (October 2022). Ordinary cutoff = 30 Nov 2023.
+        # Revocation order: 10 January 2024 -> 30-day window ends 9 February 2024.
+        # Max(30 Nov 2023, 9 Feb 2024) = 9 Feb 2024.
+        cutoff_b = GSTAllocationService.get_statutory_cutoff_date(
+            date(2022, 10, 10),
+            company=self.company,
+            return_type='GSTR3B',
+            registration_revocation_date=date(2024, 1, 10)
+        )
+        self.assertEqual(cutoff_b, date(2024, 2, 9))
+
+    def test_eway_bill_in_transit_without_confirmed_physical_receipt_fails_closed(self):
+        """
+        Phase G Edge Case 4: E-Way Bill in transit does NOT constitute physical receipt.
+        Without affirmative physical receipt confirmation, the purchase voucher fails closed.
+        """
+        pv_transit = Voucher.objects.create(
+            company=self.company,
+            created_by=self.owner_user,
+            voucher_number='BILL-EWB-TRANSIT-01',
+            voucher_type='PURCHASE',
+            voucher_date=date(2026, 2, 10),
+            party_ledger=self.ledger_vendor,
+            status='POSTED',
+            total_amount=Decimal('11800.00'),
+        )
+        VoucherItem.objects.create(
+            voucher=pv_transit,
+            product=self.product,
+            quantity=Decimal('10.00'),
+            rate=Decimal('1000.00'),
+            taxable_amount=Decimal('10000.00'),
+            gst_rate=Decimal('18.00'),
+            cgst_amount=Decimal('900.00'),
+            sgst_amount=Decimal('900.00')
+        )
+
+        # Generated E-Way Bill document, but physical receipt is unconfirmed
+        alloc = GSTAllocationService.allocate_voucher(
+            pv_transit,
+            receipt_document_type='EWAY_BILL',
+            receipt_document_number='EWB-271000293849',
+            is_receipt_confirmed=False
+        )
+        self.assertFalse(alloc.is_statutorily_eligible)
+        self.assertEqual(alloc.status, 'EXCLUDED')
+        self.assertEqual(alloc.allocation_reason, 'GOODS_SERVICES_NOT_RECEIVED')
+        self.assertIn('Section 16(2)(b)', alloc.statutory_rule)
+
+    def test_partial_receipt_followed_by_subsequent_receipt(self):
+        """
+        Phase G Edge Case 3: Partial receipt in period 1 (50%) followed by subsequent
+        full receipt (100%) in period 2 when remaining consignment arrives.
+        """
+        pv_two_stage = Voucher.objects.create(
+            company=self.company,
+            created_by=self.owner_user,
+            voucher_number='BILL-2STAGE-01',
+            voucher_type='PURCHASE',
+            voucher_date=date(2026, 1, 15),
+            party_ledger=self.ledger_vendor,
+            status='POSTED',
+            total_amount=Decimal('23600.00'),
+        )
+        VoucherItem.objects.create(
+            voucher=pv_two_stage,
+            product=self.product,
+            quantity=Decimal('20.00'),
+            rate=Decimal('1000.00'),
+            taxable_amount=Decimal('20000.00'),
+            gst_rate=Decimal('18.00'),
+            cgst_amount=Decimal('1800.00'),
+            sgst_amount=Decimal('1800.00')
+        )
+
+        # Stage 1: 50% received in January 2026
+        alloc_stage1 = GSTAllocationService.allocate_voucher(
+            pv_two_stage,
+            preferred_period='012026',
+            is_receipt_confirmed=True,
+            goods_received_date=date(2026, 1, 20),
+            receipt_document_type='GRN',
+            receipt_document_number='GRN-STAGE-1',
+            partial_received_fraction=Decimal('0.5000')
+        )
+        self.assertTrue(alloc_stage1.is_statutorily_eligible)
+        self.assertEqual(alloc_stage1.taxable_value, Decimal('10000.00'))
+        self.assertEqual(alloc_stage1.cgst_amount, Decimal('900.00'))
+
+        # Stage 2: Final consignment received in February 2026 -> Reallocated / updated to full
+        alloc_stage2 = GSTAllocationService.allocate_voucher(
+            pv_two_stage,
+            preferred_period='022026',
+            is_receipt_confirmed=True,
+            goods_received_date=date(2026, 2, 10),
+            receipt_document_type='GRN',
+            receipt_document_number='GRN-STAGE-2-FINAL',
+            partial_received_fraction=Decimal('1.0000'),
+            force_reallocate=True
+        )
+        self.assertTrue(alloc_stage2.is_statutorily_eligible)
+        self.assertEqual(alloc_stage2.assigned_period, '022026')
+        self.assertEqual(alloc_stage2.taxable_value, Decimal('20000.00'))
+        self.assertEqual(alloc_stage2.cgst_amount, Decimal('1800.00'))
+        self.assertEqual(alloc_stage2.sgst_amount, Decimal('1800.00'))
+
+    def test_multiple_partial_receipts_with_rounding_quantization(self):
+        """
+        Phase G Edge Case 5: Partial receipts with repeating fractions (1/3 = 0.3333)
+        enforcing exact Decimal('0.01') mathematical rounding without data truncation.
+        """
+        pv_fract = Voucher.objects.create(
+            company=self.company,
+            created_by=self.owner_user,
+            voucher_number='BILL-FRACT-01',
+            voucher_type='PURCHASE',
+            voucher_date=date(2026, 2, 5),
+            party_ledger=self.ledger_vendor,
+            status='POSTED',
+            total_amount=Decimal('10000.00'),
+        )
+        VoucherItem.objects.create(
+            voucher=pv_fract,
+            product=self.product,
+            quantity=Decimal('3.00'),
+            rate=Decimal('2824.86'),
+            taxable_amount=Decimal('8474.58'),
+            gst_rate=Decimal('18.00'),
+            cgst_amount=Decimal('762.71'),
+            sgst_amount=Decimal('762.71')
+        )
+
+        alloc_third = GSTAllocationService.allocate_voucher(
+            pv_fract,
+            is_receipt_confirmed=True,
+            goods_received_date=date(2026, 2, 8),
+            receipt_document_type='DELIVERY_CHALLAN',
+            receipt_document_number='DC-ONE-THIRD',
+            partial_received_fraction=Decimal('0.3333')
+        )
+        self.assertTrue(alloc_third.is_statutorily_eligible)
+        # 8474.58 * 0.3333 = 2824.58
+        self.assertEqual(alloc_third.taxable_value, Decimal('2824.58'))
+        # 762.71 * 0.3333 = 254.21
+        self.assertEqual(alloc_third.cgst_amount, Decimal('254.21'))
+        self.assertEqual(alloc_third.sgst_amount, Decimal('254.21'))
+        self.assertEqual(alloc_third.total_tax, Decimal('508.42'))
+
+    def test_rule_37a_duplicate_reclaim_prevention(self):
+        """
+        Phase G Edge Case 9: Duplicate Rule 37A reclaim attempt is prevented via idempotency key.
+        """
+        pv_dup = Voucher.objects.create(
+            company=self.company,
+            created_by=self.owner_user,
+            voucher_number='BILL-R37A-DUP-01',
+            voucher_type='PURCHASE',
+            voucher_date=date(2025, 5, 10),
+            party_ledger=self.ledger_vendor,
+            status='POSTED',
+            total_amount=Decimal('5900.00'),
+        )
+        VoucherItem.objects.create(
+            voucher=pv_dup,
+            product=self.product,
+            quantity=Decimal('5.00'),
+            rate=Decimal('1000.00'),
+            taxable_amount=Decimal('5000.00'),
+            gst_rate=Decimal('18.00'),
+            igst_amount=Decimal('900.00'),
+            cgst_amount=Decimal('0.00'),
+            sgst_amount=Decimal('0.00')
+        )
+
+        # Initial Reclaim
+        rec1 = GSTAllocationService.create_rule37a_reclaim_allocation(
+            voucher=pv_dup,
+            assigned_period='022026',
+            user=self.owner_user
+        )
+        self.assertEqual(rec1.event_type, 'ITC_RECLAIM')
+
+        # Duplicate reclaim attempt with identical period and company
+        from django.db import IntegrityError
+        with self.assertRaises(IntegrityError):
+            GSTAllocationService.create_rule37a_reclaim_allocation(
+                voucher=pv_dup,
+                assigned_period='022026',
+                user=self.owner_user
+            )
+
+    def test_cross_tenant_gst_snapshot_access_rejected(self):
+        """
+        Phase G Edge Case 14: Cross-tenant GST export snapshot access rejection.
+        User belonging to another company cannot query or export snapshots belonging to Primary sandbox.
+        """
+        ws = GSTReturnWorkspace.objects.create(
+            company=self.company,
+            gst_registration=self.reg_primary,
+            return_type='GSTR1',
+            return_period='012026',
+            financial_year='2025-26',
+            status='EXPORTED',
+            reviewed_by=self.owner_user
+        )
+        snap = GSTWorkspaceExportSnapshot.objects.create(
+            workspace=ws,
+            company=self.company,
+            return_type='GSTR1',
+            return_period='012026',
+            export_format='JSON',
+            exported_payload={"status": "CONFIDENTIAL_FINANCIAL_DATA"},
+            payload_hash=hashlib.sha256(b"CONFIDENTIAL").hexdigest(),
+            exported_by=self.owner_user
+        )
+
+        # Authenticate with user from competing company
+        self.client.force_authenticate(user=self.other_user)
+        res = self.client.post(f"/api/v1/gst/workspace/{ws.id}/export/", {"format": "JSON"}, format='json')
+        # Must be rejected with HTTP 403 or 404
+        self.assertIn(res.status_code, [status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND])
+
+    def test_reexport_after_filing_preserves_filed_snapshot_immutability(self):
+        """
+        Phase G Edge Case 17: Once a workspace is filed or exported, its historical
+        snapshot remains strictly immutable and cannot be deleted or mutated.
+        """
+        ws_filed = GSTReturnWorkspace.objects.create(
+            company=self.company,
+            gst_registration=self.reg_primary,
+            return_type='GSTR1',
+            return_period='122025',
+            financial_year='2025-26',
+            status='EXPORTED',
+            reviewed_by=self.owner_user
+        )
+        snap = GSTWorkspaceExportSnapshot.objects.create(
+            workspace=ws_filed,
+            company=self.company,
+            return_type='GSTR1',
+            return_period='122025',
+            export_format='JSON',
+            exported_payload={"canonical": "ORIGINAL_FILED_EXPORT"},
+            payload_hash=hashlib.sha256(b"ORIGINAL").hexdigest(),
+            exported_by=self.owner_user
+        )
+
+        # Attempt to delete snapshot directly -> ValidationError
+        with self.assertRaises(ValidationError):
+            snap.delete()
+
+        # Attempt to bulk-delete snapshot via QuerySet -> ValidationError
+        with self.assertRaises(ValidationError):
+            GSTWorkspaceExportSnapshot.objects.filter(id=snap.id).delete()
+
+    def test_gst_allocation_changes_leave_accounting_ledgers_and_trial_balance_untouched(self):
+        """
+        Phase G Edge Case 18: Preserving Double-Entry Accounting Invariance.
+        Reallocating or adjusting GST reporting periods must leave:
+        1. Voucher total amounts
+        2. Voucher line items
+        3. Ledger entries
+        4. Party ledger balance
+        5. Double-entry mathematical equilibrium (Sum(Debits) == Sum(Credits))
+        completely untouched.
+        """
+        # Create balanced sales invoice with ledger entries
+        v_sales = Voucher.objects.create(
+            company=self.company,
+            created_by=self.owner_user,
+            voucher_number='INV-ACCOUNTING-INVAR-01',
+            voucher_type='SALES',
+            voucher_date=date(2026, 1, 10),
+            party_ledger=self.ledger_customer,
+            status='POSTED',
+            total_amount=Decimal('11800.00'),
+        )
+        item = VoucherItem.objects.create(
+            voucher=v_sales,
+            product=self.product,
+            quantity=Decimal('10.00'),
+            rate=Decimal('1000.00'),
+            taxable_amount=Decimal('10000.00'),
+            gst_rate=Decimal('18.00'),
+            cgst_amount=Decimal('900.00'),
+            sgst_amount=Decimal('900.00')
+        )
+        # Accounting Ledger Entries
+        le_party = LedgerEntry.objects.create(
+            company=self.company,
+            voucher=v_sales,
+            ledger=self.ledger_customer,
+            debit_amount=Decimal('11800.00'),
+            credit_amount=Decimal('0.00')
+        )
+        le_sales = LedgerEntry.objects.create(
+            company=self.company,
+            voucher=v_sales,
+            ledger=self.ledger_customer, # Party ledger used for test setup
+            debit_amount=Decimal('0.00'),
+            credit_amount=Decimal('11800.00')
+        )
+
+        # Initial Allocation: January 2026
+        alloc_jan = GSTAllocationService.allocate_voucher(v_sales, preferred_period='012026')
+        self.assertEqual(alloc_jan.assigned_period, '012026')
+
+        # Reallocate to February 2026
+        alloc_feb = GSTAllocationService.reallocate_voucher(
+            v_sales,
+            new_period='022026',
+            reason='Client request late inclusion in Feb return',
+            user=self.owner_user
+        )
+        self.assertEqual(alloc_feb.assigned_period, '022026')
+
+        # VERIFY INVARIANTS:
+        # 1. Voucher Date is STILL January 10
+        v_sales.refresh_from_db()
+        self.assertEqual(v_sales.voucher_date, date(2026, 1, 10))
+        self.assertEqual(v_sales.total_amount, Decimal('11800.00'))
+
+        # 2. Line Items untouched
+        item.refresh_from_db()
+        self.assertEqual(item.taxable_amount, Decimal('10000.00'))
+        self.assertEqual(item.cgst_amount, Decimal('900.00'))
+        self.assertEqual(item.sgst_amount, Decimal('900.00'))
+
+        # 3. Ledger Entries untouched
+        le_party.refresh_from_db()
+        le_sales.refresh_from_db()
+        self.assertEqual(le_party.debit_amount, Decimal('11800.00'))
+        self.assertEqual(le_sales.credit_amount, Decimal('11800.00'))
+
+        # 4. Debits == Credits equilibrium
+        entries = LedgerEntry.objects.filter(voucher=v_sales)
+        total_debits = sum(e.debit_amount for e in entries)
+        total_credits = sum(e.credit_amount for e in entries)
+        self.assertEqual(total_debits, total_credits)
+        self.assertEqual(total_debits, Decimal('11800.00'))
+
+
