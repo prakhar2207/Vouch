@@ -5,7 +5,7 @@ services:
   - type: web
     name: vouch-staging-api
     runtime: python
-    branch: fix/stage4-12-day6-remediation
+    branch: main
     buildCommand: ./build.sh
     startCommand: MALLOC_ARENA_MAX=2 gunicorn config.wsgi:application --workers 1 --threads 4 --timeout 180 --max-requests 500 --max-requests-jitter 50
     healthCheckPath: /api/v1/health/environment/
@@ -26,7 +26,7 @@ services:
   - type: worker
     name: vouch-staging-worker
     runtime: python
-    branch: fix/stage4-12-day6-remediation
+    branch: main
     buildCommand: pip install -r requirements.txt
     startCommand: MALLOC_ARENA_MAX=2 celery -A config worker --loglevel=info --concurrency=2 --prefetch-multiplier=1 --max-tasks-per-child=100
     envVars:
@@ -44,7 +44,7 @@ services:
   - type: worker
     name: vouch-staging-beat
     runtime: python
-    branch: fix/stage4-12-day6-remediation
+    branch: main
     buildCommand: pip install -r requirements.txt
     startCommand: celery -A config beat --loglevel=info --pidfile=/tmp/celerybeat.pid --schedule=/tmp/celerybeat-schedule
     envVars:
