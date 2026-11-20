@@ -110,7 +110,7 @@ Live query against `https://vouch-u3u7.onrender.com/api/v1/health/environment/`:
   "service": "SriLekh Accounting Engine",
   "environment": "staging",
   "version": "1.0.2",
-  "commit": "640f3e9c",
+  "commit": "1557e26e",
   "database": {
     "engine": "postgresql",
     "sanitized_target": "neondb_staging",
