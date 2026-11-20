@@ -596,6 +596,15 @@ class GSTReturnWorkspace(models.Model):
             models.Index(fields=['company', 'financial_year']),
         ]
 
+    def delete(self, *args, **kwargs):
+        if self.status in ['EXPORTED', 'FILED', 'REVIEWED']:
+            from django.core.exceptions import ValidationError
+            raise ValidationError(
+                f"Statutory Audit Invariant: Cannot delete GST return workspace for period '{self.return_period}' "
+                f"in '{self.status}' status. Historical tax returns and signed-off workspaces are immutable."
+            )
+        super().delete(*args, **kwargs)
+
     def __str__(self):
         reg = self.gst_registration.gstin if self.gst_registration else "Default"
         return f"{self.company.name} [{reg}] {self.return_type} ({self.return_period}) - {self.status}"
@@ -608,16 +617,27 @@ class GSTReportingAllocation(models.Model):
     Ensures that transactions remain historically correct in the accounting ledgers while SriLekh
     independently determines when and how their GST consequences are reported.
     """
+    RECEIPT_TYPE_CHOICES = (
+        ('SINGLE', 'Single Consignment Receipt'),
+        ('LOTS_INSTALMENTS', 'Lots or Instalments (First Proviso to Sec 16(2))'),
+        ('SERVICE_COMPLETION', 'Service Completion / Acceptance Certificate'),
+    )
+
     EVENT_TYPE_CHOICES = (
         ('OUTWARD_SUPPLY', 'Outward Supply (GSTR-1 Table 4/5/6/7)'),
         ('INWARD_ITC', 'Inward Supply / Eligible ITC (GSTR-3B Table 4A)'),
-        ('CREDIT_NOTE', 'Credit Note (GSTR-1 Table 9B / GSTR-3B Table 3.1)'),
-        ('DEBIT_NOTE', 'Debit Note (GSTR-1 Table 9B / GSTR-3B Table 3.1)'),
+        ('CREDIT_NOTE', 'Statutory GST Credit Note (CGST Act Section 34 / Table 9B)'),
+        ('DEBIT_NOTE', 'Statutory GST Debit Note (CGST Act Section 34 / Table 9B)'),
         ('INWARD_RCM', 'Inward Supply Subject to Reverse Charge (GSTR-3B Table 3.1d)'),
         ('ADVANCE_RECEIVED', 'Advance Received (GSTR-1 Table 11A)'),
         ('ADVANCE_ADJUSTED', 'Advance Adjusted (GSTR-1 Table 11B)'),
-        ('ITC_REVERSAL', 'ITC Reversal (GSTR-3B Table 4B)'),
-        ('ITC_RECLAIM', 'ITC Reclaim (GSTR-3B Table 4D1)'),
+        ('ITC_REVERSAL_RULE_42', 'ITC Reversal - Common Credit Attribution (Rule 42/43 / Table 4B1)'),
+        ('ITC_REVERSAL_RULE_37', 'ITC Reversal - 180-Day Non-Payment of Consideration (Rule 37 / Table 4B2)'),
+        ('ITC_REVERSAL_RULE_37A', 'ITC Reversal - Supplier Non-Payment of Tax in GSTR-3B (Rule 37A / Table 4B2)'),
+        ('ITC_REVERSAL_SEC_17_5', 'ITC Reversal - Blocked Credits (Section 17(5) / Table 4B1)'),
+        ('ITC_REVERSAL_OTHER', 'ITC Reversal - Other Statutory Grounds (Table 4B2)'),
+        ('ITC_RECLAIM', 'ITC Reclaim of Previously Reversed Credit (Table 4D1)'),
+        ('INTERNAL_ACCOUNTING_REVERSAL', 'Internal Non-GST Accounting Reversal Journal (Exempt from GSTR-1 Table 9B)'),
     )
 
     ALLOCATION_REASON_CHOICES = (
@@ -626,8 +646,16 @@ class GSTReportingAllocation(models.Model):
         ('LATE_INWARD_RECEIPT', 'Late Received Inward Supply (Section 16(2) Receipt Month)'),
         ('RESTRICTED_SECTION_16_4', 'Statute-Barred ITC (Section 16(4) 30th November deadline exceeded)'),
         ('STATUTORY_DEADLINE_EXCEEDED', 'Statutory Outward Amendment Deadline Exceeded (Section 37(3))'),
+        ('GOODS_SERVICES_NOT_RECEIVED', 'Section 16(2)(b): Goods/Services Not Received'),
+        ('PARTIAL_LOT_PENDING_LAST_INSTALMENT', 'First Proviso to Section 16(2): Goods in lots/instalments (last lot pending)'),
         ('MANUAL_REALLOCATION', 'Manual Reallocation by Accountant/CA'),
-        ('REVERSAL_ADJUSTMENT', 'Reversal Adjustment'),
+        ('REVERSAL_CREDIT_NOTE', 'Statutory Section 34 Credit Note Reversal'),
+        ('REVERSAL_INTERNAL_JOURNAL', 'Internal Accounting Reversal Journal (Exempt from GST Return Tables)'),
+        ('REVERSAL_RULE_37', 'Rule 37 Reversal (180 days non-payment)'),
+        ('REVERSAL_RULE_37A', 'Rule 37A Reversal (Supplier default in GSTR-3B)'),
+        ('REVERSAL_RULE_42_43', 'Rule 42/43 Reversal (Exempt/non-business attribution)'),
+        ('REVERSAL_SECTION_17_5', 'Section 17(5) Reversal (Ineligible blocked credit)'),
+        ('REVERSAL_ADJUSTMENT', 'General Reversal Adjustment'),
     )
 
     ALLOCATION_STATUS_CHOICES = (
@@ -640,8 +668,8 @@ class GSTReportingAllocation(models.Model):
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='gst_allocations')
-    voucher = models.ForeignKey(Voucher, on_delete=models.CASCADE, related_name='gst_allocations')
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name='gst_allocations')
+    voucher = models.ForeignKey(Voucher, on_delete=models.PROTECT, related_name='gst_allocations')
     gst_registration = models.ForeignKey(
         GSTRegistration,
         on_delete=models.SET_NULL,
@@ -650,9 +678,15 @@ class GSTReportingAllocation(models.Model):
         related_name='gst_allocations'
     )
 
-    event_type = models.CharField(max_length=30, choices=EVENT_TYPE_CHOICES, db_index=True)
+    event_type = models.CharField(max_length=35, choices=EVENT_TYPE_CHOICES, db_index=True)
     voucher_date = models.DateField(db_index=True)
     entry_date = models.DateField(default=timezone.now)
+
+    # Section 16(2)(b) Goods/Service Receipt Evidence
+    goods_received_date = models.DateField(null=True, blank=True, db_index=True)
+    is_receipt_confirmed = models.BooleanField(default=True, db_index=True)
+    receipt_type = models.CharField(max_length=25, choices=RECEIPT_TYPE_CHOICES, default='SINGLE')
+    last_instalment_received = models.BooleanField(default=True, db_index=True)
 
     original_period = models.CharField(max_length=10, db_index=True)   # MMYYYY derived from voucher_date
     assigned_period = models.CharField(max_length=10, db_index=True)   # MMYYYY tax reporting period
@@ -679,7 +713,7 @@ class GSTReportingAllocation(models.Model):
     is_active = models.BooleanField(default=True, db_index=True)
     superseded_by = models.ForeignKey(
         'self',
-        on_delete=models.SET_NULL,
+        on_delete=models.PROTECT,
         null=True,
         blank=True,
         related_name='supersedes'
@@ -724,8 +758,8 @@ class GSTWorkspaceExportSnapshot(models.Model):
     are preserved immutably, even if drafts are later recompiled.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    workspace = models.ForeignKey(GSTReturnWorkspace, on_delete=models.CASCADE, related_name='export_snapshots')
-    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='gst_export_snapshots')
+    workspace = models.ForeignKey(GSTReturnWorkspace, on_delete=models.PROTECT, related_name='export_snapshots')
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name='gst_export_snapshots')
     return_type = models.CharField(max_length=20, db_index=True)
     return_period = models.CharField(max_length=20, db_index=True)
     export_format = models.CharField(max_length=20)  # JSON or REVIEW_REPORT

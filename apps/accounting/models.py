@@ -218,6 +218,16 @@ class Voucher(models.Model):
         self.clean()
         super().save(*args, **kwargs)
 
+    def delete(self, *args, **kwargs):
+        if self.status in ['POSTED', 'EXPORTED', 'FILED', 'CANCELLED']:
+            from django.core.exceptions import ValidationError
+            raise ValidationError(
+                f"Statutory Accounting Invariant Violation: Cannot delete voucher '{self.voucher_number}' "
+                f"in '{self.status}' status. Accounting vouchers must be reversed via credit/debit notes or "
+                f"reversal journals, never hard-deleted."
+            )
+        super().delete(*args, **kwargs)
+
     def __str__(self):
         return f"{self.voucher_number} - {self.company.name}"
 

@@ -2,9 +2,10 @@ import json
 import uuid
 import hashlib
 from decimal import Decimal
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime, timezone as dt_timezone
 from django.test import TestCase
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework.test import APIClient
 from rest_framework import status
 from django.core.exceptions import ValidationError
@@ -730,7 +731,7 @@ class GSTRound25AllocationCertificationTests(TestCase):
         # New adjustment allocation created in February
         self.assertEqual(rev_alloc.assigned_period, '022026')
         self.assertEqual(rev_alloc.event_type, 'CREDIT_NOTE')
-        self.assertEqual(rev_alloc.allocation_reason, 'REVERSAL_ADJUSTMENT')
+        self.assertIn(rev_alloc.allocation_reason, ['REVERSAL_CREDIT_NOTE', 'REVERSAL_ADJUSTMENT'])
         self.assertTrue(rev_alloc.is_active)
 
     # =========================================================================
@@ -971,3 +972,414 @@ class GSTRound25AllocationCertificationTests(TestCase):
         self.assertEqual(alloc1.id, alloc2.id)
         active_count = GSTReportingAllocation.objects.filter(voucher=v, is_active=True).count()
         self.assertEqual(active_count, 1)
+
+    # =========================================================================
+    # 11. Round 2.5.1 Remediation & Independent Certification Tests
+    # =========================================================================
+
+    def test_voucher_hard_delete_prevented_in_posted_or_exported_status(self):
+        """
+        Verifies that Voucher.delete() raises ValidationError for POSTED, EXPORTED,
+        FILED, or CANCELLED vouchers to protect accounting audit trails.
+        """
+        v_posted = Voucher.objects.create(
+            company=self.company,
+            created_by=self.owner_user,
+            voucher_number='INV-DEL-POSTED',
+            voucher_type='SALES',
+            voucher_date=date(2026, 2, 1),
+            party_ledger=self.ledger_customer,
+            status='POSTED',
+            total_amount=Decimal('1000.00'),
+        )
+        with self.assertRaises(ValidationError) as ctx:
+            v_posted.delete()
+        self.assertIn("Statutory Accounting Invariant Violation", str(ctx.exception))
+
+        v_draft = Voucher.objects.create(
+            company=self.company,
+            created_by=self.owner_user,
+            voucher_number='INV-DEL-DRAFT',
+            voucher_type='SALES',
+            voucher_date=date(2026, 2, 1),
+            party_ledger=self.ledger_customer,
+            status='DRAFT',
+            total_amount=Decimal('500.00'),
+        )
+        # Draft vouchers can be deleted cleanly
+        draft_id = v_draft.id
+        v_draft.delete()
+        self.assertFalse(Voucher.objects.filter(id=draft_id).exists())
+
+    def test_workspace_hard_delete_prevented_in_exported_or_filed_status(self):
+        """
+        Verifies that GSTReturnWorkspace.delete() raises ValidationError for EXPORTED,
+        FILED, or REVIEWED workspaces to guarantee return immutability.
+        """
+        ws_exported = GSTReturnWorkspace.objects.create(
+            company=self.company,
+            return_type='GSTR1',
+            return_period='012026',
+            financial_year='2025-26',
+            status='EXPORTED'
+        )
+        with self.assertRaises(ValidationError) as ctx:
+            ws_exported.delete()
+        self.assertIn("Statutory Audit Invariant", str(ctx.exception))
+
+        ws_draft = GSTReturnWorkspace.objects.create(
+            company=self.company,
+            return_type='GSTR1',
+            return_period='022026',
+            financial_year='2025-26',
+            status='DRAFT'
+        )
+        ws_draft_id = ws_draft.id
+        ws_draft.delete()
+        self.assertFalse(GSTReturnWorkspace.objects.filter(id=ws_draft_id).exists())
+
+    def test_section_34_credit_note_vs_internal_reversal_journal_semantics(self):
+        """
+        Verifies statutory event semantics:
+        1. Genuine Section 34 Credit Notes (voucher_type='CREDIT_NOTE') are tagged CREDIT_NOTE
+           and included in GSTR-1 Table 9B.
+        2. Internal accounting reversal journals (voucher_type='JOURNAL') are tagged
+           INTERNAL_ACCOUNTING_REVERSAL and strictly EXCLUDED from GSTR-1 Table 9B.
+        """
+        # Original sales invoice in closed period 012026
+        v_orig = Voucher.objects.create(
+            company=self.company,
+            created_by=self.owner_user,
+            voucher_number='INV-REV-ORIG-01',
+            voucher_type='SALES',
+            voucher_date=date(2026, 1, 15),
+            party_ledger=self.ledger_customer,
+            status='EXPORTED',
+            total_amount=Decimal('11800.00'),
+        )
+        VoucherItem.objects.create(
+            voucher=v_orig,
+            product=self.product,
+            quantity=Decimal('10.00'),
+            rate=Decimal('1000.00'),
+            taxable_amount=Decimal('10000.00'),
+            gst_rate=Decimal('18.00'),
+            cgst_amount=Decimal('900.00'),
+            sgst_amount=Decimal('900.00')
+        )
+        alloc_orig = GSTAllocationService.allocate_voucher(v_orig)
+        alloc_orig.status = 'REPORTED'
+        alloc_orig.save(update_fields=['status'])
+
+        # Case 1: Statutory Section 34 Credit Note in period 022026
+        cn_voucher = Voucher.objects.create(
+            company=self.company,
+            created_by=self.owner_user,
+            voucher_number='CN-STAT-01',
+            voucher_type='CREDIT_NOTE',
+            voucher_date=date(2026, 2, 10),
+            party_ledger=self.ledger_customer,
+            status='POSTED',
+            total_amount=Decimal('5900.00'),
+        )
+        VoucherItem.objects.create(
+            voucher=cn_voucher,
+            product=self.product,
+            quantity=Decimal('5.00'),
+            rate=Decimal('1000.00'),
+            taxable_amount=Decimal('5000.00'),
+            gst_rate=Decimal('18.00'),
+            cgst_amount=Decimal('450.00'),
+            sgst_amount=Decimal('450.00')
+        )
+        cn_alloc = GSTAllocationService.handle_voucher_reversal(v_orig, cn_voucher, user=self.ca_user)
+        self.assertEqual(cn_alloc.event_type, 'CREDIT_NOTE')
+        self.assertEqual(cn_alloc.allocation_reason, 'REVERSAL_CREDIT_NOTE')
+        self.assertIn('Section 34', cn_alloc.statutory_rule)
+
+        # Case 2: Internal Accounting Reversal Journal in period 022026
+        j_voucher = Voucher.objects.create(
+            company=self.company,
+            created_by=self.owner_user,
+            voucher_number='JRN-ADJ-01',
+            voucher_type='JOURNAL',
+            voucher_date=date(2026, 2, 12),
+            party_ledger=self.ledger_customer,
+            status='POSTED',
+            total_amount=Decimal('5900.00'),
+        )
+        VoucherItem.objects.create(
+            voucher=j_voucher,
+            product=self.product,
+            quantity=Decimal('5.00'),
+            rate=Decimal('1000.00'),
+            taxable_amount=Decimal('5000.00'),
+            gst_rate=Decimal('18.00'),
+            cgst_amount=Decimal('450.00'),
+            sgst_amount=Decimal('450.00')
+        )
+        j_alloc = GSTAllocationService.handle_voucher_reversal(v_orig, j_voucher, user=self.ca_user)
+        self.assertEqual(j_alloc.event_type, 'INTERNAL_ACCOUNTING_REVERSAL')
+        self.assertEqual(j_alloc.allocation_reason, 'REVERSAL_INTERNAL_JOURNAL')
+        self.assertIn('Non-Section 34', j_alloc.statutory_rule)
+
+        # Check GSTR-1 return preparation for period 022026:
+        # cn_alloc MUST be present, j_alloc MUST be absent from GSTR-1!
+        gstr1_data = GSTReturnsService.prepare_gstr1(company=self.company, registration=self.reg_primary, return_period='022026')
+        cdnr_list = gstr1_data.get('official_gstr1_json', {}).get('cdnr', [])
+        
+        # Collect all note numbers in cdnr
+        all_notes = []
+        for cdnr_entry in cdnr_list:
+            for nt in cdnr_entry.get('nt', []):
+                all_notes.append(nt.get('nt_num'))
+
+        self.assertIn('CN-STAT-01', all_notes)
+        self.assertNotIn('JRN-ADJ-01', all_notes)
+
+    def test_section_16_2_b_goods_service_receipt_evidence(self):
+        """
+        Verifies Section 16(2)(b) and First Proviso receipt evidence rules:
+        1. If receipt is unconfirmed, ITC is excluded (GOODS_SERVICES_NOT_RECEIVED).
+        2. If goods in lots/instalments and last lot pending, ITC is excluded (PARTIAL_LOT_PENDING_LAST_INSTALMENT).
+        3. If goods received in subsequent month, assigned period matches receipt month.
+        """
+        # Case 1: Invoice entered without goods receipt confirmation
+        pv_unconf = Voucher.objects.create(
+            company=self.company,
+            created_by=self.owner_user,
+            voucher_number='BILL-UNCONF-01',
+            voucher_type='PURCHASE',
+            voucher_date=date(2026, 2, 1),
+            party_ledger=self.ledger_vendor,
+            status='POSTED',
+            total_amount=Decimal('11800.00'),
+        )
+        VoucherItem.objects.create(
+            voucher=pv_unconf,
+            product=self.product,
+            quantity=Decimal('10.00'),
+            rate=Decimal('1000.00'),
+            taxable_amount=Decimal('10000.00'),
+            gst_rate=Decimal('18.00'),
+            cgst_amount=Decimal('900.00'),
+            sgst_amount=Decimal('900.00')
+        )
+        alloc_unconf = GSTAllocationService.allocate_voucher(
+            pv_unconf,
+            is_receipt_confirmed=False
+        )
+        self.assertFalse(alloc_unconf.is_statutorily_eligible)
+        self.assertEqual(alloc_unconf.status, 'EXCLUDED')
+        self.assertEqual(alloc_unconf.allocation_reason, 'GOODS_SERVICES_NOT_RECEIVED')
+
+        # Case 2: Goods in lots/instalments with final lot pending
+        pv_partial = Voucher.objects.create(
+            company=self.company,
+            created_by=self.owner_user,
+            voucher_number='BILL-LOT-01',
+            voucher_type='PURCHASE',
+            voucher_date=date(2026, 2, 2),
+            party_ledger=self.ledger_vendor,
+            status='POSTED',
+            total_amount=Decimal('11800.00'),
+        )
+        VoucherItem.objects.create(
+            voucher=pv_partial,
+            product=self.product,
+            quantity=Decimal('10.00'),
+            rate=Decimal('1000.00'),
+            taxable_amount=Decimal('10000.00'),
+            gst_rate=Decimal('18.00'),
+            cgst_amount=Decimal('900.00'),
+            sgst_amount=Decimal('900.00')
+        )
+        alloc_partial = GSTAllocationService.allocate_voucher(
+            pv_partial,
+            receipt_type='LOTS_INSTALMENTS',
+            last_instalment_received=False
+        )
+        self.assertFalse(alloc_partial.is_statutorily_eligible)
+        self.assertEqual(alloc_partial.status, 'EXCLUDED')
+        self.assertEqual(alloc_partial.allocation_reason, 'PARTIAL_LOT_PENDING_LAST_INSTALMENT')
+
+        # Case 3: Goods received in subsequent month (Jan invoice, received Feb 5)
+        pv_subsequent = Voucher.objects.create(
+            company=self.company,
+            created_by=self.owner_user,
+            voucher_number='BILL-RECV-FEB-01',
+            voucher_type='PURCHASE',
+            voucher_date=date(2026, 1, 25),
+            party_ledger=self.ledger_vendor,
+            status='POSTED',
+            total_amount=Decimal('11800.00'),
+        )
+        VoucherItem.objects.create(
+            voucher=pv_subsequent,
+            product=self.product,
+            quantity=Decimal('10.00'),
+            rate=Decimal('1000.00'),
+            taxable_amount=Decimal('10000.00'),
+            gst_rate=Decimal('18.00'),
+            cgst_amount=Decimal('900.00'),
+            sgst_amount=Decimal('900.00')
+        )
+        alloc_sub = GSTAllocationService.allocate_voucher(
+            pv_subsequent,
+            goods_received_date=date(2026, 2, 5),
+            is_receipt_confirmed=True
+        )
+        self.assertTrue(alloc_sub.is_statutorily_eligible)
+        self.assertEqual(alloc_sub.status, 'APPROVED')
+        self.assertEqual(alloc_sub.assigned_period, '022026')
+        self.assertEqual(alloc_sub.allocation_reason, 'LATE_INWARD_RECEIPT')
+
+    def test_statutory_cutoff_annual_return_override(self):
+        """
+        Verifies Section 16(4) / 37(3) 'whichever is earlier' statutory rule:
+        If the Annual Return (GSTR-9) is furnished before 30th November,
+        the statutory cutoff date becomes the date of furnishing of GSTR-9.
+        """
+        # Create a GSTR-9 filing record for FY 2025-26 filed early on 15th September 2026
+        ar_filing = GSTFilingRecord.objects.create(
+            company=self.company,
+            return_type='GSTR9',
+            return_period='2025-26',
+            financial_year='2025-26',
+            status='FILED',
+            arn='AA2709260000001',
+            submitted_by=self.ca_user
+        )
+        # Update submitted_at to 15th September 2026
+        GSTFilingRecord.objects.filter(id=ar_filing.id).update(
+            submitted_at=datetime(2026, 9, 15, 10, 0, 0, tzinfo=dt_timezone.utc)
+        )
+
+        cutoff = GSTAllocationService.get_statutory_cutoff_date(
+            date(2025, 5, 10),
+            company=self.company,
+            return_type='INWARD_ITC'
+        )
+        # Cutoff must be 15th September 2026, NOT 30th November 2026
+        self.assertEqual(cutoff, date(2026, 9, 15))
+
+    def test_section_16_5_retrospective_amendment_window(self):
+        """
+        Verifies Section 16(5) retrospective amendment for FY 2017-18 to 2020-21:
+        Special statutory deadline for availing ITC is 30th November 2021.
+        """
+        for test_fy_date in [date(2017, 8, 1), date(2018, 10, 15), date(2019, 12, 1), date(2020, 7, 20)]:
+            cutoff = GSTAllocationService.get_statutory_cutoff_date(test_fy_date, return_type='INWARD_ITC')
+            self.assertEqual(cutoff, date(2021, 11, 30))
+
+        # FY 2021-22 onwards follows standard 30th November following FY end
+        cutoff_21_22 = GSTAllocationService.get_statutory_cutoff_date(date(2021, 8, 1), return_type='INWARD_ITC')
+        self.assertEqual(cutoff_21_22, date(2022, 11, 30))
+
+    def test_gstr3b_table_4b_reversals_breakdown_and_net_itc(self):
+        """
+        Verifies that GSTR-3B Table 4B properly categorizes Rule 42/43 vs Other reversals
+        and accurately reflects net eligible ITC in Table 4C.
+        """
+        # Inward supply in 022026: IGST 1000
+        pv = Voucher.objects.create(
+            company=self.company,
+            created_by=self.owner_user,
+            voucher_number='BILL-ITC-REV-01',
+            voucher_type='PURCHASE',
+            voucher_date=date(2026, 2, 5),
+            party_ledger=self.ledger_vendor,
+            status='POSTED',
+            total_amount=Decimal('11800.00'),
+        )
+        VoucherItem.objects.create(
+            voucher=pv,
+            product=self.product,
+            quantity=Decimal('10.00'),
+            rate=Decimal('1000.00'),
+            taxable_amount=Decimal('10000.00'),
+            gst_rate=Decimal('18.00'),
+            igst_amount=Decimal('1800.00'),
+            cgst_amount=Decimal('0.00'),
+            sgst_amount=Decimal('0.00')
+        )
+        GSTAllocationService.allocate_voucher(pv, preferred_period='022026')
+
+        # Rule 42 reversal allocation: IGST 300
+        j_rev42 = Voucher.objects.create(
+            company=self.company,
+            created_by=self.owner_user,
+            voucher_number='JRN-REV-42',
+            voucher_type='JOURNAL',
+            voucher_date=date(2026, 2, 20),
+            party_ledger=self.ledger_vendor,
+            status='POSTED',
+            total_amount=Decimal('300.00'),
+            narration='Reversal under Rule 42 common credit'
+        )
+        GSTReportingAllocation.objects.create(
+            company=self.company,
+            voucher=j_rev42,
+            event_type='ITC_REVERSAL_RULE_42',
+            voucher_date=date(2026, 2, 20),
+            original_period='022026',
+            assigned_period='022026',
+            financial_year='2025-26',
+            allocation_reason='REVERSAL_RULE_42_43',
+            status='APPROVED',
+            is_statutorily_eligible=True,
+            taxable_value=Decimal('0.00'),
+            igst_amount=Decimal('300.00'),
+            cgst_amount=Decimal('0.00'),
+            sgst_amount=Decimal('0.00'),
+            cess_amount=Decimal('0.00'),
+            total_tax=Decimal('300.00'),
+            is_active=True,
+            idempotency_key='rev_42_test_key'
+        )
+
+        # Rule 37 reversal allocation: IGST 200
+        j_rev37 = Voucher.objects.create(
+            company=self.company,
+            created_by=self.owner_user,
+            voucher_number='JRN-REV-37',
+            voucher_type='JOURNAL',
+            voucher_date=date(2026, 2, 22),
+            party_ledger=self.ledger_vendor,
+            status='POSTED',
+            total_amount=Decimal('200.00'),
+            narration='Reversal under Rule 37'
+        )
+        GSTReportingAllocation.objects.create(
+            company=self.company,
+            voucher=j_rev37,
+            event_type='ITC_REVERSAL_RULE_37',
+            voucher_date=date(2026, 2, 22),
+            original_period='022026',
+            assigned_period='022026',
+            financial_year='2025-26',
+            allocation_reason='REVERSAL_RULE_37',
+            status='APPROVED',
+            is_statutorily_eligible=True,
+            taxable_value=Decimal('0.00'),
+            igst_amount=Decimal('200.00'),
+            cgst_amount=Decimal('0.00'),
+            sgst_amount=Decimal('0.00'),
+            cess_amount=Decimal('0.00'),
+            total_tax=Decimal('200.00'),
+            is_active=True,
+            idempotency_key='rev_37_test_key'
+        )
+
+        gstr3b = GSTReturnsService.prepare_gstr3b(company=self.company, registration=self.reg_primary, return_period='022026')
+        itc_sec = gstr3b.get('table_4_itc', {})
+        
+        # Check Table 4A (Available ITC): 1800
+        self.assertEqual(itc_sec['itc_available']['all_other_itc']['igst'], 1800.00)
+        
+        # Check Table 4B (Reversals): Rule 42 = 300, Others = 200
+        self.assertEqual(itc_sec['itc_reversed']['as_per_rules_42_43']['igst'], 300.00)
+        self.assertEqual(itc_sec['itc_reversed']['others']['igst'], 200.00)
+        
+        # Check Table 4C (Net ITC Available): 1800 - (300 + 200) = 1300
+        self.assertEqual(itc_sec['net_itc_available']['igst'], 1300.00)

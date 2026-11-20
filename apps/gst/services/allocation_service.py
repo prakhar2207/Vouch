@@ -54,13 +54,44 @@ class GSTAllocationService:
         return f"{d.year - 1}-{str(d.year)[2:]}"
 
     @classmethod
-    def get_statutory_cutoff_date(cls, invoice_date: date) -> date:
+    def get_statutory_cutoff_date(
+        cls,
+        invoice_date: date,
+        company: Optional[Company] = None,
+        return_type: str = 'GSTR3B'
+    ) -> date:
         """
-        Computes statutory deadline (30th November following FY end)
-        pursuant to Section 16(4) and Section 37(3) of the CGST Act.
+        Computes statutory deadline pursuant to Section 16(4), Section 16(5), and Section 37(3) of the CGST Act.
+        
+        Statutory Rules:
+        1. Section 16(4) / 37(3): The 30th day of November following the end of the financial year OR
+           the date of furnishing of the relevant annual return (GSTR-9), whichever is earlier.
+        2. Section 16(5) [Retrospective Amendment via Finance (No. 2) Act, 2024]:
+           For invoices/debit notes for FY 2017-18, 2018-19, 2019-20, and 2020-21, the special
+           statutory deadline for availing ITC in GSTR-3B is 30th November 2021.
         """
-        fy_end_year = invoice_date.year if invoice_date.month <= 3 else (invoice_date.year + 1)
-        return date(fy_end_year, 11, 30)
+        fy = cls.get_financial_year(invoice_date)
+
+        # Retrospective Section 16(5) rule for FY 2017-18 through 2020-21
+        if fy in ('2017-18', '2018-19', '2019-20', '2020-21') and return_type in ('GSTR3B', 'INWARD_ITC'):
+            base_cutoff = date(2021, 11, 30)
+        else:
+            fy_end_year = invoice_date.year if invoice_date.month <= 3 else (invoice_date.year + 1)
+            base_cutoff = date(fy_end_year, 11, 30)
+
+        # Check if relevant Annual Return (GSTR-9) was furnished earlier than 30th November
+        if company:
+            ar_filing = GSTFilingRecord.objects.filter(
+                company=company,
+                return_type='GSTR9',
+                status='FILED'
+            ).filter(Q(financial_year=fy) | Q(return_period=fy)).order_by('submitted_at').first()
+            if ar_filing and ar_filing.submitted_at:
+                ar_date = ar_filing.submitted_at.date()
+                if ar_date < base_cutoff:
+                    return ar_date
+
+        return base_cutoff
 
     @classmethod
     def resolve_event_type(cls, voucher: Voucher) -> str:
@@ -124,19 +155,28 @@ class GSTAllocationService:
         received_date: Optional[date] = None,
         reason: Optional[str] = None,
         user: Any = None,
-        force_reallocate: bool = False
+        force_reallocate: bool = False,
+        goods_received_date: Optional[date] = None,
+        is_receipt_confirmed: bool = True,
+        receipt_type: str = 'SINGLE',
+        last_instalment_received: bool = True
     ) -> GSTReportingAllocation:
         """
         Allocates a voucher to a GST reporting period while preserving accounting immutability.
-        Evaluates Section 16(4) / 37(3) statutory eligibility rules.
+        Evaluates Section 16(2)(b), First Proviso to Section 16(2), Section 16(4), Section 16(5),
+        and Section 37(3) statutory eligibility rules.
         """
         company = voucher.company
         event_type = cls.resolve_event_type(voucher)
         v_date = voucher.voucher_date
-        entry_date = received_date or (voucher.created_at.date() if voucher.created_at else timezone.now().date())
+        entry_date = received_date or goods_received_date or (voucher.created_at.date() if voucher.created_at else timezone.now().date())
         original_period = v_date.strftime('%m%Y')
         financial_year = cls.get_financial_year(v_date)
-        statutory_cutoff = cls.get_statutory_cutoff_date(v_date)
+        statutory_cutoff = cls.get_statutory_cutoff_date(
+            v_date,
+            company=company,
+            return_type='INWARD_ITC' if voucher.voucher_type == 'PURCHASE' else 'GSTR1'
+        )
 
         # 1. Determine Assigned Period & Allocation Reason
         allocation_reason = 'REGULAR'
@@ -155,10 +195,41 @@ class GSTAllocationService:
 
         is_late_entry = bool(orig_ws or (entry_date.year > v_date.year or entry_date.month > v_date.month))
 
+        # Check Section 16(2)(b) goods/services receipt condition & First Proviso
+        if voucher.voucher_type == 'PURCHASE':
+            if not is_receipt_confirmed:
+                is_statutorily_eligible = False
+                allocation_reason = 'GOODS_SERVICES_NOT_RECEIVED'
+                statutory_rule = 'CGST Act Section 16(2)(b)'
+                exclusion_reason = (
+                    f"Section 16(2)(b) statutory condition failed: Goods or services have not been received "
+                    f"for invoice #{voucher.voucher_number}. ITC cannot be availed."
+                )
+                statutory_notes = f"Inward invoice #{voucher.voucher_number}: receipt unconfirmed. Excluded from ITC."
+            elif receipt_type == 'LOTS_INSTALMENTS' and not last_instalment_received:
+                is_statutorily_eligible = False
+                allocation_reason = 'PARTIAL_LOT_PENDING_LAST_INSTALMENT'
+                statutory_rule = 'First Proviso to Section 16(2)'
+                exclusion_reason = (
+                    f"First Proviso to Section 16(2): When goods are received in lots or instalments, "
+                    f"ITC can only be availed upon receipt of the last lot or instalment."
+                )
+                statutory_notes = f"Inward invoice #{voucher.voucher_number}: lot pending last instalment. Excluded."
+            elif goods_received_date and not preferred_period:
+                assigned_period = goods_received_date.strftime('%m%Y')
+                if goods_received_date.year > v_date.year or goods_received_date.month > v_date.month:
+                    allocation_reason = 'LATE_INWARD_RECEIPT'
+                    statutory_rule = 'CGST Act Section 16(2)(b)'
+                    statutory_notes = (
+                        f"Inward invoice #{voucher.voucher_number} dated {v_date.strftime('%d-%m-%Y')} "
+                        f"received on {goods_received_date.strftime('%d-%m-%Y')}. ITC claimed in receipt period {assigned_period}."
+                    )
+
         if preferred_period:
             assigned_period = preferred_period.strip().replace('-', '').replace('/', '')
-            allocation_reason = reason or ('MANUAL_REALLOCATION' if assigned_period != original_period else 'REGULAR')
-        elif is_late_entry:
+            if is_statutorily_eligible:
+                allocation_reason = reason or ('MANUAL_REALLOCATION' if assigned_period != original_period else 'REGULAR')
+        elif is_late_entry and is_statutorily_eligible:
             # Determine appropriate late entry period based on statutory rules
             assigned_period = entry_date.strftime('%m%Y')
             if voucher.voucher_type == 'SALES':
@@ -168,7 +239,7 @@ class GSTAllocationService:
                     f"Outward invoice #{voucher.voucher_number} dated {v_date.strftime('%d-%m-%Y')} "
                     f"entered late on {entry_date.strftime('%d-%m-%Y')}. Allocated to active return period {assigned_period}."
                 )
-            elif voucher.voucher_type == 'PURCHASE':
+            elif voucher.voucher_type == 'PURCHASE' and not goods_received_date:
                 allocation_reason = 'LATE_INWARD_RECEIPT'
                 statutory_rule = 'CGST Act Section 16(2)(b)'
                 statutory_notes = (
@@ -181,7 +252,7 @@ class GSTAllocationService:
                 statutory_notes = f"Credit/Debit note dated {v_date.strftime('%d-%m-%Y')} allocated to active period {assigned_period}."
 
         # 2. Check Statutory Section 16(4) and Section 37(3) Time Bars
-        # If entry date (or assigned period date) is after statutory cutoff (30th November following FY end)
+        # If entry date (or assigned period date) is after statutory cutoff
         assigned_month = int(assigned_period[:2]) if len(assigned_period) >= 2 else entry_date.month
         assigned_year = int(assigned_period[2:]) if len(assigned_period) >= 6 else entry_date.year
         assigned_date_proxy = date(assigned_year, assigned_month, 1)
@@ -197,7 +268,7 @@ class GSTAllocationService:
                 )
                 exclusion_reason = (
                     f"Section 16(4) time-limit exceeded: ITC cannot be availed after 30th November "
-                    f"following the end of financial year {financial_year}."
+                    f"cutoff ({statutory_cutoff.strftime('%d-%m-%Y')}) following the end of financial year {financial_year}."
                 )
             elif voucher.voucher_type == 'SALES':
                 is_statutorily_eligible = False
@@ -209,7 +280,7 @@ class GSTAllocationService:
                 )
                 exclusion_reason = (
                     f"Section 37(3) time bar: Outward supply omissions cannot be reported in GSTR-1 "
-                    f"after 30th November following financial year {financial_year}."
+                    f"after 30th November cutoff ({statutory_cutoff.strftime('%d-%m-%Y')}) following financial year {financial_year}."
                 )
 
         # 3. Monetary Snapshot
@@ -225,7 +296,9 @@ class GSTAllocationService:
         if existing_alloc and not force_reallocate:
             # If period and eligibility remain identical, return existing (idempotent)
             if (existing_alloc.assigned_period == assigned_period and
-                existing_alloc.is_statutorily_eligible == is_statutorily_eligible):
+                existing_alloc.is_statutorily_eligible == is_statutorily_eligible and
+                existing_alloc.is_receipt_confirmed == is_receipt_confirmed and
+                existing_alloc.last_instalment_received == last_instalment_received):
                 # Update amounts if voucher item totals changed
                 existing_alloc.taxable_value = summary["taxable_value"]
                 existing_alloc.igst_amount = summary["igst_amount"]
@@ -259,6 +332,10 @@ class GSTAllocationService:
                 event_type=event_type,
                 voucher_date=v_date,
                 entry_date=entry_date,
+                goods_received_date=goods_received_date,
+                is_receipt_confirmed=is_receipt_confirmed,
+                receipt_type=receipt_type,
+                last_instalment_received=last_instalment_received,
                 original_period=original_period,
                 assigned_period=assigned_period,
                 financial_year=financial_year,
@@ -324,7 +401,11 @@ class GSTAllocationService:
             raise ValueError("Target period must be provided.")
         clean_period = period_to_use.strip().replace('-', '').replace('/', '')
 
-        statutory_cutoff = cls.get_statutory_cutoff_date(voucher.voucher_date)
+        statutory_cutoff = cls.get_statutory_cutoff_date(
+            voucher.voucher_date,
+            company=voucher.company,
+            return_type='INWARD_ITC' if voucher.voucher_type == 'PURCHASE' else 'GSTR1'
+        )
         target_month = int(clean_period[:2]) if len(clean_period) >= 2 else 1
         target_year = int(clean_period[2:]) if len(clean_period) >= 6 else 2026
         target_date_proxy = date(target_year, target_month, 1)
@@ -349,7 +430,8 @@ class GSTAllocationService:
         cls,
         voucher: Voucher,
         reversal_voucher: Voucher,
-        user: Any = None
+        user: Any = None,
+        reversal_reason: Optional[str] = None
     ) -> Optional[GSTReportingAllocation]:
         """
         Handles GST allocation lifecycle when a voucher is reversed.
@@ -357,6 +439,14 @@ class GSTAllocationService:
         the active allocation is deactivated so neither original nor reversal appears in the unfiled return.
         If the original return WAS already exported or filed, the historical allocation remains
         active/reported, and an auditable reversal allocation is created for the reversal voucher.
+
+        Statutory Semantics:
+        - Section 34 Credit Notes (voucher_type == 'CREDIT_NOTE') are genuine GST credit notes reportable
+          in GSTR-1 Table 9B.
+        - Internal accounting reversal journals (voucher_type == 'JOURNAL') are internal adjustments that
+          do NOT satisfy Section 34 / Rule 53 and are tagged INTERNAL_ACCOUNTING_REVERSAL, excluded from GSTR-1 Table 9B.
+        - Inward reversals are categorized under Rule 37 (180 days non-payment), Rule 37A (vendor default),
+          Rule 42/43 (common credit attribution), or Section 17(5) (blocked credits).
         """
         active_alloc = GSTReportingAllocation.objects.filter(
             voucher=voucher,
@@ -390,21 +480,72 @@ class GSTAllocationService:
             # Historical return was already exported/filed: create adjustment allocation for reversal
             rev_period = reversal_voucher.voucher_date.strftime('%m%Y')
             summary = cls.compute_voucher_monetary_summary(reversal_voucher)
+
+            # Determine statutory event type and rule based on reversal voucher type and nature
+            rev_type = reversal_voucher.voucher_type
+            reason_str = (reversal_reason or reversal_voucher.narration or '').upper()
+
+            if active_alloc.event_type in ('OUTWARD_SUPPLY', 'CREDIT_NOTE', 'DEBIT_NOTE'):
+                if rev_type == 'CREDIT_NOTE':
+                    event_type = 'CREDIT_NOTE'
+                    allocation_reason = 'REVERSAL_CREDIT_NOTE'
+                    statutory_rule = 'CGST Act Section 34(1) / Rule 53'
+                    statutory_notes = f"Statutory Section 34 Credit Note reversing sales invoice #{voucher.voucher_number}."
+                else:
+                    event_type = 'INTERNAL_ACCOUNTING_REVERSAL'
+                    allocation_reason = 'REVERSAL_INTERNAL_JOURNAL'
+                    statutory_rule = 'Internal Double-Entry Adjustment (Non-Section 34)'
+                    statutory_notes = (
+                        f"Internal accounting reversal journal for invoice #{voucher.voucher_number}. "
+                        f"Does NOT satisfy Section 34 credit note criteria; excluded from GSTR-1 Table 9B."
+                    )
+            elif active_alloc.event_type in ('INWARD_ITC', 'INWARD_RCM'):
+                if 'RULE_37A' in reason_str:
+                    event_type = 'ITC_REVERSAL_RULE_37A'
+                    allocation_reason = 'REVERSAL_RULE_37A'
+                    statutory_rule = 'CGST Rules Rule 37A (Supplier default in GSTR-3B)'
+                    statutory_notes = f"ITC Reversal under Rule 37A for invoice #{voucher.voucher_number}."
+                elif 'RULE_37' in reason_str:
+                    event_type = 'ITC_REVERSAL_RULE_37'
+                    allocation_reason = 'REVERSAL_RULE_37'
+                    statutory_rule = 'CGST Rules Rule 37 (180-day non-payment)'
+                    statutory_notes = f"ITC Reversal under Rule 37 for invoice #{voucher.voucher_number}."
+                elif 'RULE_42' in reason_str or 'RULE_43' in reason_str:
+                    event_type = 'ITC_REVERSAL_RULE_42'
+                    allocation_reason = 'REVERSAL_RULE_42_43'
+                    statutory_rule = 'CGST Rules Rule 42/43 (Exempt/non-business credit attribution)'
+                    statutory_notes = f"ITC Reversal under Rule 42/43 for invoice #{voucher.voucher_number}."
+                elif '17(5)' in reason_str or 'SECTION_17_5' in reason_str:
+                    event_type = 'ITC_REVERSAL_SEC_17_5'
+                    allocation_reason = 'REVERSAL_SECTION_17_5'
+                    statutory_rule = 'CGST Act Section 17(5) (Ineligible blocked credit)'
+                    statutory_notes = f"ITC Reversal under Section 17(5) for invoice #{voucher.voucher_number}."
+                else:
+                    event_type = 'ITC_REVERSAL_OTHER'
+                    allocation_reason = 'REVERSAL_ADJUSTMENT'
+                    statutory_rule = 'CGST Act Section 16 / Rule 42'
+                    statutory_notes = f"ITC Reversal for invoice #{voucher.voucher_number} allocated to {rev_period}."
+            else:
+                event_type = 'INTERNAL_ACCOUNTING_REVERSAL'
+                allocation_reason = 'REVERSAL_ADJUSTMENT'
+                statutory_rule = 'General Accounting Reversal'
+                statutory_notes = f"Reversal of transaction #{voucher.voucher_number} allocated to {rev_period}."
+
             rev_alloc = GSTReportingAllocation.objects.create(
                 company=voucher.company,
                 voucher=reversal_voucher,
                 gst_registration=active_alloc.gst_registration,
-                event_type='ITC_REVERSAL' if active_alloc.event_type == 'INWARD_ITC' else 'CREDIT_NOTE',
+                event_type=event_type,
                 voucher_date=reversal_voucher.voucher_date,
                 entry_date=reversal_voucher.created_at.date() if reversal_voucher.created_at else timezone.now().date(),
                 original_period=active_alloc.assigned_period,
                 assigned_period=rev_period,
                 financial_year=cls.get_financial_year(reversal_voucher.voucher_date),
-                allocation_reason='REVERSAL_ADJUSTMENT',
+                allocation_reason=allocation_reason,
                 status='APPROVED',
                 is_statutorily_eligible=True,
-                statutory_rule='CGST Act Section 34 / Rule 42',
-                statutory_notes=f"Reversal of invoice #{voucher.voucher_number} allocated to {rev_period}.",
+                statutory_rule=statutory_rule,
+                statutory_notes=statutory_notes,
                 taxable_value=summary["taxable_value"],
                 igst_amount=summary["igst_amount"],
                 cgst_amount=summary["cgst_amount"],

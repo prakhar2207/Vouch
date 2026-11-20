@@ -932,6 +932,67 @@ class GSTReturnsService:
             return_type='GSTR3B'
         )
 
+        # Query ITC Reversal allocations
+        reversal_allocations = GSTAllocationService.get_allocations_for_period(
+            company=company,
+            return_type='GSTR3B',
+            period=period_code,
+            registration=registration,
+            only_eligible=True
+        ).filter(
+            event_type__in=[
+                'ITC_REVERSAL',
+                'ITC_REVERSAL_RULE_42',
+                'ITC_REVERSAL_RULE_37',
+                'ITC_REVERSAL_RULE_37A',
+                'ITC_REVERSAL_SEC_17_5',
+                'ITC_REVERSAL_OTHER',
+                'ITC_RECLAIM'
+            ]
+        )
+
+        rev_42_igst = Decimal('0.00')
+        rev_42_cgst = Decimal('0.00')
+        rev_42_sgst = Decimal('0.00')
+        rev_42_cess = Decimal('0.00')
+
+        rev_oth_igst = Decimal('0.00')
+        rev_oth_cgst = Decimal('0.00')
+        rev_oth_sgst = Decimal('0.00')
+        rev_oth_cess = Decimal('0.00')
+
+        reclaim_igst = Decimal('0.00')
+        reclaim_cgst = Decimal('0.00')
+        reclaim_sgst = Decimal('0.00')
+        reclaim_cess = Decimal('0.00')
+
+        for ra in reversal_allocations:
+            ig = quantize_amount(ra.igst_amount)
+            cg = quantize_amount(ra.cgst_amount)
+            sg = quantize_amount(ra.sgst_amount)
+            cs = quantize_amount(ra.cess_amount)
+
+            if ra.event_type in ('ITC_REVERSAL_RULE_42', 'ITC_REVERSAL_SEC_17_5'):
+                rev_42_igst += ig
+                rev_42_cgst += cg
+                rev_42_sgst += sg
+                rev_42_cess += cs
+            elif ra.event_type == 'ITC_RECLAIM':
+                reclaim_igst += ig
+                reclaim_cgst += cg
+                reclaim_sgst += sg
+                reclaim_cess += cs
+            else:
+                rev_oth_igst += ig
+                rev_oth_cgst += cg
+                rev_oth_sgst += sg
+                rev_oth_cess += cs
+
+        tot_rev_igst = rev_42_igst + rev_oth_igst
+        tot_rev_cgst = rev_42_cgst + rev_oth_cgst
+        tot_rev_sgst = rev_42_sgst + rev_oth_sgst
+        tot_rev_cess = rev_42_cess + rev_oth_cess
+
         itc_taxable = Decimal('0.00')
         itc_igst = Decimal('0.00')
         itc_cgst = Decimal('0.00')
@@ -1023,10 +1084,10 @@ class GSTReturnsService:
             "cess": outward_cess
         }
         itc_dict = {
-            "igst": itc_igst + inward_rcm_igst,
-            "cgst": itc_cgst + inward_rcm_cgst,
-            "sgst": itc_sgst + inward_rcm_sgst,
-            "cess": itc_cess
+            "igst": max(Decimal('0.00'), itc_igst + inward_rcm_igst - tot_rev_igst),
+            "cgst": max(Decimal('0.00'), itc_cgst + inward_rcm_cgst - tot_rev_cgst),
+            "sgst": max(Decimal('0.00'), itc_sgst + inward_rcm_sgst - tot_rev_sgst),
+            "cess": max(Decimal('0.00'), itc_cess - tot_rev_cess)
         }
         setoff_result = cls.calculate_rule88a_setoff(outward_tax_dict, itc_dict)
 
@@ -1135,15 +1196,28 @@ class GSTReturnsService:
                 }
             },
             "itc_reversed": {
-                "as_per_rules_42_43": {"igst": 0.00, "cgst": 0.00, "sgst": 0.00, "cess": 0.00},
-                "others": {"igst": 0.00, "cgst": 0.00, "sgst": 0.00, "cess": 0.00}
+                "as_per_rules_42_43": {
+                    "igst": float(rev_42_igst),
+                    "cgst": float(rev_42_cgst),
+                    "sgst": float(rev_42_sgst),
+                    "cess": float(rev_42_cess)
+                },
+                "others": {
+                    "igst": float(rev_oth_igst),
+                    "cgst": float(rev_oth_cgst),
+                    "sgst": float(rev_oth_sgst),
+                    "cess": float(rev_oth_cess)
+                }
             },
             "net_itc_available": {
-                "igst": float(itc_igst + inward_rcm_igst),
-                "cgst": float(itc_cgst + inward_rcm_cgst),
-                "sgst": float(itc_sgst + inward_rcm_sgst),
-                "cess": float(itc_cess),
-                "total": float(itc_igst + itc_cgst + itc_sgst + itc_cess + inward_rcm_igst + inward_rcm_cgst + inward_rcm_sgst)
+                "igst": float(itc_igst + inward_rcm_igst - tot_rev_igst),
+                "cgst": float(itc_cgst + inward_rcm_cgst - tot_rev_cgst),
+                "sgst": float(itc_sgst + inward_rcm_sgst - tot_rev_sgst),
+                "cess": float(itc_cess - tot_rev_cess),
+                "total": float(
+                    (itc_igst + itc_cgst + itc_sgst + itc_cess + inward_rcm_igst + inward_rcm_cgst + inward_rcm_sgst)
+                    - (tot_rev_igst + tot_rev_cgst + tot_rev_sgst + tot_rev_cess)
+                )
             },
             "itc_ineligible": {
                 "as_per_sec_17_5": {"igst": 0.00, "cgst": 0.00, "sgst": 0.00, "cess": 0.00},
