@@ -970,6 +970,11 @@ class GSTReturnsService:
         reclaim_sgst = Decimal('0.00')
         reclaim_cess = Decimal('0.00')
 
+        rev_17_5_igst = Decimal('0.00')
+        rev_17_5_cgst = Decimal('0.00')
+        rev_17_5_sgst = Decimal('0.00')
+        rev_17_5_cess = Decimal('0.00')
+
         for ra in reversal_allocations:
             ig = quantize_amount(ra.igst_amount)
             cg = quantize_amount(ra.cgst_amount)
@@ -977,16 +982,24 @@ class GSTReturnsService:
             cs = quantize_amount(ra.cess_amount)
 
             if ra.event_type in ('ITC_REVERSAL_RULE_42', 'ITC_REVERSAL_SEC_17_5'):
+                # Table 4(B)(1): Permanent reversals under Rules 38, 42, 43 and Section 17(5)
                 rev_42_igst += ig
                 rev_42_cgst += cg
                 rev_42_sgst += sg
                 rev_42_cess += cs
+                if ra.event_type == 'ITC_REVERSAL_SEC_17_5':
+                    rev_17_5_igst += ig
+                    rev_17_5_cgst += cg
+                    rev_17_5_sgst += sg
+                    rev_17_5_cess += cs
             elif ra.event_type == 'ITC_RECLAIM':
+                # Reclaim of eligible credit previously reversed under Table 4(B)(2)
                 reclaim_igst += ig
                 reclaim_cgst += cg
                 reclaim_sgst += sg
                 reclaim_cess += cs
             else:
+                # Table 4(B)(2): Temporary reversals (Rule 37, Rule 37A, Section 16(2) others)
                 rev_oth_igst += ig
                 rev_oth_cgst += cg
                 rev_oth_sgst += sg
@@ -996,6 +1009,17 @@ class GSTReturnsService:
         tot_rev_cgst = rev_42_cgst + rev_oth_cgst
         tot_rev_sgst = rev_42_sgst + rev_oth_sgst
         tot_rev_cess = rev_42_cess + rev_oth_cess
+
+        # Extract Section 16(4) / PoS ineligible ITC from excluded inward allocations for Table 4(D)(2)
+        ineligible_sec16_4_igst = Decimal('0.00')
+        ineligible_sec16_4_cgst = Decimal('0.00')
+        ineligible_sec16_4_sgst = Decimal('0.00')
+        ineligible_sec16_4_cess = Decimal('0.00')
+        for ex in excluded_inward:
+            ineligible_sec16_4_igst += Decimal(str(ex.get("igst_amount", 0)))
+            ineligible_sec16_4_cgst += Decimal(str(ex.get("cgst_amount", 0)))
+            ineligible_sec16_4_sgst += Decimal(str(ex.get("sgst_amount", 0)))
+            ineligible_sec16_4_cess += Decimal(str(ex.get("cess_amount", 0)))
 
         itc_taxable = Decimal('0.00')
         itc_igst = Decimal('0.00')
@@ -1081,6 +1105,12 @@ class GSTReturnsService:
         # RCM liability (Table 3.1(d)) is EXCLUDED from output tax and CANNOT be discharged via ITC!
         # It must be paid 100% in CASH via the Electronic Cash Ledger.
         # Only outward tax liabilities (Table 3.1(a), 3.1(b)) can be offset against ITC.
+        # Available ITC under Table 4(A)(5) includes current inward supplies + reclaims of prior reversals
+        total_4a5_igst = itc_igst + reclaim_igst
+        total_4a5_cgst = itc_cgst + reclaim_cgst
+        total_4a5_sgst = itc_sgst + reclaim_sgst
+        total_4a5_cess = itc_cess + reclaim_cess
+
         outward_tax_dict = {
             "igst": outward_igst + exp_igst,
             "cgst": outward_cgst,
@@ -1088,10 +1118,10 @@ class GSTReturnsService:
             "cess": outward_cess
         }
         itc_dict = {
-            "igst": max(Decimal('0.00'), itc_igst + inward_rcm_igst - tot_rev_igst),
-            "cgst": max(Decimal('0.00'), itc_cgst + inward_rcm_cgst - tot_rev_cgst),
-            "sgst": max(Decimal('0.00'), itc_sgst + inward_rcm_sgst - tot_rev_sgst),
-            "cess": max(Decimal('0.00'), itc_cess - tot_rev_cess)
+            "igst": max(Decimal('0.00'), total_4a5_igst + inward_rcm_igst - tot_rev_igst),
+            "cgst": max(Decimal('0.00'), total_4a5_cgst + inward_rcm_cgst - tot_rev_cgst),
+            "sgst": max(Decimal('0.00'), total_4a5_sgst + inward_rcm_sgst - tot_rev_sgst),
+            "cess": max(Decimal('0.00'), total_4a5_cess - tot_rev_cess)
         }
         setoff_result = cls.calculate_rule88a_setoff(outward_tax_dict, itc_dict)
 
@@ -1193,14 +1223,20 @@ class GSTReturnsService:
                 "inward_isd": {"igst": 0.00, "cgst": 0.00, "sgst": 0.00, "cess": 0.00},
                 "all_other_itc": {
                     "taxable_value": float(itc_taxable),
-                    "igst": float(itc_igst),
-                    "cgst": float(itc_cgst),
-                    "sgst": float(itc_sgst),
-                    "cess": float(itc_cess)
+                    "igst": float(total_4a5_igst),
+                    "cgst": float(total_4a5_cgst),
+                    "sgst": float(total_4a5_sgst),
+                    "cess": float(total_4a5_cess)
                 }
             },
             "itc_reversed": {
                 "as_per_rules_42_43": {
+                    "igst": float(rev_42_igst),
+                    "cgst": float(rev_42_cgst),
+                    "sgst": float(rev_42_sgst),
+                    "cess": float(rev_42_cess)
+                },
+                "as_per_rules_38_42_43_sec_17_5": {
                     "igst": float(rev_42_igst),
                     "cgst": float(rev_42_cgst),
                     "sgst": float(rev_42_sgst),
@@ -1214,22 +1250,49 @@ class GSTReturnsService:
                 }
             },
             "net_itc_available": {
-                "igst": float(itc_igst + inward_rcm_igst - tot_rev_igst),
-                "cgst": float(itc_cgst + inward_rcm_cgst - tot_rev_cgst),
-                "sgst": float(itc_sgst + inward_rcm_sgst - tot_rev_sgst),
-                "cess": float(itc_cess - tot_rev_cess),
+                "igst": float(total_4a5_igst + inward_rcm_igst - tot_rev_igst),
+                "cgst": float(total_4a5_cgst + inward_rcm_cgst - tot_rev_cgst),
+                "sgst": float(total_4a5_sgst + inward_rcm_sgst - tot_rev_sgst),
+                "cess": float(total_4a5_cess - tot_rev_cess),
                 "total": float(
-                    (itc_igst + itc_cgst + itc_sgst + itc_cess + inward_rcm_igst + inward_rcm_cgst + inward_rcm_sgst)
+                    (total_4a5_igst + total_4a5_cgst + total_4a5_sgst + total_4a5_cess + inward_rcm_igst + inward_rcm_cgst + inward_rcm_sgst)
                     - (tot_rev_igst + tot_rev_cgst + tot_rev_sgst + tot_rev_cess)
                 )
             },
+            "other_details": {
+                "itc_reclaimed_4d1": {
+                    "igst": float(reclaim_igst),
+                    "cgst": float(reclaim_cgst),
+                    "sgst": float(reclaim_sgst),
+                    "cess": float(reclaim_cess)
+                },
+                "ineligible_itc_4d2": {
+                    "igst": float(ineligible_sec16_4_igst),
+                    "cgst": float(ineligible_sec16_4_cgst),
+                    "sgst": float(ineligible_sec16_4_sgst),
+                    "cess": float(ineligible_sec16_4_cess),
+                    "total_excluded_tax": float(sum(Decimal(str(x.get("total_tax", 0))) for x in excluded_inward)),
+                    "excluded_vouchers_count": len(excluded_inward)
+                }
+            },
             "itc_ineligible": {
-                "as_per_sec_17_5": {"igst": 0.00, "cgst": 0.00, "sgst": 0.00, "cess": 0.00},
+                "as_per_sec_17_5": {
+                    "igst": float(rev_17_5_igst),
+                    "cgst": float(rev_17_5_cgst),
+                    "sgst": float(rev_17_5_sgst),
+                    "cess": float(rev_17_5_cess)
+                },
+                "reclaimed_4d1": {
+                    "igst": float(reclaim_igst),
+                    "cgst": float(reclaim_cgst),
+                    "sgst": float(reclaim_sgst),
+                    "cess": float(reclaim_cess)
+                },
                 "others": {
-                    "igst": 0.00,
-                    "cgst": 0.00,
-                    "sgst": 0.00,
-                    "cess": 0.00,
+                    "igst": float(ineligible_sec16_4_igst),
+                    "cgst": float(ineligible_sec16_4_cgst),
+                    "sgst": float(ineligible_sec16_4_sgst),
+                    "cess": float(ineligible_sec16_4_cess),
                     "total_excluded_tax": float(sum(Decimal(str(x.get("total_tax", 0))) for x in excluded_inward)),
                     "excluded_vouchers_count": len(excluded_inward)
                 }
@@ -1417,10 +1480,16 @@ class GSTReturnsService:
                 },
                 "itc_inelg": {
                     "as_per_sec_17_5": {
-                        "iamt": float(itc_inelg.get("as_per_sec_17_5", {}).get("igst", 0.0)),
-                        "camt": float(itc_inelg.get("as_per_sec_17_5", {}).get("cgst", 0.0)),
-                        "samt": float(itc_inelg.get("as_per_sec_17_5", {}).get("sgst", 0.0)),
-                        "csamt": float(itc_inelg.get("as_per_sec_17_5", {}).get("cess", 0.0))
+                        "iamt": 0.0,
+                        "camt": 0.0,
+                        "samt": 0.0,
+                        "csamt": 0.0
+                    },
+                    "reclaimed_4d1": {
+                        "iamt": float(itc_inelg.get("reclaimed_4d1", {}).get("igst", 0.0)),
+                        "camt": float(itc_inelg.get("reclaimed_4d1", {}).get("cgst", 0.0)),
+                        "samt": float(itc_inelg.get("reclaimed_4d1", {}).get("sgst", 0.0)),
+                        "csamt": float(itc_inelg.get("reclaimed_4d1", {}).get("cess", 0.0))
                     },
                     "others": {
                         "iamt": float(itc_inelg.get("others", {}).get("igst", 0.0)),
