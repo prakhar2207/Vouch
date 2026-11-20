@@ -965,6 +965,7 @@ class GSTReturnsService:
             "sgst": float(total_cash_sgst),
             "cess": float(total_cash_cess),
             "total": float(total_cash),
+            "total_net_payable": float(total_cash),
             "breakdown": {
                 "outward_tax_cash": {
                     "igst": float(outward_cash_igst),
@@ -1268,6 +1269,19 @@ class GSTReturnsService:
                 ]
             }
         }
+
+    @classmethod
+    def file_return_live(cls, *args, **kwargs) -> None:
+        """
+        PRODUCTION SAFETY CONTROL (MANDATORY INVARIANT):
+        Live return filing directly to external GSTN / GSP endpoints is strictly prohibited.
+        SriLekh prepares and certifies offline export payloads only.
+        """
+        from apps.gst.exceptions import LiveFilingProhibitedError
+        raise LiveFilingProhibitedError(
+            "Live GST return filing to external GSTN/GSP endpoints is strictly prohibited. "
+            "SriLekh generates compliant return payloads for offline export and audit certification only."
+        )
 
     @classmethod
     def record_filing(

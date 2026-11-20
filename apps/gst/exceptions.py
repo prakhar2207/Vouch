@@ -57,3 +57,21 @@ class DuplicateSubmissionError(APIException):
     status_code = status.HTTP_409_CONFLICT
     default_detail = "A submission or IRN generation has already been completed or is currently pending for this document."
     default_code = "duplicate_submission"
+
+
+class ProductionSafetyViolationError(APIException):
+    status_code = status.HTTP_403_FORBIDDEN
+    default_detail = "Production GST operation is strictly prohibited. Live submission or external taxpayer mutations are disabled."
+    default_code = "production_safety_violation"
+
+
+class LiveFilingProhibitedError(ProductionSafetyViolationError):
+    default_detail = "Live GST return filing is strictly disabled. SriLekh generates validated schema payloads for offline export and audit verification only."
+    default_code = "live_filing_prohibited"
+
+
+class SSRFHostViolationError(APIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    default_detail = "Target host is not permitted. Only authorized Sandbox endpoints are allowed."
+    default_code = "ssrf_host_violation"
+

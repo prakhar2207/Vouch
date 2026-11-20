@@ -1,6 +1,7 @@
 from .base import GSTGatewayProvider
 from .mock_provider import MockGSTProvider
 from .gsp_provider import GSPProvider
+from .quicko_provider import QuickoSandboxProvider
 from apps.gst.models import CompanyGSTConfig
 
 def get_gst_provider(company=None) -> GSTGatewayProvider:
@@ -14,5 +15,8 @@ def get_gst_provider(company=None) -> GSTGatewayProvider:
     config = CompanyGSTConfig.objects.filter(company=company).first()
     if not config or config.provider == 'MOCK':
         return MockGSTProvider(config)
+
+    if config.provider == 'SANDBOX_CO_IN':
+        return QuickoSandboxProvider(config, company)
 
     return GSPProvider(config)

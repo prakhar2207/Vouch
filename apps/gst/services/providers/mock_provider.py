@@ -55,6 +55,17 @@ class MockGSTProvider(GSTGatewayProvider):
     and demo environments without external API costs or NIC downtime.
     """
 
+    @property
+    def capabilities(self):
+        from .base import GSTCapability
+        return {
+            GSTCapability.GSTIN_LOOKUP.value,
+            GSTCapability.EWAY_BILL_GENERATE.value,
+            GSTCapability.EWAY_BILL_UPDATE_VEHICLE.value,
+            GSTCapability.EWAY_BILL_CANCEL.value,
+            GSTCapability.EINVOICE_GENERATE.value,
+        }
+
     def search_taxpayer(self, gstin: str) -> Dict[str, Any]:
         gstin = (gstin or '').strip().upper()
         val = GSTINValidator.validate(gstin)
