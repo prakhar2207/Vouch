@@ -416,6 +416,11 @@ class GSTR2BRecord(models.Model):
     
     gstr1_filing_date = models.DateField(null=True, blank=True)
     gstr3b_status = models.CharField(max_length=20, default='UNKNOWN')
+    gstr3b_filing_date = models.DateField(null=True, blank=True, help_text="Date supplier filed GSTR-3B")
+    gstr3b_filing_arn = models.CharField(max_length=50, blank=True, default="", help_text="Filing ARN for GSTR-3B")
+    gstr3b_return_period = models.CharField(max_length=7, blank=True, default="", help_text="Return period of GSTR-3B (MMYYYY)")
+    gstr3b_verification_source = models.CharField(max_length=50, blank=True, default="", help_text="Source of GSTR-3B status (API, PORTAL, MANUAL_EVIDENCE, etc.)")
+    gstr3b_verified_at = models.DateTimeField(null=True, blank=True)
     
     matched_voucher = models.ForeignKey(Voucher, on_delete=models.SET_NULL, null=True, blank=True, related_name='gstr2b_matches')
     match_status = models.CharField(max_length=30, choices=MATCH_STATUS_CHOICES, default='MISSING_IN_BOOKS')
@@ -438,6 +443,57 @@ class GSTR2BRecord(models.Model):
 
     def __str__(self):
         return f"{self.supplier_gstin} - {self.invoice_number} (₹{self.invoice_value}) - {self.match_status}"
+
+
+class SupplierGSTR3BFilingRecord(models.Model):
+    """
+    Statutory evidence record tracking supplier GSTR-3B return filings.
+    Under Section 16(2)(c) and Rule 37A, GSTR-1 outward reporting is NOT proof of tax payment.
+    Proof of GSTR-3B return discharge must be maintained with ARN, filing date, and verified source.
+    """
+    STATUS_CHOICES = (
+        ('VERIFIED_FILED', 'Verified Filed in GSTR-3B'),
+        ('VERIFIED_NOT_FILED', 'Verified Not Filed'),
+        ('DATA_UNAVAILABLE', 'Data Unavailable from GSTN / Provider'),
+        ('MANUALLY_CONFIRMED', 'Manually Confirmed by User / Tax Auditor'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='supplier_gstr3b_records', db_index=True)
+    supplier_gstin = models.CharField(max_length=15, db_index=True)
+    supplier_name = models.CharField(max_length=255, blank=True, default='')
+    return_period = models.CharField(max_length=7, db_index=True)  # MMYYYY format
+    financial_year = models.CharField(max_length=9, blank=True, default='')  # e.g. 2024-25
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='DATA_UNAVAILABLE', db_index=True)
+    filing_date = models.DateField(null=True, blank=True)
+    arn = models.CharField(max_length=50, blank=True, default='')
+    verification_source = models.CharField(max_length=50, default='API')
+    evidence_document_ref = models.CharField(max_length=255, blank=True, default='')
+    notes = models.TextField(blank=True, default='')
+    verified_at = models.DateTimeField(auto_now=True)
+    verified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='verified_supplier_gstr3b_records'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['company', 'supplier_gstin', 'return_period']),
+            models.Index(fields=['company', 'status']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['company', 'supplier_gstin', 'return_period'],
+                name='unique_supplier_gstr3b_record'
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.supplier_gstin} - {self.return_period}: {self.status} (ARN: {self.arn or 'None'})"
 
 
 class GSTFilingRecord(models.Model):
@@ -796,6 +852,22 @@ class GSTReportingAllocation(models.Model):
 
     # Auditing and History
     is_active = models.BooleanField(default=True, db_index=True)
+    source_reversal = models.ForeignKey(
+        'self',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='direct_reclaims'
+    )
+    payment_allocation = models.ForeignKey(
+        'accounting.PaymentAllocation',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='gst_reclaim_allocations'
+    )
+    payment_event_id = models.CharField(max_length=100, blank=True, default='', db_index=True)
+    payment_reference = models.CharField(max_length=100, blank=True, default='')
     superseded_by = models.ForeignKey(
         'self',
         on_delete=models.PROTECT,
@@ -836,17 +908,67 @@ class GSTReportingAllocation(models.Model):
             models.Index(fields=['company', 'voucher', 'is_active']),
             models.Index(fields=['company', 'event_type', 'assigned_period']),
             models.Index(fields=['company', 'is_statutorily_eligible', 'assigned_period']),
+            models.Index(fields=['company', 'payment_event_id']),
         ]
         constraints = [
             models.UniqueConstraint(
                 fields=['voucher', 'event_type'],
-                condition=models.Q(is_active=True) & ~models.Q(event_type='ITC_RECLAIM'),
+                condition=models.Q(is_active=True) & ~models.Q(event_type__in=['ITC_RECLAIM', 'ITC_REVERSAL_RULE_37']),
                 name='unique_active_allocation_per_voucher_event'
-            )
+            ),
+            models.UniqueConstraint(
+                fields=['company', 'voucher', 'payment_event_id'],
+                condition=models.Q(is_active=True) & ~models.Q(payment_event_id=''),
+                name='unique_active_reclaim_per_payment_event'
+            ),
         ]
 
     def __str__(self):
         return f"[{self.assigned_period}] {self.voucher.voucher_number} - {self.event_type} ({self.status}) Eligible={self.is_statutorily_eligible}"
+
+
+class GSTReversalReclaimLineage(models.Model):
+    """
+    Audit-grade foreign key event linkage connecting an ITC Reclaim allocation
+    to the specific prior Reversal allocation(s) that it restores.
+    Tracks exact tax breakdown (IGST, CGST, SGST, Cess) and preserves mathematical equilibrium.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name='gst_reclaim_lineages')
+    voucher = models.ForeignKey(Voucher, on_delete=models.PROTECT, related_name='gst_reclaim_lineages')
+    reversal_allocation = models.ForeignKey(
+        GSTReportingAllocation,
+        on_delete=models.PROTECT,
+        related_name='reclaim_lineages_as_reversal'
+    )
+    reclaim_allocation = models.ForeignKey(
+        GSTReportingAllocation,
+        on_delete=models.PROTECT,
+        related_name='reclaim_lineages_as_reclaim'
+    )
+    reclaimed_tax = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    igst_reclaimed = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    cgst_reclaimed = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    sgst_reclaimed = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    cess_reclaimed = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    statutory_rule = models.CharField(max_length=20, default='RULE_37')
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_gst_lineages'
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['company', 'voucher']),
+            models.Index(fields=['reversal_allocation', 'reclaim_allocation']),
+        ]
+
+    def __str__(self):
+        return f"Lineage {self.voucher.voucher_number}: Reversal {self.reversal_allocation_id} -> Reclaim {self.reclaim_allocation_id} (₹{self.reclaimed_tax})"
 
 
 class GSTWorkspaceExportSnapshot(models.Model):

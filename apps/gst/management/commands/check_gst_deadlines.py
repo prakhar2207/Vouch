@@ -6,7 +6,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 from apps.companies.models import Company
 from apps.accounting.models import Voucher
-from apps.gst.models import GSTR2BRecord, GSTReportingAllocation
+from apps.gst.models import GSTR2BRecord, GSTReportingAllocation, SupplierGSTR3BFilingRecord
 from apps.gst.services.allocation_service import GSTAllocationService
 
 logger = logging.getLogger(__name__)
@@ -123,7 +123,14 @@ class Command(BaseCommand):
                 # 2. Evaluate Rule 37A (Supplier GSTR-3B Default)
                 report["rule37a"]["evaluated"] += 1
                 
-                # Resolve supplier status from GSTR-2B or records
+                # Check SupplierGSTR3BFilingRecord first
+                party_gstin = getattr(v, 'party_gstin', '')
+                supp_record = SupplierGSTR3BFilingRecord.objects.filter(
+                    company=comp,
+                    supplier_gstin=party_gstin
+                ).order_by('-return_period').first() if party_gstin else None
+
+                # Check GSTR2BRecord
                 gstr2b_rec = GSTR2BRecord.objects.filter(
                     company=comp,
                     matched_voucher=v
@@ -133,18 +140,21 @@ class Command(BaseCommand):
                 supplier_filing_date = None
                 supplier_gstr3b_filed = False
 
-                if gstr2b_rec:
+                if supp_record:
+                    supplier_status = supp_record.status
+                    supplier_gstr3b_filed = (supp_record.status in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED'))
+                    supplier_filing_date = supp_record.filing_date
+                elif gstr2b_rec:
                     if gstr2b_rec.gstr3b_status == 'FILED':
                         supplier_status = 'VERIFIED_FILED'
                         supplier_gstr3b_filed = True
-                        supplier_filing_date = gstr2b_rec.gstr1_filing_date
+                        supplier_filing_date = gstr2b_rec.gstr3b_filing_date
                     elif gstr2b_rec.gstr3b_status in ('NOT_FILED', 'PENDING'):
                         supplier_status = 'VERIFIED_NOT_FILED'
                         supplier_gstr3b_filed = False
                     else:
                         supplier_status = 'DATA_UNAVAILABLE'
                 else:
-                    # Check manual confirmation or fallback
                     supplier_status = 'UNKNOWN'
 
                 r37a_res = GSTAllocationService.evaluate_rule37a_status(
@@ -185,28 +195,27 @@ class Command(BaseCommand):
 
                 # 3. Evaluate Section 16(4) / 16(5) / 16(6) Statutory Time Bars
                 report["section16"]["evaluated"] += 1
-                cutoff_date = GSTAllocationService.get_statutory_cutoff_date(
-                    v.voucher_date,
-                    company=comp,
-                    return_type='INWARD_ITC'
+                sec16_res = GSTAllocationService.evaluate_section_16_status(
+                    voucher=v,
+                    check_date=eval_date
                 )
-                
-                # Check if voucher has active eligible allocation
-                alloc = GSTReportingAllocation.objects.filter(voucher=v, is_active=True).first()
-                if (not alloc or not alloc.is_statutorily_eligible) and eval_date > cutoff_date:
+
+                if sec16_res["status"] == "STATUTE_BARRED_SEC_16_4":
                     report["section16"]["statute_barred_count"] += 1
+                    cutoff_val = sec16_res.get("statutory_cutoff")
+                    cutoff_str = cutoff_val.isoformat() if hasattr(cutoff_val, "isoformat") else str(cutoff_val)
                     finding_16 = {
                         "company_name": comp.name,
                         "voucher_number": v.voucher_number,
                         "voucher_date": v.voucher_date.isoformat(),
-                        "statutory_cutoff": cutoff_date.isoformat(),
+                        "statutory_cutoff": cutoff_str,
                         "status": "STATUTE_BARRED_SECTION_16_4"
                     }
                     report["section16"]["findings"].append(finding_16)
                     if not as_json:
                         self.stdout.write(
                             f"  [Section 16(4) Statute-Barred] Co: {comp.name} | Inv: {v.voucher_number} | "
-                            f"Invoice Date: {v.voucher_date.isoformat()} | Cutoff: {cutoff_date.isoformat()}"
+                            f"Invoice Date: {v.voucher_date.isoformat()} | Cutoff: {cutoff_str}"
                         )
 
         if as_json:
