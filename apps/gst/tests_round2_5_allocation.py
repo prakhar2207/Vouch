@@ -1980,6 +1980,13 @@ class GSTRound25AllocationCertificationTests(TestCase):
             sgst_amount=Decimal('0.00')
         )
 
+        # Prior active Rule 37A reversal is mandatory
+        GSTAllocationService.create_rule37a_reversal_allocation(
+            voucher=pv_dup,
+            assigned_period='112025',
+            user=self.owner_user
+        )
+
         # Initial Reclaim
         rec1 = GSTAllocationService.create_rule37a_reclaim_allocation(
             voucher=pv_dup,

@@ -794,6 +794,43 @@ class GSTAllocationService:
         return excluded
 
     @classmethod
+    def calculate_section_50_interest(
+        cls,
+        tax_amount: Decimal,
+        start_date: date,
+        end_date: date,
+        annual_rate: Decimal = Decimal('18.00')
+    ) -> Dict[str, Any]:
+        """
+        Calculates statutory interest under Section 50(1) of the CGST Act at the statutory rate (18% p.a.).
+        Formula: Interest = (Tax Amount * Annual Rate * Days Delay) / (100 * 365).
+        """
+        tax = quantize_amount(tax_amount)
+        if tax <= Decimal('0.00') or end_date <= start_date:
+            return {
+                "tax_amount": tax,
+                "start_date": start_date,
+                "end_date": end_date,
+                "days_delay": 0,
+                "annual_rate": annual_rate,
+                "interest_amount": Decimal('0.00'),
+                "statutory_provision": "CGST Act Section 50(1) @ 18% p.a."
+            }
+        
+        days_delay = (end_date - start_date).days
+        interest_raw = (tax * annual_rate * Decimal(str(days_delay))) / (Decimal('100.00') * Decimal('365.00'))
+        interest = quantize_amount(interest_raw)
+        return {
+            "tax_amount": tax,
+            "start_date": start_date,
+            "end_date": end_date,
+            "days_delay": days_delay,
+            "annual_rate": annual_rate,
+            "interest_amount": interest,
+            "statutory_provision": "CGST Act Section 50(1) @ 18% p.a."
+        }
+
+    @classmethod
     def calculate_rule37_reversal(
         cls,
         total_invoice_amount: Decimal,
@@ -813,56 +850,184 @@ class GSTAllocationService:
         return quantize_amount(fraction * tax)
 
     @classmethod
+    def evaluate_rule37_status(
+        cls,
+        voucher: Voucher,
+        check_date: Optional[date] = None,
+        unpaid_amount: Optional[Decimal] = None
+    ) -> Dict[str, Any]:
+        """
+        Evaluates Rule 37 180-day statutory payment condition, remaining reversed/reclaimable balances,
+        and applicable Section 50 interest.
+        """
+        today = check_date or timezone.now().date()
+        v_date = voucher.voucher_date
+        payment_deadline = v_date + timedelta(days=180)
+        is_overdue = today > payment_deadline
+
+        summary = cls.compute_voucher_monetary_summary(voucher)
+        total_tax = summary["total_tax"]
+
+        # Determine unpaid amount if not explicitly provided
+        if unpaid_amount is not None:
+            unpaid = quantize_amount(unpaid_amount)
+        else:
+            try:
+                from apps.accounting.services.allocation_service import PaymentAllocationService
+                _, paid_val = PaymentAllocationService.get_voucher_payment_status(voucher)
+                unpaid = quantize_amount(max(Decimal('0.00'), voucher.total_amount - Decimal(str(paid_val))))
+            except Exception:
+                unpaid = voucher.total_amount
+
+        # Cumulative active reversals & reclaims for this voucher
+        existing_reversals = GSTReportingAllocation.objects.filter(
+            voucher=voucher,
+            event_type='ITC_REVERSAL_RULE_37',
+            is_active=True
+        )
+        total_reversed_tax = quantize_amount(sum(r.total_tax for r in existing_reversals))
+
+        existing_reclaims = GSTReportingAllocation.objects.filter(
+            voucher=voucher,
+            event_type='ITC_RECLAIM',
+            allocation_reason='RECLAIM_RULE_37',
+            is_active=True
+        )
+        total_reclaimed_tax = quantize_amount(sum(r.total_tax for r in existing_reclaims))
+
+        remaining_unreversed_tax = quantize_amount(max(Decimal('0.00'), total_tax - total_reversed_tax))
+        remaining_reversed_tax = quantize_amount(max(Decimal('0.00'), total_reversed_tax - total_reclaimed_tax))
+
+        proportionate_rev_tax = cls.calculate_rule37_reversal(voucher.total_amount, unpaid, total_tax)
+        required_additional_reversal = quantize_amount(max(Decimal('0.00'), min(proportionate_rev_tax - total_reversed_tax, remaining_unreversed_tax)))
+
+        reversal_required = bool(is_overdue and unpaid > Decimal('0.00') and required_additional_reversal > Decimal('0.00'))
+
+        # Interest applies if overdue
+        interest_calc = cls.calculate_section_50_interest(
+            tax_amount=required_additional_reversal if reversal_required else total_reversed_tax,
+            start_date=payment_deadline,
+            end_date=today
+        )
+
+        return {
+            "voucher_id": str(voucher.id),
+            "voucher_number": voucher.voucher_number,
+            "voucher_date": v_date,
+            "payment_deadline": payment_deadline,
+            "is_payment_overdue": is_overdue,
+            "total_invoice_amount": voucher.total_amount,
+            "unpaid_amount": unpaid,
+            "total_tax": total_tax,
+            "total_reversed_tax": total_reversed_tax,
+            "total_reclaimed_tax": total_reclaimed_tax,
+            "remaining_unreversed_tax": remaining_unreversed_tax,
+            "remaining_reversed_tax": remaining_reversed_tax,
+            "reversal_required": reversal_required,
+            "required_reversal_tax": required_additional_reversal,
+            "interest_applicable": is_overdue and (reversal_required or total_reversed_tax > Decimal('0.00')),
+            "interest_details": interest_calc,
+            "reclaimable_balance": remaining_reversed_tax,
+        }
+
+    @classmethod
     def create_rule37_reversal_allocation(
         cls,
         voucher: Voucher,
         unpaid_amount: Decimal,
         assigned_period: str,
-        user: Any = None
+        user: Any = None,
+        reversal_date: Optional[date] = None
     ) -> GSTReportingAllocation:
         """
         Creates an ITC reversal allocation under Rule 37 (180 days non-payment) for GSTR-3B Table 4(B)(2).
+        Enforces:
+        - Atomic concurrency locking via select_for_update
+        - Unpaid amount > 0
+        - Cumulative reversal cannot exceed invoice total tax
+        - Idempotency for repeated requests
+        - Section 50 interest warning and calculation for post-180-day reversals
         """
-        summary = cls.compute_voucher_monetary_summary(voucher)
-        rev_tax = cls.calculate_rule37_reversal(voucher.total_amount, unpaid_amount, summary["total_tax"])
-        
-        tot_tax = summary["total_tax"]
-        ratio = (rev_tax / tot_tax) if tot_tax > Decimal('0.00') else Decimal('0.00')
-        igst_rev = quantize_amount(summary["igst_amount"] * ratio)
-        cgst_rev = quantize_amount(summary["cgst_amount"] * ratio)
-        sgst_rev = quantize_amount(summary["sgst_amount"] * ratio)
-        cess_rev = quantize_amount(summary["cess_amount"] * ratio)
-
         clean_period = assigned_period.strip().replace('-', '').replace('/', '')
-        alloc = GSTReportingAllocation.objects.create(
-            company=voucher.company,
-            voucher=voucher,
-            gst_registration=getattr(voucher, 'gst_registration', None),
-            event_type='ITC_REVERSAL_RULE_37',
-            voucher_date=voucher.voucher_date,
-            entry_date=timezone.now().date(),
-            original_period=voucher.voucher_date.strftime('%m%Y'),
-            assigned_period=clean_period,
-            financial_year=cls.get_financial_year(voucher.voucher_date),
-            allocation_reason='REVERSAL_RULE_37',
-            status='APPROVED',
-            is_statutorily_eligible=True,
-            statutory_rule='CGST Rules Rule 37 (180-day non-payment)',
-            statutory_notes=(
-                f"Rule 37 180-day ITC Reversal for invoice #{voucher.voucher_number}: "
-                f"unpaid amount ₹{unpaid_amount} of ₹{voucher.total_amount}."
-            ),
-            taxable_value=Decimal('0.00'),
-            igst_amount=igst_rev,
-            cgst_amount=cgst_rev,
-            sgst_amount=sgst_rev,
-            cess_amount=cess_rev,
-            total_tax=rev_tax,
-            is_active=True,
-            idempotency_key=f"rule37_rev_{voucher.company.id}_{voucher.id}_{clean_period}",
-            created_by=user
-        )
-        return alloc
+        unpaid = quantize_amount(unpaid_amount)
+        if unpaid <= Decimal('0.00'):
+            raise ValidationError(f"Rule 37 reversal rejected: Unpaid amount ₹{unpaid} must be greater than zero.")
+
+        rev_date = reversal_date or timezone.now().date()
+        payment_deadline = voucher.voucher_date + timedelta(days=180)
+        is_overdue = rev_date > payment_deadline
+
+        with transaction.atomic():
+            # Concurrency row-lock on voucher
+            locked_voucher = Voucher.objects.select_for_update().get(id=voucher.id)
+            summary = cls.compute_voucher_monetary_summary(locked_voucher)
+
+            # Check existing reversals
+            existing_revs = GSTReportingAllocation.objects.filter(
+                voucher=locked_voucher,
+                event_type='ITC_REVERSAL_RULE_37',
+                is_active=True
+            )
+            already_reversed = quantize_amount(sum(r.total_tax for r in existing_revs))
+            max_reversable = summary["total_tax"] - already_reversed
+
+            if max_reversable <= Decimal('0.00'):
+                raise ValidationError(
+                    f"Rule 37 reversal rejected: Invoice #{locked_voucher.voucher_number} is already fully reversed (₹{already_reversed})."
+                )
+
+            rev_tax = cls.calculate_rule37_reversal(locked_voucher.total_amount, unpaid, summary["total_tax"])
+            if rev_tax > max_reversable:
+                rev_tax = max_reversable
+
+            # Check idempotency
+            idem_key = f"rule37_rev_{locked_voucher.company.id}_{locked_voucher.id}_{clean_period}_{int(unpaid*100)}"
+            existing = GSTReportingAllocation.objects.filter(idempotency_key=idem_key, is_active=True).first()
+            if existing:
+                return existing
+
+            tot_tax = summary["total_tax"]
+            ratio = (rev_tax / tot_tax) if tot_tax > Decimal('0.00') else Decimal('0.00')
+            igst_rev = quantize_amount(summary["igst_amount"] * ratio)
+            cgst_rev = quantize_amount(summary["cgst_amount"] * ratio)
+            sgst_rev = quantize_amount(summary["sgst_amount"] * ratio)
+            cess_rev = quantize_amount(summary["cess_amount"] * ratio)
+
+            notes = (
+                f"Rule 37 180-day ITC Reversal for invoice #{locked_voucher.voucher_number}: "
+                f"unpaid amount ₹{unpaid} of ₹{locked_voucher.total_amount}."
+            )
+            if is_overdue:
+                days_over = (rev_date - payment_deadline).days
+                interest_info = cls.calculate_section_50_interest(rev_tax, payment_deadline, rev_date)
+                notes += f" OVERDUE ({days_over} days past 180-day deadline {payment_deadline.strftime('%d-%m-%Y')}). Est. Interest: ₹{interest_info['interest_amount']} under Sec 50(1)."
+
+            alloc = GSTReportingAllocation.objects.create(
+                company=locked_voucher.company,
+                voucher=locked_voucher,
+                gst_registration=getattr(locked_voucher, 'gst_registration', None),
+                event_type='ITC_REVERSAL_RULE_37',
+                voucher_date=locked_voucher.voucher_date,
+                entry_date=rev_date,
+                original_period=locked_voucher.voucher_date.strftime('%m%Y'),
+                assigned_period=clean_period,
+                financial_year=cls.get_financial_year(locked_voucher.voucher_date),
+                allocation_reason='REVERSAL_RULE_37',
+                status='APPROVED',
+                is_statutorily_eligible=True,
+                statutory_rule='CGST Rules Rule 37 (180-day non-payment)',
+                statutory_notes=notes,
+                taxable_value=Decimal('0.00'),
+                igst_amount=igst_rev,
+                cgst_amount=cgst_rev,
+                sgst_amount=sgst_rev,
+                cess_amount=cess_rev,
+                total_tax=rev_tax,
+                is_active=True,
+                idempotency_key=idem_key,
+                created_by=user
+            )
+            return alloc
 
     @classmethod
     def create_rule37_reclaim_allocation(
@@ -870,14 +1035,26 @@ class GSTAllocationService:
         voucher: Voucher,
         paid_amount: Decimal,
         assigned_period: str,
-        user: Any = None
+        user: Any = None,
+        reclaim_date: Optional[date] = None
     ) -> GSTReportingAllocation:
         """
         Creates an ITC reclaim allocation under Third Proviso to Section 16(2) and Rule 37(4).
         Entitled to reclaim without Section 16(4) time-limit bar.
-        Reportable in GSTR-3B Table 4(A)(5) and Table 4(D)(1).
-        Permanently ineligible ITC under Section 17(5) cannot be reclaimed.
+        Enforces:
+        - Atomic concurrency locking via select_for_update
+        - Mandatory active prior Rule 37 reversal
+        - Permanently ineligible Section 17(5) blocked credit strictly rejected
+        - Cumulative reclaim cannot exceed remaining reversed balance
+        - Idempotency for repeated requests
+        - Support for multiple partial payments
         """
+        clean_period = assigned_period.strip().replace('-', '').replace('/', '')
+        paid = quantize_amount(paid_amount)
+        if paid <= Decimal('0.00'):
+            raise ValidationError(f"Rule 37 reclaim rejected: Paid amount ₹{paid} must be greater than zero.")
+
+        # Block Section 17(5)
         if GSTReportingAllocation.objects.filter(
             voucher=voucher,
             event_type='ITC_REVERSAL_SEC_17_5',
@@ -885,46 +1062,88 @@ class GSTAllocationService:
         ).exists() or getattr(voucher, 'is_section_17_5_blocked', False):
             raise ValidationError("Permanently ineligible ITC under Section 17(5) cannot be reclaimed.")
 
-        summary = cls.compute_voucher_monetary_summary(voucher)
-        reclaim_tax = cls.calculate_rule37_reversal(voucher.total_amount, paid_amount, summary["total_tax"])
-        
-        tot_tax = summary["total_tax"]
-        ratio = (reclaim_tax / tot_tax) if tot_tax > Decimal('0.00') else Decimal('0.00')
-        igst_rec = quantize_amount(summary["igst_amount"] * ratio)
-        cgst_rec = quantize_amount(summary["cgst_amount"] * ratio)
-        sgst_rec = quantize_amount(summary["sgst_amount"] * ratio)
-        cess_rec = quantize_amount(summary["cess_amount"] * ratio)
+        with transaction.atomic():
+            locked_voucher = Voucher.objects.select_for_update().get(id=voucher.id)
 
-        clean_period = assigned_period.strip().replace('-', '').replace('/', '')
-        alloc = GSTReportingAllocation.objects.create(
-            company=voucher.company,
-            voucher=voucher,
-            gst_registration=getattr(voucher, 'gst_registration', None),
-            event_type='ITC_RECLAIM',
-            voucher_date=voucher.voucher_date,
-            entry_date=timezone.now().date(),
-            original_period=voucher.voucher_date.strftime('%m%Y'),
-            assigned_period=clean_period,
-            financial_year=cls.get_financial_year(voucher.voucher_date),
-            allocation_reason='RECLAIM_RULE_37',
-            status='APPROVED',
-            is_statutorily_eligible=True,
-            statutory_rule='Third Proviso to Section 16(2) / Rule 37(4)',
-            statutory_notes=(
-                f"Rule 37(4) ITC Reclaim upon payment of ₹{paid_amount} for invoice #{voucher.voucher_number}. "
-                f"Exempt from Section 16(4) time-limit."
-            ),
-            taxable_value=quantize_amount((paid_amount / voucher.total_amount) * summary["taxable_value"]) if voucher.total_amount > 0 else Decimal('0.00'),
-            igst_amount=igst_rec,
-            cgst_amount=cgst_rec,
-            sgst_amount=sgst_rec,
-            cess_amount=cess_rec,
-            total_tax=reclaim_tax,
-            is_active=True,
-            idempotency_key=f"rule37_rec_{voucher.company.id}_{voucher.id}_{clean_period}_{int(paid_amount*100)}",
-            created_by=user
-        )
-        return alloc
+            # 1. Mandatory prior Rule 37 reversal check
+            active_reversals = GSTReportingAllocation.objects.filter(
+                voucher=locked_voucher,
+                event_type='ITC_REVERSAL_RULE_37',
+                is_active=True
+            )
+            total_reversed_tax = quantize_amount(sum(r.total_tax for r in active_reversals))
+            if total_reversed_tax <= Decimal('0.00'):
+                raise ValidationError(
+                    f"Cannot reclaim under Rule 37: No active prior Rule 37 reversal found for invoice #{locked_voucher.voucher_number}."
+                )
+
+            # 2. Cumulative reclaim balance check
+            active_reclaims = GSTReportingAllocation.objects.filter(
+                voucher=locked_voucher,
+                event_type='ITC_RECLAIM',
+                allocation_reason='RECLAIM_RULE_37',
+                is_active=True
+            )
+            total_already_reclaimed = quantize_amount(sum(r.total_tax for r in active_reclaims))
+            remaining_reversed_tax = quantize_amount(total_reversed_tax - total_already_reclaimed)
+
+            if remaining_reversed_tax <= Decimal('0.00'):
+                raise ValidationError(
+                    f"Rule 37 reclaim rejected: Total reversed ITC (₹{total_reversed_tax}) has already been fully reclaimed for invoice #{locked_voucher.voucher_number}."
+                )
+
+            summary = cls.compute_voucher_monetary_summary(locked_voucher)
+            reclaim_tax = cls.calculate_rule37_reversal(locked_voucher.total_amount, paid, summary["total_tax"])
+
+            if reclaim_tax > remaining_reversed_tax:
+                raise ValidationError(
+                    f"Rule 37 reclaim rejected: Requested reclaim tax ₹{reclaim_tax} exceeds remaining reversed balance ₹{remaining_reversed_tax} for invoice #{locked_voucher.voucher_number}."
+                )
+
+            # 3. Idempotent return if identical reclaim already created
+            idem_key = f"rule37_rec_{locked_voucher.company.id}_{locked_voucher.id}_{clean_period}_{int(paid*100)}"
+            existing = GSTReportingAllocation.objects.filter(idempotency_key=idem_key, is_active=True).first()
+            if existing:
+                return existing
+
+            tot_tax = summary["total_tax"]
+            ratio = (reclaim_tax / tot_tax) if tot_tax > Decimal('0.00') else Decimal('0.00')
+            igst_rec = quantize_amount(summary["igst_amount"] * ratio)
+            cgst_rec = quantize_amount(summary["cgst_amount"] * ratio)
+            sgst_rec = quantize_amount(summary["sgst_amount"] * ratio)
+            cess_rec = quantize_amount(summary["cess_amount"] * ratio)
+
+            rec_date = reclaim_date or timezone.now().date()
+            alloc = GSTReportingAllocation.objects.create(
+                company=locked_voucher.company,
+                voucher=locked_voucher,
+                gst_registration=getattr(locked_voucher, 'gst_registration', None),
+                event_type='ITC_RECLAIM',
+                voucher_date=locked_voucher.voucher_date,
+                entry_date=rec_date,
+                original_period=locked_voucher.voucher_date.strftime('%m%Y'),
+                assigned_period=clean_period,
+                financial_year=cls.get_financial_year(locked_voucher.voucher_date),
+                allocation_reason='RECLAIM_RULE_37',
+                status='APPROVED',
+                is_statutorily_eligible=True,
+                statutory_rule='Third Proviso to Section 16(2) / Rule 37(4)',
+                statutory_notes=(
+                    f"Rule 37(4) ITC Reclaim upon payment of ₹{paid} for invoice #{locked_voucher.voucher_number}. "
+                    f"Reclaim tax ₹{reclaim_tax} of ₹{total_reversed_tax} reversed. "
+                    f"Remaining reversed balance: ₹{remaining_reversed_tax - reclaim_tax}. Exempt from Sec 16(4) time-limit."
+                ),
+                taxable_value=quantize_amount((paid / locked_voucher.total_amount) * summary["taxable_value"]) if locked_voucher.total_amount > 0 else Decimal('0.00'),
+                igst_amount=igst_rec,
+                cgst_amount=cgst_rec,
+                sgst_amount=sgst_rec,
+                cess_amount=cess_rec,
+                total_tax=reclaim_tax,
+                is_active=True,
+                idempotency_key=idem_key,
+                created_by=user
+            )
+            return alloc
 
     @classmethod
     def get_rule37a_supplier_default_date(cls, financial_year: str) -> date:
@@ -954,21 +1173,56 @@ class GSTAllocationService:
         cls,
         voucher: Voucher,
         check_date: Optional[date] = None,
-        supplier_gstr3b_filed: bool = False,
-        supplier_filing_date: Optional[date] = None
+        supplier_gstr3b_filed: Optional[bool] = None,
+        supplier_filing_date: Optional[date] = None,
+        supplier_status: str = 'UNKNOWN'
     ) -> Dict[str, Any]:
         """
         Evaluates Rule 37A statutory timeline and compliance state:
         - Supplier default date: 30 September post FY end
         - Recipient reversal deadline: 30 November post FY end
-        - Reversal required without interest / with interest
-        - Reclaim eligibility upon subsequent supplier filing
+        - Distinguishes: VERIFIED_FILED, VERIFIED_NOT_FILED, DATA_UNAVAILABLE, MANUALLY_CONFIRMED, UNKNOWN
+        - Does NOT treat DATA_UNAVAILABLE as default!
         """
         v_date = voucher.voucher_date
         fy = cls.get_financial_year(v_date)
         default_date = cls.get_rule37a_supplier_default_date(fy)
         reversal_deadline = cls.get_rule37a_recipient_reversal_deadline(fy)
         today = check_date or timezone.now().date()
+
+        # Resolve supplier filing state
+        clean_status = (supplier_status or 'UNKNOWN').upper()
+        if clean_status == 'UNKNOWN' and supplier_gstr3b_filed is not None:
+            clean_status = 'VERIFIED_FILED' if supplier_gstr3b_filed else 'VERIFIED_NOT_FILED'
+
+        is_supplier_default = False
+        default_reason = ''
+
+        if clean_status == 'DATA_UNAVAILABLE':
+            # Statutory Guard: Unavailable data is NOT proof of default!
+            is_supplier_default = False
+            default_reason = 'DATA_UNAVAILABLE: Supplier filing status cannot be verified from GST portal/GSP. Default cannot be presumed.'
+        elif clean_status == 'VERIFIED_FILED':
+            if supplier_filing_date and supplier_filing_date > default_date:
+                # Supplier filed, but late (after 30-Sep)
+                is_supplier_default = (today >= default_date and today < supplier_filing_date)
+                default_reason = f"Supplier filed late on {supplier_filing_date.strftime('%d-%m-%Y')} (after default date {default_date.strftime('%d-%m-%Y')})."
+            else:
+                is_supplier_default = False
+                default_reason = 'Supplier verified filed on or before statutory default date.'
+        elif clean_status == 'MANUALLY_CONFIRMED':
+            is_supplier_default = False
+            default_reason = 'Supplier filing manually confirmed by accountant with documentary evidence.'
+        elif clean_status == 'VERIFIED_NOT_FILED':
+            if today >= default_date:
+                is_supplier_default = True
+                default_reason = f"Supplier confirmed NOT FILED as of {today.strftime('%d-%m-%Y')} (past 30-Sep default date {default_date.strftime('%d-%m-%Y')})."
+            else:
+                is_supplier_default = False
+                default_reason = f"Statutory default date ({default_date.strftime('%d-%m-%Y')}) not yet reached."
+        else: # UNKNOWN
+            is_supplier_default = False
+            default_reason = 'Supplier status UNKNOWN. Verification required.'
 
         existing_reversal = GSTReportingAllocation.objects.filter(
             voucher=voucher,
@@ -983,20 +1237,25 @@ class GSTAllocationService:
             is_active=True
         ).first()
 
-        is_supplier_default = False
-        if today >= default_date:
-            if not supplier_gstr3b_filed:
-                is_supplier_default = True
-            elif supplier_filing_date and supplier_filing_date > default_date:
-                is_supplier_default = True
+        reversal_required = bool(is_supplier_default and not existing_reversal)
+        is_overdue = bool(today > reversal_deadline and is_supplier_default)
+        interest_applicable = bool(is_overdue and (not existing_reversal or existing_reversal.entry_date > reversal_deadline))
 
-        reversal_required = is_supplier_default and not existing_reversal
-        is_overdue = (today > reversal_deadline) if is_supplier_default else False
-        interest_applicable = is_overdue and (not existing_reversal or existing_reversal.entry_date > reversal_deadline)
+        interest_details = None
+        if interest_applicable:
+            summary = cls.compute_voucher_monetary_summary(voucher)
+            interest_details = cls.calculate_section_50_interest(
+                tax_amount=summary["total_tax"],
+                start_date=reversal_deadline,
+                end_date=today
+            )
 
+        # Reclaim eligibility: reversal exists, supplier filed/confirmed, not already reclaimed, not blocked under 17(5)
+        supplier_has_filed = clean_status in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED') or bool(supplier_gstr3b_filed)
         reclaim_eligible = bool(
             existing_reversal and
-            supplier_gstr3b_filed and
+            supplier_has_filed and
+            clean_status != 'DATA_UNAVAILABLE' and
             not existing_reclaim and
             not getattr(voucher, 'is_section_17_5_blocked', False)
         )
@@ -1005,12 +1264,15 @@ class GSTAllocationService:
             "voucher_id": str(voucher.id),
             "voucher_number": voucher.voucher_number,
             "financial_year": fy,
+            "supplier_status": clean_status,
             "supplier_default_date": default_date,
             "recipient_reversal_deadline": reversal_deadline,
             "is_supplier_default": is_supplier_default,
+            "default_reason": default_reason,
             "reversal_required": reversal_required,
             "is_reversal_overdue": is_overdue,
             "interest_applicable": interest_applicable,
+            "interest_details": interest_details,
             "reclaim_eligible": reclaim_eligible,
             "has_existing_reversal": bool(existing_reversal),
             "has_existing_reclaim": bool(existing_reclaim),
@@ -1024,61 +1286,83 @@ class GSTAllocationService:
         user: Any = None,
         reversal_date: Optional[date] = None,
         supplier_gstr3b_filed: bool = False,
-        supplier_filing_date: Optional[date] = None
+        supplier_filing_date: Optional[date] = None,
+        supplier_status: str = 'VERIFIED_NOT_FILED'
     ) -> GSTReportingAllocation:
         """
         Creates an ITC reversal allocation under Rule 37A (Supplier default in GSTR-3B) for Table 4(B)(2).
         Must be reversed on or before 30th November following end of FY in which ITC was availed.
-        Prevents duplicate reversals and flags Section 50 interest if reversed after 30th November.
+        Enforces:
+        - Rejection if supplier data is DATA_UNAVAILABLE (cannot assume default)
+        - Rejection if supplier actually filed
+        - Prevents duplicate reversals
+        - Flags Section 50 interest if reversed after 30th November with precise interest computation
         """
-        # Duplicate reversal prevention
-        if GSTReportingAllocation.objects.filter(
-            voucher=voucher,
-            event_type='ITC_REVERSAL_RULE_37A',
-            is_active=True
-        ).exists():
-            raise ValidationError(f"Rule 37A reversal already exists for invoice #{voucher.voucher_number}.")
+        clean_status = (supplier_status or 'VERIFIED_NOT_FILED').upper()
+        if clean_status == 'DATA_UNAVAILABLE':
+            raise ValidationError(
+                f"Cannot execute Rule 37A reversal: Supplier filing data is DATA_UNAVAILABLE for invoice #{voucher.voucher_number}. "
+                f"Statute requires affirmative non-filing default before reversal."
+            )
+        if clean_status in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED') or supplier_gstr3b_filed:
+            raise ValidationError(
+                f"Cannot execute Rule 37A reversal: Supplier has filed GSTR-3B for invoice #{voucher.voucher_number}."
+            )
 
-        summary = cls.compute_voucher_monetary_summary(voucher)
-        clean_period = assigned_period.strip().replace('-', '').replace('/', '')
-        rev_date = reversal_date or timezone.now().date()
-        fy = cls.get_financial_year(voucher.voucher_date)
-        deadline = cls.get_rule37a_recipient_reversal_deadline(fy)
-        is_overdue = rev_date > deadline
+        with transaction.atomic():
+            locked_voucher = Voucher.objects.select_for_update().get(id=voucher.id)
 
-        notes = (
-            f"Rule 37A ITC Reversal for invoice #{voucher.voucher_number}: supplier defaulted on GSTR-3B filing. "
-            f"Reversed on {rev_date.strftime('%d-%m-%Y')}."
-        )
-        if is_overdue:
-            notes += f" OVERDUE (deadline was {deadline.strftime('%d-%m-%Y')}). Interest payable under Section 50."
+            # Duplicate reversal prevention
+            if GSTReportingAllocation.objects.filter(
+                voucher=locked_voucher,
+                event_type='ITC_REVERSAL_RULE_37A',
+                is_active=True
+            ).exists():
+                raise ValidationError(f"Rule 37A reversal already exists for invoice #{locked_voucher.voucher_number}.")
 
-        alloc = GSTReportingAllocation.objects.create(
-            company=voucher.company,
-            voucher=voucher,
-            gst_registration=getattr(voucher, 'gst_registration', None),
-            event_type='ITC_REVERSAL_RULE_37A',
-            voucher_date=voucher.voucher_date,
-            entry_date=rev_date,
-            original_period=voucher.voucher_date.strftime('%m%Y'),
-            assigned_period=clean_period,
-            financial_year=fy,
-            allocation_reason='REVERSAL_RULE_37A',
-            status='APPROVED',
-            is_statutorily_eligible=True,
-            statutory_rule='CGST Rules Rule 37A (Supplier non-payment of tax / GSTR-3B default)',
-            statutory_notes=notes,
-            taxable_value=Decimal('0.00'),
-            igst_amount=summary["igst_amount"],
-            cgst_amount=summary["cgst_amount"],
-            sgst_amount=summary["sgst_amount"],
-            cess_amount=summary["cess_amount"],
-            total_tax=summary["total_tax"],
-            is_active=True,
-            idempotency_key=f"rule37a_rev_{voucher.company.id}_{voucher.id}_{clean_period}",
-            created_by=user
-        )
-        return alloc
+            summary = cls.compute_voucher_monetary_summary(locked_voucher)
+            clean_period = assigned_period.strip().replace('-', '').replace('/', '')
+            rev_date = reversal_date or timezone.now().date()
+            fy = cls.get_financial_year(locked_voucher.voucher_date)
+            deadline = cls.get_rule37a_recipient_reversal_deadline(fy)
+            is_overdue = rev_date > deadline
+
+            notes = (
+                f"Rule 37A ITC Reversal for invoice #{locked_voucher.voucher_number}: supplier defaulted on GSTR-3B filing. "
+                f"Reversed on {rev_date.strftime('%d-%m-%Y')}."
+            )
+            if is_overdue:
+                days_over = (rev_date - deadline).days
+                interest_info = cls.calculate_section_50_interest(summary["total_tax"], deadline, rev_date)
+                notes += f" OVERDUE ({days_over} days past deadline {deadline.strftime('%d-%m-%Y')}). Interest payable under Section 50. Est. Interest: ₹{interest_info['interest_amount']} under Section 50(1)."
+
+            idem_key = f"rule37a_rev_{locked_voucher.company.id}_{locked_voucher.id}_{clean_period}"
+            alloc = GSTReportingAllocation.objects.create(
+                company=locked_voucher.company,
+                voucher=locked_voucher,
+                gst_registration=getattr(locked_voucher, 'gst_registration', None),
+                event_type='ITC_REVERSAL_RULE_37A',
+                voucher_date=locked_voucher.voucher_date,
+                entry_date=rev_date,
+                original_period=locked_voucher.voucher_date.strftime('%m%Y'),
+                assigned_period=clean_period,
+                financial_year=fy,
+                allocation_reason='REVERSAL_RULE_37A',
+                status='APPROVED',
+                is_statutorily_eligible=True,
+                statutory_rule='CGST Rules Rule 37A (Supplier non-payment of tax / GSTR-3B default)',
+                statutory_notes=notes,
+                taxable_value=Decimal('0.00'),
+                igst_amount=summary["igst_amount"],
+                cgst_amount=summary["cgst_amount"],
+                sgst_amount=summary["sgst_amount"],
+                cess_amount=summary["cess_amount"],
+                total_tax=summary["total_tax"],
+                is_active=True,
+                idempotency_key=idem_key,
+                created_by=user
+            )
+            return alloc
 
     @classmethod
     def create_rule37a_reclaim_allocation(
@@ -1087,76 +1371,108 @@ class GSTAllocationService:
         assigned_period: str,
         user: Any = None,
         supplier_gstr3b_filed: bool = True,
-        require_prior_reversal: bool = False
+        supplier_status: str = 'VERIFIED_FILED',
+        verification_source: str = 'PORTAL',
+        verification_reference: str = '',
+        verification_date: Optional[date] = None,
+        reclaim_date: Optional[date] = None,
+        require_prior_reversal: bool = True
     ) -> GSTReportingAllocation:
         """
         Creates an ITC reclaim allocation under Proviso to Rule 37A when supplier subsequently files GSTR-3B.
         Reclaim is permitted without any Section 16(4) time-limit bar.
-        Validates:
-        1. Prior active Rule 37A reversal exists (when require_prior_reversal=True).
-        2. Supplier has subsequently furnished GSTR-3B.
-        3. No duplicate active reclaim exists across periods.
-        4. Section 17(5) blocked credit cannot be reclaimed.
+        Enforces:
+        - Mandatory prior active Rule 37A reversal (CANNOT be bypassed)
+        - Verification that supplier has furnished GSTR-3B (VERIFIED_FILED or MANUALLY_CONFIRMED)
+        - Reject DATA_UNAVAILABLE or VERIFIED_NOT_FILED
+        - Prevent duplicate active reclaim across periods
+        - Block Section 17(5) permanently ineligible credit
+        - Preserves verification evidence: source, reference, timestamp, and user
         """
         clean_period = assigned_period.strip().replace('-', '').replace('/', '')
+        clean_status = (supplier_status or 'VERIFIED_FILED').upper()
 
-        # 1. Verify prior reversal exists if required
-        if require_prior_reversal:
+        with transaction.atomic():
+            locked_voucher = Voucher.objects.select_for_update().get(id=voucher.id)
+
+            # 1. Permanent ineligibility (Section 17(5)) cannot be reclaimed (checked first)
+            if GSTReportingAllocation.objects.filter(
+                voucher=locked_voucher,
+                event_type='ITC_REVERSAL_SEC_17_5',
+                is_active=True
+            ).exists() or getattr(locked_voucher, 'is_section_17_5_blocked', False):
+                raise ValidationError("Permanently ineligible ITC under Section 17(5) cannot be reclaimed.")
+
+            # 2. Mandatory prior active Rule 37A reversal (CANNOT BE BYPASSED)
             prior_rev = GSTReportingAllocation.objects.filter(
-                voucher=voucher,
+                voucher=locked_voucher,
                 event_type='ITC_REVERSAL_RULE_37A',
                 is_active=True
             ).first()
             if not prior_rev:
-                raise ValidationError(f"Cannot reclaim under Rule 37A: No active prior Rule 37A reversal found for invoice #{voucher.voucher_number}.")
+                raise ValidationError(
+                    f"Cannot reclaim under Rule 37A: No active prior Rule 37A reversal found for invoice #{locked_voucher.voucher_number}."
+                )
 
-        # 2. Verify supplier actually filed
-        if not supplier_gstr3b_filed:
-            raise ValidationError(f"Cannot reclaim under Rule 37A: Supplier has not furnished corresponding GSTR-3B for invoice #{voucher.voucher_number}.")
+            # 3. Verify supplier actually filed
+            if clean_status == 'DATA_UNAVAILABLE':
+                raise ValidationError(
+                    f"Cannot reclaim under Rule 37A: Supplier filing status is DATA_UNAVAILABLE for invoice #{locked_voucher.voucher_number}. Verification required before reclaiming."
+                )
+            if clean_status == 'VERIFIED_NOT_FILED' or not supplier_gstr3b_filed:
+                raise ValidationError(
+                    f"Cannot reclaim under Rule 37A: Supplier has not furnished corresponding GSTR-3B for invoice #{locked_voucher.voucher_number}."
+                )
+            if clean_status not in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED'):
+                raise ValidationError(
+                    f"Cannot reclaim under Rule 37A: Supplier status '{clean_status}' is unverified for invoice #{locked_voucher.voucher_number}."
+                )
 
-        # 3. Duplicate reclaim prevention across different periods
-        if GSTReportingAllocation.objects.filter(
-            voucher=voucher,
-            event_type='ITC_RECLAIM',
-            allocation_reason='RECLAIM_RULE_37A',
-            is_active=True
-        ).exclude(assigned_period=clean_period).exists():
-            raise ValidationError(f"Rule 37A reclaim already active in another period for invoice #{voucher.voucher_number}.")
+            # 4. Duplicate reclaim prevention across different periods
+            if GSTReportingAllocation.objects.filter(
+                voucher=locked_voucher,
+                event_type='ITC_RECLAIM',
+                allocation_reason='RECLAIM_RULE_37A',
+                is_active=True
+            ).exclude(assigned_period=clean_period).exists():
+                raise ValidationError(
+                    f"Rule 37A reclaim already active in another period for invoice #{locked_voucher.voucher_number}."
+                )
 
-        # 4. Permanent ineligibility (Section 17(5)) cannot be reclaimed
-        if GSTReportingAllocation.objects.filter(
-            voucher=voucher,
-            event_type='ITC_REVERSAL_SEC_17_5',
-            is_active=True
-        ).exists() or getattr(voucher, 'is_section_17_5_blocked', False):
-            raise ValidationError("Permanently ineligible ITC under Section 17(5) cannot be reclaimed.")
+            summary = cls.compute_voucher_monetary_summary(locked_voucher)
+            rec_date = reclaim_date or timezone.now().date()
+            v_date_str = (verification_date or rec_date).strftime('%d-%m-%Y')
+            ref_str = f" Ref: {verification_reference}" if verification_reference else ""
 
-        summary = cls.compute_voucher_monetary_summary(voucher)
-        alloc = GSTReportingAllocation.objects.create(
-            company=voucher.company,
-            voucher=voucher,
-            gst_registration=getattr(voucher, 'gst_registration', None),
-            event_type='ITC_RECLAIM',
-            voucher_date=voucher.voucher_date,
-            entry_date=timezone.now().date(),
-            original_period=voucher.voucher_date.strftime('%m%Y'),
-            assigned_period=clean_period,
-            financial_year=cls.get_financial_year(voucher.voucher_date),
-            allocation_reason='RECLAIM_RULE_37A',
-            status='APPROVED',
-            is_statutorily_eligible=True,
-            statutory_rule='Proviso to CGST Rules Rule 37A (Reclaim after supplier files GSTR-3B)',
-            statutory_notes=(
-                f"Rule 37A ITC Reclaim for invoice #{voucher.voucher_number}: supplier subsequently filed GSTR-3B."
-            ),
-            taxable_value=summary["taxable_value"],
-            igst_amount=summary["igst_amount"],
-            cgst_amount=summary["cgst_amount"],
-            sgst_amount=summary["sgst_amount"],
-            cess_amount=summary["cess_amount"],
-            total_tax=summary["total_tax"],
-            is_active=True,
-            idempotency_key=f"rule37a_rec_{voucher.company.id}_{voucher.id}_{clean_period}",
-            created_by=user
-        )
-        return alloc
+            notes = (
+                f"Rule 37A ITC Reclaim for invoice #{locked_voucher.voucher_number}: supplier subsequently filed GSTR-3B. "
+                f"Evidence: [{clean_status}] Source: {verification_source}{ref_str} Verified on: {v_date_str}."
+            )
+
+            idem_key = f"rule37a_rec_{locked_voucher.company.id}_{locked_voucher.id}_{clean_period}"
+            alloc = GSTReportingAllocation.objects.create(
+                company=locked_voucher.company,
+                voucher=locked_voucher,
+                gst_registration=getattr(locked_voucher, 'gst_registration', None),
+                event_type='ITC_RECLAIM',
+                voucher_date=locked_voucher.voucher_date,
+                entry_date=rec_date,
+                original_period=locked_voucher.voucher_date.strftime('%m%Y'),
+                assigned_period=clean_period,
+                financial_year=cls.get_financial_year(locked_voucher.voucher_date),
+                allocation_reason='RECLAIM_RULE_37A',
+                status='APPROVED',
+                is_statutorily_eligible=True,
+                statutory_rule='Proviso to CGST Rules Rule 37A (Reclaim after supplier files GSTR-3B)',
+                statutory_notes=notes,
+                taxable_value=summary["taxable_value"],
+                igst_amount=summary["igst_amount"],
+                cgst_amount=summary["cgst_amount"],
+                sgst_amount=summary["sgst_amount"],
+                cess_amount=summary["cess_amount"],
+                total_tax=summary["total_tax"],
+                is_active=True,
+                idempotency_key=idem_key,
+                created_by=user
+            )
+            return alloc

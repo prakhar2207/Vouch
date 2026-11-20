@@ -840,7 +840,7 @@ class GSTReportingAllocation(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=['voucher', 'event_type'],
-                condition=models.Q(is_active=True),
+                condition=models.Q(is_active=True) & ~models.Q(event_type='ITC_RECLAIM'),
                 name='unique_active_allocation_per_voucher_event'
             )
         ]
