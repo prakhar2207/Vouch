@@ -266,6 +266,19 @@ class VoucherService:
         from apps.protocol.operation_emitter import ProtocolOperationEmitter
         ProtocolOperationEmitter.emit_from_voucher(voucher, action='POST')
         
+        # 8. GST Reporting Allocation (Non-destructive: strictly decoupled from accounting ledgers)
+        if voucher.voucher_type in ('SALES', 'PURCHASE', 'CREDIT_NOTE', 'DEBIT_NOTE'):
+            try:
+                from apps.gst.services.allocation_service import GSTAllocationService
+                received_date = getattr(voucher, '_received_date', None)
+                GSTAllocationService.allocate_voucher(
+                    voucher,
+                    received_date=received_date,
+                    user=voucher.created_by
+                )
+            except Exception as exc:
+                logger.warning(f"GST allocation non-critical warning for voucher {voucher.id}: {exc}")
+
         return voucher
 
 
@@ -584,6 +597,13 @@ class VoucherService:
             record_id=voucher.id,
             changes={"status": "REVERSED", "reversal_voucher_id": str(rev_voucher.id)}
         )
+
+        # 8. GST Allocation Reversal Handling
+        try:
+            from apps.gst.services.allocation_service import GSTAllocationService
+            GSTAllocationService.handle_voucher_reversal(voucher, rev_voucher, user=user)
+        except Exception as exc:
+            logger.warning(f"GST allocation reversal warning for voucher {voucher.id}: {exc}")
 
         return rev_voucher
 

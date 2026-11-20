@@ -2,10 +2,50 @@ import uuid
 from decimal import Decimal
 from django.db import models
 from django.db.models import Q
+from django.core.exceptions import ValidationError
+from django.db.models.signals import pre_delete
+from django.dispatch import receiver
 from apps.companies.models import Company
 from apps.accounts.models import User
 from apps.ledgers.models import Ledger
 from apps.inventory.models import Product
+
+
+class ProtectedVoucherQuerySet(models.QuerySet):
+    """Guarantees QuerySet.delete() cannot delete posted or historical accounting vouchers."""
+    def delete(self):
+        for obj in self:
+            if obj.status in ['POSTED', 'EXPORTED', 'FILED', 'CANCELLED']:
+                raise ValidationError(
+                    f"Statutory Accounting Invariant Violation: Cannot bulk-delete voucher '{obj.voucher_number}' "
+                    f"in '{obj.status}' status. Accounting vouchers must be reversed via credit/debit notes or "
+                    f"reversal journals, never hard-deleted."
+                )
+        return super().delete()
+
+
+class ProtectedVoucherItemQuerySet(models.QuerySet):
+    """Guarantees QuerySet.delete() cannot delete line items of posted or historical vouchers."""
+    def delete(self):
+        for item in self:
+            if item.voucher and item.voucher.status in ['POSTED', 'EXPORTED', 'FILED', 'CANCELLED']:
+                raise ValidationError(
+                    f"Statutory Accounting Invariant Violation: Cannot delete line item of voucher '{item.voucher.voucher_number}' "
+                    f"in '{item.voucher.status}' status."
+                )
+        return super().delete()
+
+
+class ProtectedLedgerEntryQuerySet(models.QuerySet):
+    """Guarantees QuerySet.delete() cannot delete ledger entries of posted or historical vouchers."""
+    def delete(self):
+        for entry in self:
+            if entry.voucher and entry.voucher.status in ['POSTED', 'EXPORTED', 'FILED', 'CANCELLED']:
+                raise ValidationError(
+                    f"Statutory Accounting Invariant Violation: Cannot delete ledger entry of voucher '{entry.voucher.voucher_number}' "
+                    f"in '{entry.voucher.status}' status."
+                )
+        return super().delete()
 
 class FinancialYear(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -218,6 +258,18 @@ class Voucher(models.Model):
         self.clean()
         super().save(*args, **kwargs)
 
+    def delete(self, *args, **kwargs):
+        if self.status in ['POSTED', 'EXPORTED', 'FILED', 'CANCELLED']:
+            from django.core.exceptions import ValidationError
+            raise ValidationError(
+                f"Statutory Accounting Invariant Violation: Cannot delete voucher '{self.voucher_number}' "
+                f"in '{self.status}' status. Accounting vouchers must be reversed via credit/debit notes or "
+                f"reversal journals, never hard-deleted."
+            )
+        super().delete(*args, **kwargs)
+
+    objects = ProtectedVoucherQuerySet.as_manager()
+
     def __str__(self):
         return f"{self.voucher_number} - {self.company.name}"
 
@@ -247,6 +299,17 @@ class VoucherItem(models.Model):
     
     total_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
 
+    objects = ProtectedVoucherItemQuerySet.as_manager()
+
+    def delete(self, *args, **kwargs):
+        if self.voucher and self.voucher.status in ['POSTED', 'EXPORTED', 'FILED', 'CANCELLED']:
+            from django.core.exceptions import ValidationError
+            raise ValidationError(
+                f"Statutory Accounting Invariant Violation: Cannot delete line item of voucher '{self.voucher.voucher_number}' "
+                f"in '{self.voucher.status}' status."
+            )
+        super().delete(*args, **kwargs)
+
     class Meta:
         constraints = [
             models.CheckConstraint(
@@ -275,6 +338,17 @@ class LedgerEntry(models.Model):
     credit_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
     narration = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = ProtectedLedgerEntryQuerySet.as_manager()
+
+    def delete(self, *args, **kwargs):
+        if self.voucher and self.voucher.status in ['POSTED', 'EXPORTED', 'FILED', 'CANCELLED']:
+            from django.core.exceptions import ValidationError
+            raise ValidationError(
+                f"Statutory Accounting Invariant Violation: Cannot delete ledger entry of voucher '{self.voucher.voucher_number}' "
+                f"in '{self.voucher.status}' status."
+            )
+        super().delete(*args, **kwargs)
 
     class Meta:
         constraints = [
@@ -756,4 +830,36 @@ class IdempotencyRecord(models.Model):
 
 # Proforma Invoices & Quotations
 from .models_proforma import ProformaInvoice, ProformaItem
+
+
+# =============================================================================
+# Statutory Audit Deletion Protection Signals (Multi-Layer Defense)
+# =============================================================================
+
+@receiver(pre_delete, sender=Voucher)
+def protect_voucher_pre_delete(sender, instance, **kwargs):
+    if instance.status in ['POSTED', 'EXPORTED', 'FILED', 'CANCELLED']:
+        raise ValidationError(
+            f"Statutory Accounting Invariant Violation: Cannot delete voucher '{instance.voucher_number}' "
+            f"in '{instance.status}' status. Accounting vouchers must be reversed via credit/debit notes or "
+            f"reversal journals, never hard-deleted."
+        )
+
+
+@receiver(pre_delete, sender=VoucherItem)
+def protect_voucher_item_pre_delete(sender, instance, **kwargs):
+    if instance.voucher and instance.voucher.status in ['POSTED', 'EXPORTED', 'FILED', 'CANCELLED']:
+        raise ValidationError(
+            f"Statutory Accounting Invariant Violation: Cannot delete line item of voucher '{instance.voucher.voucher_number}' "
+            f"in '{instance.voucher.status}' status."
+        )
+
+
+@receiver(pre_delete, sender=LedgerEntry)
+def protect_ledger_entry_pre_delete(sender, instance, **kwargs):
+    if instance.voucher and instance.voucher.status in ['POSTED', 'EXPORTED', 'FILED', 'CANCELLED']:
+        raise ValidationError(
+            f"Statutory Accounting Invariant Violation: Cannot delete ledger entry of voucher '{instance.voucher.voucher_number}' "
+            f"in '{instance.voucher.status}' status."
+        )
 

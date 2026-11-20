@@ -3,8 +3,9 @@ import hashlib
 import logging
 from typing import Dict, Any, Optional, List
 from django.utils import timezone
+from django.core.exceptions import ValidationError
 from apps.companies.models import Company
-from apps.gst.models import GSTRegistration, GSTReturnWorkspace
+from apps.gst.models import GSTRegistration, GSTReturnWorkspace, GSTWorkspaceExportSnapshot
 from apps.gst.services.returns_service import GSTReturnsService
 from apps.gst.services.validation_service import GSTValidationService
 from apps.gst.services.payload_validator import GSTPayloadValidator
@@ -28,7 +29,8 @@ class GSTWorkspaceService:
         company: Company,
         start_date,
         end_date,
-        voucher_types: List[str]
+        voucher_types: List[str],
+        return_period: Optional[str] = None
     ) -> str:
         """
         Computes SHA-256 fingerprint over the set of active vouchers and their line items for the period.
@@ -36,24 +38,32 @@ class GSTWorkspaceService:
         - Voucher header (voucher_number, voucher_date, total_amount, party, GSTIN, PoS, RCM, status)
         - Voucher items (product, HSN/SAC, quantity, rate, taxable_amount, gst_rate, tax components)
         - Master ledger data affecting tax classification
+        - Voucher reporting allocations and statutory eligibility
         """
+        period_str = return_period or start_date.strftime('%m%Y')
+        from apps.gst.services.allocation_service import GSTAllocationService
+        GSTAllocationService.ensure_allocations_for_period(company, period_str)
+
         vouchers = Voucher.objects.filter(
             company=company,
             voucher_type__in=voucher_types,
-            voucher_date__gte=start_date,
-            voucher_date__lte=end_date,
+            gst_allocations__assigned_period=period_str,
+            gst_allocations__is_active=True,
+            gst_allocations__is_statutorily_eligible=True,
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        ).select_related('party_ledger').prefetch_related('items__product').order_by('id')
+        ).distinct().select_related('party_ledger').prefetch_related('items__product').order_by('id')
 
         hasher = hashlib.sha256()
         for v in vouchers:
             party_g = (v.party_ledger.gstin if v.party_ledger else '') or (v.buyer_gstin or '')
             party_pos = (v.buyer_state_code or (v.party_ledger.state_code if v.party_ledger else '') or '')
+            alloc = v.gst_allocations.filter(assigned_period=period_str, is_active=True).first()
+            alloc_str = f"alloc:{alloc.id}|{alloc.assigned_period}|{alloc.status}|{alloc.taxable_value}|{alloc.total_tax};" if alloc else "alloc:none;"
             hdr_str = (
                 f"v:{v.id}|{v.voucher_number}|{v.voucher_type}|{v.voucher_date}|"
                 f"{v.status}|{v.total_amount}|{party_g}|{party_pos}|"
                 f"{getattr(v, 'is_reverse_charge', False)}|{getattr(v, 'is_advance', False)}|"
-                f"{v.updated_at.isoformat()};"
+                f"{v.updated_at.isoformat()}|{alloc_str}"
             )
             hasher.update(hdr_str.encode('utf-8'))
 
@@ -134,7 +144,8 @@ class GSTWorkspaceService:
             company=workspace.company,
             start_date=start_date,
             end_date=end_date,
-            voucher_types=vtypes
+            voucher_types=vtypes,
+            return_period=workspace.return_period
         )
 
         is_stale = (current_hash != workspace.source_voucher_hash)
@@ -154,6 +165,9 @@ class GSTWorkspaceService:
         Compiles the official return draft snapshot and runs comprehensive validation.
         Retains an immutable snapshot in draft_payload.
         """
+        if workspace.status == 'FILED':
+            raise ValidationError("Cannot regenerate draft for an already FILED return workspace.")
+
         start_date, end_date, period_code, fy = GSTReturnsService.parse_period(workspace.return_period)
         vtypes = ['SALES', 'CREDIT_NOTE', 'DEBIT_NOTE'] if workspace.return_type == 'GSTR1' else ['SALES', 'PURCHASE', 'CREDIT_NOTE', 'DEBIT_NOTE']
 
@@ -163,7 +177,8 @@ class GSTWorkspaceService:
             registration=workspace.gst_registration,
             start_date=start_date,
             end_date=end_date,
-            return_type=workspace.return_type
+            return_type=workspace.return_type,
+            return_period=workspace.return_period
         )
 
         # 2. Compile Draft
@@ -194,13 +209,14 @@ class GSTWorkspaceService:
             company=workspace.company,
             start_date=start_date,
             end_date=end_date,
-            voucher_types=vtypes
+            voucher_types=vtypes,
+            return_period=workspace.return_period
         )
 
         # 4. Status Transition
         if val_res["error_count"] > 0:
             new_status = 'VALIDATION_REQUIRED'
-        elif workspace.status in ['NOT_STARTED', 'VALIDATION_REQUIRED']:
+        elif workspace.status in ['NOT_STARTED', 'VALIDATION_REQUIRED', 'EXPORTED']:
             new_status = 'DRAFT'
         else:
             new_status = workspace.status
@@ -314,6 +330,20 @@ class GSTWorkspaceService:
         # 5. Deterministic Payload Hash
         payload_canonical = json.dumps(official_payload, sort_keys=True, separators=(',', ':'))
         payload_hash = hashlib.sha256(payload_canonical.encode('utf-8')).hexdigest()
+
+        # 5b. Persist Immutable Historical Export Snapshot
+        GSTWorkspaceExportSnapshot.objects.create(
+            workspace=workspace,
+            company=workspace.company,
+            return_type=workspace.return_type,
+            return_period=workspace.return_period,
+            export_format=fmt,
+            payload_hash=payload_hash,
+            source_voucher_hash=workspace.source_voucher_hash or '',
+            exported_payload=official_payload,
+            summary=workspace.tax_liability_summary or {},
+            exported_by=None
+        )
 
         # 6. Format Content Selection & Portal Compatibility Notice
         is_portal_uploadable = (workspace.return_type == 'GSTR1' and fmt == 'JSON')
