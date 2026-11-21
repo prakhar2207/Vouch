@@ -21,6 +21,8 @@ jobs:
     name: Backend Audit, PG18 Binary DR & Redis/Celery Worker
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      GST_ENCRYPTION_KEY: '1XxlyIyQuZPNNYUELXz9FQ2RICOBa3VS4tK621QXdHg='
     services:
       postgres:
         image: postgres:18
@@ -69,6 +71,7 @@ jobs:
           DEBUG: 'False'
           SECURE_SSL_REDIRECT: 'False'
           SECRET_KEY: 'ci-verification-ephemeral-secret-key-not-production'
+          GST_ENCRYPTION_KEY: '1XxlyIyQuZPNNYUELXz9FQ2RICOBa3VS4tK621QXdHg='
           DATABASE_URL: 'postgresql://srilekh_ci:srilekh_ci_password@127.0.0.1:5432/neondb_ci_staging'
           TESTING_DATABASE_URL: 'postgresql://srilekh_ci:srilekh_ci_password@127.0.0.1:5432/neondb_ci_staging'
           REDIS_URL: 'redis://127.0.0.1:6379/0'
@@ -90,6 +93,7 @@ jobs:
           ENVIRONMENT: staging
           DEBUG: 'False'
           SECRET_KEY: 'ci-verification-ephemeral-secret-key-not-production'
+          GST_ENCRYPTION_KEY: '1XxlyIyQuZPNNYUELXz9FQ2RICOBa3VS4tK621QXdHg='
           DATABASE_URL: 'postgresql://srilekh_ci:srilekh_ci_password@127.0.0.1:5432/neondb_ci_staging'
           REDIS_URL: 'redis://127.0.0.1:6379/0'
           PGPASSWORD: srilekh_ci_password
@@ -110,6 +114,7 @@ jobs:
           ENVIRONMENT: staging
           DEBUG: 'False'
           SECRET_KEY: 'ci-verification-ephemeral-secret-key-not-production'
+          GST_ENCRYPTION_KEY: '1XxlyIyQuZPNNYUELXz9FQ2RICOBa3VS4tK621QXdHg='
           DATABASE_URL: 'postgresql://srilekh_ci:srilekh_ci_password@127.0.0.1:5432/neondb_ci_staging'
           REDIS_URL: 'redis://127.0.0.1:6379/0'
           CELERY_TASK_ALWAYS_EAGER: 'False'

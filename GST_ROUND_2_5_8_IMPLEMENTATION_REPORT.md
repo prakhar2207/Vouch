@@ -159,3 +159,18 @@ A  apps/gst/tests_round2_5_8_rule37a_evidence_integrity.py
   - Staging database fingerprint: `6f4741bdaaf4` verified.
   - Concurrency serialization verified with PostgreSQL row-level locks.
 - **Verdict:** `PASS — CERTIFIED READY FOR INTEGRATION REVIEW`.
+
+---
+
+## 7. CI Pipeline Remediation (`stage-verification-ci.yml`)
+
+### Root Cause Analysis of CI Failure:
+In GitHub Actions workflow run `44734746187` (`Backend Audit, PG18 Binary DR & Redis/Celery Worker`), step `Run Core Security, Auth, Deletion & Upload Tests (PG 18)` halted during `python manage.py check`:
+```
+apps.gst.encryption: (gst.E002) GST Credential Encryption provider failed to initialize: FATAL SECURITY CONFIGURATION: Dedicated GST encryption key (GST_ENCRYPTION_KEY) must be explicitly configured in environment 'staging'. Fallback to Django SECRET_KEY is disabled to prevent cross subsystem credential loss.
+settings.GST_ENCRYPTION_KEY: (gst.E001) Dedicated GST encryption key (GST_ENCRYPTION_KEY) is not configured in live environment.
+```
+
+- **Diagnosis:** The CI workflow step configures `ENVIRONMENT: staging` to simulate staging security checks. While `SECRET_KEY`, `DATABASE_URL`, and `REDIS_URL` were provisioned, `GST_ENCRYPTION_KEY` was omitted. Because `.env` is gitignored and not present on GitHub Actions runners, Django's startup check `check_gst_encryption_configuration` correctly blocked execution in accordance with the mandatory security policy.
+- **Resolution:** Configured `GST_ENCRYPTION_KEY: '1XxlyIyQuZPNNYUELXz9FQ2RICOBa3VS4tK621QXdHg='` (valid 44-character base64 Fernet key) at both the job level (`jobs.backend-security-dr-celery.env`) and explicitly in each backend execution step (`Run Core Security...`, `Exercise Native PostgreSQL 18 Binary Backup...`, and `Verify Live Redis 7...`).
+- **Local Simulation:** Executed `cmd /c "set ENVIRONMENT=staging&& set DEBUG=False&& set SECRET_KEY=ci-verification-ephemeral-secret-key-not-production&& set GST_ENCRYPTION_KEY=1XxlyIyQuZPNNYUELXz9FQ2RICOBa3VS4tK621QXdHg=&& python manage.py check"`. Output: `System check identified no issues (0 silenced)`. Exited code 0.
