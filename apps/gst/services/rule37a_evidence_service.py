@@ -1,5 +1,5 @@
 import hashlib
-from datetime import date, datetime, timezone as dt_timezone
+from datetime import date, datetime, timedelta, timezone as dt_timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Union
 
@@ -515,8 +515,27 @@ class Rule37AEvidenceService:
         clean_source = str(evidence_source).strip().upper()
 
         # 5. Require verification timestamp
-        if not verification_timestamp:
+        if not verification_timestamp or (isinstance(verification_timestamp, str) and not verification_timestamp.strip()):
             raise ValidationError("Rule 37A reversal requires a verification timestamp.")
+
+        vt = None
+        if isinstance(verification_timestamp, datetime):
+            vt = verification_timestamp
+        elif isinstance(verification_timestamp, date):
+            vt = datetime.combine(verification_timestamp, datetime.min.time(), tzinfo=timezone.get_current_timezone())
+        elif isinstance(verification_timestamp, str):
+            try:
+                vt = datetime.fromisoformat(verification_timestamp.strip())
+            except (ValueError, TypeError):
+                raise ValidationError("Rule 37A reversal requires a valid verification timestamp.")
+        else:
+            raise ValidationError("Rule 37A reversal requires a valid verification timestamp.")
+
+        if timezone.is_naive(vt):
+            vt = timezone.make_aware(vt, timezone.get_current_timezone())
+
+        if vt > timezone.now() + timedelta(minutes=5):
+            raise ValidationError("Verification timestamp cannot be in the future.")
 
         # 6. Reject inconclusive or unknown statuses
         if clean_status == 'DATA_UNAVAILABLE':
@@ -550,8 +569,8 @@ class Rule37AEvidenceService:
             raise ValidationError(
                 "Cannot execute Rule 37A reversal: Supplier filing evidence is stale (>30 days old). Re-verification required from GSTN."
             )
-        if verification_timestamp:
-            age_days = (timezone.now() - verification_timestamp).days
+        if vt:
+            age_days = (timezone.now() - vt).days
             if age_days > freshness_threshold_days:
                 raise ValidationError(
                     f"Cannot execute Rule 37A reversal: Verification timestamp is {age_days} days old (exceeds {freshness_threshold_days}-day threshold). "

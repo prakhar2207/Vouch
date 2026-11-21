@@ -1432,7 +1432,11 @@ class GSTAllocationService:
         supplier_gstin: str = '',
         is_stale_evidence: bool = False,
         evidence_source: Optional[str] = None,
-        verification_timestamp: Optional[datetime] = None,
+        verification_timestamp: Optional[Union[datetime, date, str]] = None,
+        evidence_record: Optional[Any] = None,
+        evidence_document_ref: Optional[str] = None,
+        manual_verification_reason: Optional[str] = None,
+        user: Optional[Any] = None,
         freshness_threshold_days: int = 30
     ) -> Dict[str, Any]:
         """
@@ -1442,6 +1446,7 @@ class GSTAllocationService:
         - Distinguishes: VERIFIED_FILED, VERIFIED_NOT_FILED, DATA_UNAVAILABLE, MANUALLY_CONFIRMED, PENDING, UNKNOWN
         - Invariant: UNKNOWN, DATA_UNAVAILABLE, PENDING, null, and missing evidence NEVER establish default!
         - Raw boolean (e.g. False or True) without independently validated evidence NEVER establishes filing state!
+        - Fail-Closed: Missing, malformed, future, or stale verification timestamp strictly converts to DATA_UNAVAILABLE.
         """
         v_date = voucher.voucher_date
         fy = cls.get_financial_year(v_date)
@@ -1484,38 +1489,133 @@ class GSTAllocationService:
             is_supplier_default = False
             default_reason = 'Supplier filing manually confirmed by accountant with documentary evidence.'
         elif clean_status == 'VERIFIED_NOT_FILED':
+            # 1. GSTIN Validation
             if not clean_supp_gstin or not clean_inv_gstin or clean_supp_gstin != clean_inv_gstin:
                 clean_status = 'DATA_UNAVAILABLE'
                 is_supplier_default = False
                 default_reason = f"Supplier GSTIN '{supplier_gstin}' does not match invoice supplier GSTIN '{inv_gstin}'. Default cannot be evaluated."
+
+            # 2. Return Period Validation
             elif not clean_period or clean_period != inv_period:
                 clean_status = 'DATA_UNAVAILABLE'
                 is_supplier_default = False
                 default_reason = f"Supplier filing evidence period '{supplier_return_period}' does not match invoice return period '{inv_period}'. Non-filing cannot be assumed."
+
+            # 3. Explicit Stale Evidence Flag
             elif is_stale_evidence:
                 clean_status = 'DATA_UNAVAILABLE'
                 is_supplier_default = False
                 default_reason = 'Supplier filing evidence is stale (>30 days old). Re-verification required from GSTN.'
-            elif verification_timestamp is not None:
-                vt_date = verification_timestamp.date() if isinstance(verification_timestamp, datetime) else verification_timestamp
-                ref_date = check_date if (check_date and check_date >= vt_date) else timezone.now().date()
-                age_days = (ref_date - vt_date).days
-                if age_days > freshness_threshold_days or age_days < 0:
+
+            # 4. Mandatory Verification Timestamp Validation (Fail-Closed)
+            elif not verification_timestamp or (isinstance(verification_timestamp, str) and not verification_timestamp.strip()):
+                clean_status = 'DATA_UNAVAILABLE'
+                is_supplier_default = False
+                default_reason = 'Missing verification timestamp on supplier filing evidence. Provenance cannot be established.'
+
+            else:
+                # Parse timestamp and validate freshness / validity
+                vt_parsed = None
+                if isinstance(verification_timestamp, datetime):
+                    vt_parsed = verification_timestamp
+                elif isinstance(verification_timestamp, date):
+                    vt_parsed = datetime.combine(verification_timestamp, datetime.min.time(), tzinfo=timezone.get_current_timezone())
+                elif isinstance(verification_timestamp, str):
+                    try:
+                        vt_parsed = datetime.fromisoformat(verification_timestamp.strip())
+                    except (ValueError, TypeError):
+                        vt_parsed = None
+
+                if vt_parsed is None:
                     clean_status = 'DATA_UNAVAILABLE'
                     is_supplier_default = False
-                    default_reason = f"Supplier filing verification timestamp is stale ({age_days} days old). Re-verification required from GSTN."
-                elif today >= default_date:
-                    is_supplier_default = True
-                    default_reason = f"Supplier confirmed NOT FILED as of {today.strftime('%d-%m-%Y')} (past 30-Sep default date {default_date.strftime('%d-%m-%Y')})."
+                    default_reason = 'Malformed or invalid verification timestamp on supplier filing evidence.'
                 else:
-                    is_supplier_default = False
-                    default_reason = f"Statutory default date ({default_date.strftime('%d-%m-%Y')}) not yet reached."
-            elif today >= default_date:
-                is_supplier_default = True
-                default_reason = f"Supplier confirmed NOT FILED as of {today.strftime('%d-%m-%Y')} (past 30-Sep default date {default_date.strftime('%d-%m-%Y')})."
-            else:
-                is_supplier_default = False
-                default_reason = f"Statutory default date ({default_date.strftime('%d-%m-%Y')}) not yet reached."
+                    if timezone.is_naive(vt_parsed):
+                        vt_parsed = timezone.make_aware(vt_parsed, timezone.get_current_timezone())
+
+                    now = timezone.now()
+                    ref_date = check_date if (check_date and check_date >= vt_parsed.date()) else now.date()
+
+                    # Future timestamp check (future relative to wall-clock or future relative to post-wall-clock check_date)
+                    is_future = False
+                    if vt_parsed > now + timedelta(minutes=5):
+                        is_future = True
+                    elif check_date and vt_parsed.date() > check_date and check_date >= now.date():
+                        is_future = True
+
+                    if is_future:
+                        clean_status = 'DATA_UNAVAILABLE'
+                        is_supplier_default = False
+                        default_reason = 'Supplier filing verification timestamp is in the future. Invalid evidence.'
+                    else:
+                        age_days = (ref_date - vt_parsed.date()).days
+                        if age_days > freshness_threshold_days or age_days < 0:
+                            clean_status = 'DATA_UNAVAILABLE'
+                            is_supplier_default = False
+                            default_reason = f"Supplier filing verification timestamp is stale ({age_days} days old). Re-verification required from GSTN."
+                        else:
+                            # 5. Evidence Source & Record Provenance Validation
+                            clean_source = (evidence_source or '').strip().upper()
+                            if not clean_source or not evidence_record:
+                                resolved = Rule37AEvidenceService.resolve_voucher_evidence(voucher, freshness_threshold_days=freshness_threshold_days)
+                                if not clean_source and resolved.get("evidence_source"):
+                                    clean_source = resolved["evidence_source"].strip().upper()
+                                    evidence_source = resolved["evidence_source"]
+                                if not evidence_record and resolved.get("evidence_record"):
+                                    evidence_record = resolved["evidence_record"]
+
+                            valid_sources = {'PORTAL', 'GSTN_PORTAL', 'GSTR2B', 'SUPPLIER_RECORD', 'MANUAL'}
+                            if not clean_source or clean_source in ('NONE', 'CONFLICTING_SOURCES', 'AMBIGUOUS_SOURCES') or clean_source not in valid_sources:
+                                clean_status = 'DATA_UNAVAILABLE'
+                                is_supplier_default = False
+                                default_reason = f"Missing or invalid evidence source '{evidence_source}'. Provenance cannot be verified."
+                            elif clean_source == 'MANUAL':
+                                # Manual verification pathway
+                                has_manual = bool(
+                                    str(evidence_document_ref or '').strip() and
+                                    str(manual_verification_reason or '').strip() and
+                                    (user or getattr(voucher, 'user', None))
+                                )
+                                if not has_manual:
+                                    clean_status = 'DATA_UNAVAILABLE'
+                                    is_supplier_default = False
+                                    default_reason = 'Manual verification pathway requires documentary reference, documented reason, and authorizing user.'
+                                elif today >= default_date:
+                                    is_supplier_default = True
+                                    default_reason = f"Supplier confirmed NOT FILED as of {today.strftime('%d-%m-%Y')} (past 30-Sep default date {default_date.strftime('%d-%m-%Y')})."
+                                else:
+                                    is_supplier_default = False
+                                    default_reason = f"Statutory default date ({default_date.strftime('%d-%m-%Y')}) not yet reached."
+                            else:
+                                # Supporting evidence record validation
+                                has_record = False
+                                if evidence_record:
+                                    if isinstance(evidence_record, SupplierGSTR3BFilingRecord):
+                                        if (str(evidence_record.company_id) == str(voucher.company_id) and
+                                            evidence_record.supplier_gstin.strip().upper() == clean_supp_gstin and
+                                            evidence_record.return_period.strip() == clean_period and
+                                            evidence_record.status == 'VERIFIED_NOT_FILED' and
+                                            not evidence_record.is_stale(threshold_days=freshness_threshold_days)):
+                                            has_record = True
+                                    elif isinstance(evidence_record, GSTR2BRecord):
+                                        if (str(evidence_record.company_id) == str(voucher.company_id) and
+                                            evidence_record.supplier_gstin.strip().upper() == clean_supp_gstin and
+                                            evidence_record.gstr3b_return_period.strip() == clean_period and
+                                            evidence_record.gstr3b_status == 'NOT_FILED' and
+                                            not evidence_record.is_gstr3b_stale(threshold_days=freshness_threshold_days)):
+                                            has_record = True
+
+                                if not has_record:
+                                    clean_status = 'DATA_UNAVAILABLE'
+                                    is_supplier_default = False
+                                    default_reason = 'Supporting SupplierGSTR3BFilingRecord or GSTR2BRecord evidence is missing or unverified.'
+                                elif today >= default_date:
+                                    is_supplier_default = True
+                                    default_reason = f"Supplier confirmed NOT FILED as of {today.strftime('%d-%m-%Y')} (past 30-Sep default date {default_date.strftime('%d-%m-%Y')})."
+                                else:
+                                    is_supplier_default = False
+                                    default_reason = f"Statutory default date ({default_date.strftime('%d-%m-%Y')}) not yet reached."
         else: # UNKNOWN
             is_supplier_default = False
             default_reason = 'Supplier status UNKNOWN. Verification required.'

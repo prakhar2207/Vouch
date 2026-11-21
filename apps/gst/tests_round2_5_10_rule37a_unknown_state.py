@@ -400,7 +400,9 @@ class Rule37AUnknownStateTestCase(TestCase):
             supplier_return_period=ev_res["return_period"],
             supplier_gstin=ev_res["supplier_gstin"],
             is_stale_evidence=ev_res["is_stale"],
-            verification_timestamp=ev_res["verification_timestamp"]
+            verification_timestamp=ev_res["verification_timestamp"],
+            evidence_source=ev_res["evidence_source"],
+            evidence_record=ev_res["evidence_record"]
         )
         self.assertEqual(st["supplier_status"], 'VERIFIED_NOT_FILED')
         self.assertTrue(st["is_supplier_default"])
@@ -563,6 +565,32 @@ class Rule37AUnknownStateTestCase(TestCase):
                 verification_timestamp=None
             )
         self.assertIn("requires a verification timestamp", str(ctx.exception))
+
+        # Case D: evaluate_rule37a_status with verification_timestamp=None (Fail-Closed)
+        st_no_ts = GSTAllocationService.evaluate_rule37a_status(
+            voucher=self.voucher,
+            check_date=self.eval_date,
+            supplier_status='VERIFIED_NOT_FILED',
+            supplier_gstin=self.supplier_gstin,
+            supplier_return_period=self.inv_period,
+            verification_timestamp=None
+        )
+        self.assertEqual(st_no_ts["supplier_status"], 'DATA_UNAVAILABLE')
+        self.assertFalse(st_no_ts["is_supplier_default"])
+        self.assertIn("missing", st_no_ts["default_reason"].lower())
+
+        # Case E: evaluate_rule37a_status with empty verification_timestamp="" (Fail-Closed)
+        st_empty_ts = GSTAllocationService.evaluate_rule37a_status(
+            voucher=self.voucher,
+            check_date=self.eval_date,
+            supplier_status='VERIFIED_NOT_FILED',
+            supplier_gstin=self.supplier_gstin,
+            supplier_return_period=self.inv_period,
+            verification_timestamp=""
+        )
+        self.assertEqual(st_empty_ts["supplier_status"], 'DATA_UNAVAILABLE')
+        self.assertFalse(st_empty_ts["is_supplier_default"])
+        self.assertIn("missing", st_empty_ts["default_reason"].lower())
 
     # -------------------------------------------------------------------------
     # R25910-13: Deadline checker receives no evidence -> Must not create a reversal

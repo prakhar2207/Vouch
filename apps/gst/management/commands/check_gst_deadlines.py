@@ -136,7 +136,10 @@ class Command(BaseCommand):
                     supplier_return_period=ev_res["return_period"],
                     supplier_gstin=ev_res["supplier_gstin"],
                     is_stale_evidence=ev_res["is_stale"],
-                    verification_timestamp=ev_res.get("verification_timestamp")
+                    verification_timestamp=ev_res.get("verification_timestamp"),
+                    evidence_source=ev_res.get("evidence_source"),
+                    evidence_record=ev_res.get("evidence_record"),
+                    evidence_document_ref=ev_res.get("document_ref")
                 )
 
                 if r37a_res["supplier_status"] == 'VERIFIED_FILED':
