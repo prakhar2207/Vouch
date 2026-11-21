@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 from decimal import Decimal
 from django.db import models
@@ -522,6 +523,125 @@ class SupplierGSTR3BFilingRecord(models.Model):
 
     def __str__(self):
         return f"{self.supplier_gstin} - {self.return_period}: {self.status} (ARN: {self.arn or 'None'})"
+
+
+class Rule37AManualFilingEvidence(models.Model):
+    """
+    Dedicated, authoritative persisted record for Rule 37A manual filing verification.
+    Required by Section 16(2)(c) and Rule 37A to prevent unauthenticated, unpersisted,
+    or arbitrary string-based manual reclaim authorizations.
+    """
+    DOCUMENT_TYPE_CHOICES = (
+        ('CA_CERTIFICATE', 'Chartered Accountant Certificate'),
+        ('TAX_CHALLAN_CIN', 'Tax Payment Challan (CIN)'),
+        ('VENDOR_AFFIDAVIT', 'Vendor Sworn Affidavit'),
+        ('PORTAL_SCREENSHOT', 'Direct Portal Filing Proof'),
+        ('OTHER', 'Other Statutory Proof'),
+    )
+
+    STATUS_CHOICES = (
+        ('DRAFT', 'Draft'),
+        ('SUBMITTED', 'Submitted for Approval'),
+        ('APPROVED', 'Approved by Authorized Verifier'),
+        ('REJECTED', 'Rejected'),
+        ('INVALIDATED', 'Invalidated / Superseded'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='rule37a_manual_evidences', db_index=True)
+    voucher = models.ForeignKey(Voucher, on_delete=models.CASCADE, related_name='rule37a_manual_evidences', db_index=True)
+    supplier_gstin = models.CharField(max_length=15, db_index=True)
+    return_period = models.CharField(max_length=7, db_index=True)  # Normalized MMYYYY
+    evidence_document_type = models.CharField(max_length=50, default='CA_CERTIFICATE', choices=DOCUMENT_TYPE_CHOICES)
+    evidence_document_ref = models.CharField(max_length=255)
+    verification_reason = models.TextField()
+    status = models.CharField(max_length=20, default='DRAFT', choices=STATUS_CHOICES, db_index=True)
+    verifier_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='rule37a_verified_evidences'
+    )
+    verifier_role = models.CharField(max_length=50, blank=True, default='')
+    verification_timestamp = models.DateTimeField(default=timezone.now)
+    evidence_hash = models.CharField(max_length=64, blank=True, default='', db_index=True)
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='rule37a_manual_evidences_created'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='rule37a_manual_evidences_approved'
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+
+    rejected_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='rule37a_manual_evidences_rejected'
+    )
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True, default='')
+
+    invalidated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='rule37a_manual_evidences_invalidated'
+    )
+    invalidated_at = models.DateTimeField(null=True, blank=True)
+    invalidation_reason = models.TextField(blank=True, default='')
+
+    superseded_by = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='superseded_by_records'
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['company', 'voucher', 'status']),
+            models.Index(fields=['company', 'supplier_gstin', 'return_period']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['voucher', 'return_period'],
+                condition=models.Q(status='APPROVED'),
+                name='unique_active_approved_manual_evidence_per_voucher_period'
+            )
+        ]
+
+    def compute_fingerprint(self) -> str:
+        raw_payload = (
+            f"{str(self.company_id)}|{str(self.voucher_id)}|{self.supplier_gstin.strip().upper()}|"
+            f"{self.return_period.strip()}|MANUAL|{self.status.strip().upper()}|"
+            f"{self.evidence_document_type.strip()}|"
+            f"{self.evidence_document_ref.strip()}|"
+            f"{self.verification_timestamp.isoformat() if self.verification_timestamp else ''}"
+        )
+        return hashlib.sha256(raw_payload.encode('utf-8')).hexdigest()
+
+    def save(self, *args, **kwargs):
+        if not self.evidence_hash or self.status == 'APPROVED':
+            self.evidence_hash = self.compute_fingerprint()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"ManualEvidence #{self.id} [{self.status}] Voucher:{self.voucher_id} Period:{self.return_period}"
 
 
 class GSTFilingRecord(models.Model):

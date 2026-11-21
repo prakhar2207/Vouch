@@ -1929,89 +1929,23 @@ class GSTAllocationService:
         - Atomic transaction & row-level locking concurrency protection
         """
         clean_period = assigned_period.strip().replace('-', '').replace('/', '')
-
-        # Block Section 17(5) permanently ineligible credit upfront
-        if getattr(voucher, 'is_section_17_5_blocked', False) or GSTReportingAllocation.objects.filter(
-            voucher=voucher,
-            event_type='ITC_REVERSAL_SEC_17_5',
-            is_active=True
-        ).exists():
-            raise ValidationError("Permanently ineligible ITC under Section 17(5) cannot be reclaimed.")
-
-        # Resolve evidence details using fallback if needed
-        inv_period = voucher.voucher_date.strftime('%m%Y')
-        p_gstin = Rule37AEvidenceService.resolve_supplier_gstin(voucher)
-        eff_gstin = supplier_gstin or p_gstin
-        eff_period = supplier_return_period or gstr3b_return_period or inv_period
-
-        # Auto-lookup supporting evidence record if not passed
-        arn_str = str(gstr3b_arn or verification_reference or "").strip()
-        g3b_date = gstr3b_filing_date
-        clean_status = (supplier_status or "").strip().upper()
-
-        if not clean_status and supplier_gstr3b_filed is True:
-            clean_status = 'VERIFIED_FILED'
-
-        if clean_status == 'VERIFIED_FILED' and (not g3b_date or not arn_str):
-            # Look up SupplierGSTR3BFilingRecord or GSTR2BRecord
-            supp_rec = SupplierGSTR3BFilingRecord.objects.filter(
-                company=voucher.company,
-                supplier_gstin=eff_gstin,
-                return_period=eff_period
-            ).first() if eff_gstin else None
-            g2b_rec = GSTR2BRecord.objects.filter(
-                company=voucher.company,
-                matched_voucher=voucher
-            ).first()
-
-            if supp_rec and supp_rec.status == 'VERIFIED_FILED':
-                g3b_date = g3b_date or supp_rec.filing_date
-                arn_str = arn_str or supp_rec.arn
-                evidence_record = evidence_record or supp_rec
-            elif g2b_rec and g2b_rec.gstr3b_filing_date and g2b_rec.supplier_gstin.strip().upper() == eff_gstin:
-                norm_p = Rule37AEvidenceService.normalize_and_validate_return_period(g2b_rec.gstr3b_return_period)
-                if norm_p and norm_p == eff_period:
-                    g3b_date = g3b_date or g2b_rec.gstr3b_filing_date
-                    arn_str = arn_str or g2b_rec.gstr3b_filing_arn
-                    evidence_record = evidence_record or g2b_rec
-            elif g2b_rec and g2b_rec.gstr1_filing_date and not g2b_rec.gstr3b_filing_date:
-                raise ValidationError(
-                    "Cannot reclaim under Rule 37A: Supplier has filed GSTR-1, but affirmative proof of GSTR-3B return "
-                    "filing (filing date / ARN) is required. GSTR-1 outward declaration does not discharge tax liability under Section 16(2)(c)."
-                )
-
-        eff_verif_date = verification_timestamp or verification_date
-
-        # Authoritative positive filing evidence validation
-        validated = Rule37AEvidenceService.validate_reclaim_evidence(
-            voucher=voucher,
-            supplier_status=clean_status,
-            supplier_gstin=eff_gstin,
-            supplier_return_period=eff_period,
-            verification_source=verification_source,
-            verification_reference=arn_str,
-            verification_date=eff_verif_date,
-            verification_timestamp=eff_verif_date,
-            gstr3b_filing_date=g3b_date,
-            gstr3b_arn=arn_str,
-            user=user,
-            manual_verification_reason=manual_verification_reason,
-            evidence_record=evidence_record,
-            freshness_threshold_days=freshness_threshold_days
-        )
+        norm_assigned = Rule37AEvidenceService.normalize_and_validate_return_period(clean_period)
+        if not norm_assigned:
+            raise ValidationError(f"Invalid assigned return period '{assigned_period}'. Must be MMYYYY format.")
 
         with transaction.atomic():
+            # 1. Lock the voucher using select_for_update()
             locked_voucher = Voucher.objects.select_for_update().get(id=voucher.id)
 
-            # 1. Permanent ineligibility (Section 17(5)) cannot be reclaimed
-            if GSTReportingAllocation.objects.filter(
+            # Block Section 17(5) permanently ineligible credit upfront
+            if getattr(voucher, 'is_section_17_5_blocked', False) or getattr(locked_voucher, 'is_section_17_5_blocked', False) or GSTReportingAllocation.objects.filter(
                 voucher=locked_voucher,
                 event_type='ITC_REVERSAL_SEC_17_5',
                 is_active=True
-            ).exists() or getattr(locked_voucher, 'is_section_17_5_blocked', False):
+            ).exists():
                 raise ValidationError("Permanently ineligible ITC under Section 17(5) cannot be reclaimed.")
 
-            # 2. Mandatory prior active Rule 37A reversal (CANNOT BE BYPASSED)
+            # 2. Lock the selected active Rule 37A reversal allocation (CANNOT BE BYPASSED)
             if source_reversal_id:
                 rev_candidate = GSTReportingAllocation.objects.select_for_update().filter(
                     id=source_reversal_id,
@@ -2040,6 +1974,82 @@ class GSTAllocationService:
             # Tenant isolation validation on reversal
             if str(prior_rev.company_id) != str(locked_voucher.company_id) or str(prior_rev.voucher_id) != str(locked_voucher.id):
                 raise ValidationError("Reversal allocation does not belong to the locked voucher company or voucher.")
+
+            # 3. Resolve and Lock Authoritative Evidence Record Inside Transaction
+            from apps.gst.models import Rule37AManualFilingEvidence
+            inv_period = locked_voucher.voucher_date.strftime('%m%Y')
+            p_gstin = Rule37AEvidenceService.resolve_supplier_gstin(locked_voucher)
+            eff_gstin = (supplier_gstin or p_gstin or "").strip().upper()
+            eff_period = supplier_return_period or gstr3b_return_period or inv_period
+            clean_status = (supplier_status or "").strip().upper()
+            if not clean_status and supplier_gstr3b_filed is True:
+                clean_status = 'VERIFIED_FILED'
+
+            arn_str = str(gstr3b_arn or verification_reference or "").strip()
+            g3b_date = gstr3b_filing_date
+            eff_verif_date = verification_timestamp or verification_date
+            locked_evidence = None
+
+            if clean_status == 'MANUALLY_CONFIRMED':
+                if evidence_record and isinstance(evidence_record, Rule37AManualFilingEvidence):
+                    locked_evidence = Rule37AManualFilingEvidence.objects.select_for_update().filter(id=evidence_record.id).first()
+                else:
+                    locked_evidence = Rule37AManualFilingEvidence.objects.select_for_update().filter(
+                        company=locked_voucher.company,
+                        voucher=locked_voucher,
+                        supplier_gstin=eff_gstin,
+                        return_period=eff_period
+                    ).order_by('-verification_timestamp').first()
+            elif clean_status == 'VERIFIED_FILED':
+                if evidence_record:
+                    if isinstance(evidence_record, SupplierGSTR3BFilingRecord):
+                        locked_evidence = SupplierGSTR3BFilingRecord.objects.select_for_update().filter(id=evidence_record.id).first()
+                    elif isinstance(evidence_record, GSTR2BRecord):
+                        locked_evidence = GSTR2BRecord.objects.select_for_update().filter(id=evidence_record.id).first()
+                else:
+                    supp_rec = SupplierGSTR3BFilingRecord.objects.select_for_update().filter(
+                        company=locked_voucher.company,
+                        supplier_gstin=eff_gstin,
+                        return_period=eff_period
+                    ).first() if eff_gstin else None
+                    g2b_rec = GSTR2BRecord.objects.select_for_update().filter(
+                        company=locked_voucher.company,
+                        matched_voucher=locked_voucher
+                    ).first()
+
+                    if supp_rec and supp_rec.status == 'VERIFIED_FILED':
+                        g3b_date = g3b_date or supp_rec.filing_date
+                        arn_str = arn_str or supp_rec.arn
+                        locked_evidence = supp_rec
+                    elif g2b_rec and g2b_rec.gstr3b_filing_date and g2b_rec.supplier_gstin.strip().upper() == eff_gstin:
+                        norm_p = Rule37AEvidenceService.normalize_and_validate_return_period(g2b_rec.gstr3b_return_period)
+                        if norm_p and norm_p == eff_period:
+                            g3b_date = g3b_date or g2b_rec.gstr3b_filing_date
+                            arn_str = arn_str or g2b_rec.gstr3b_filing_arn
+                            locked_evidence = g2b_rec
+                    elif g2b_rec and g2b_rec.gstr1_filing_date and not g2b_rec.gstr3b_filing_date:
+                        raise ValidationError(
+                            "Cannot reclaim under Rule 37A: Supplier has filed GSTR-1, but affirmative proof of GSTR-3B return "
+                            "filing (filing date / ARN) is required. GSTR-1 outward declaration does not discharge tax liability under Section 16(2)(c)."
+                        )
+
+            # 4. Revalidate complete evidence contract holding the locks
+            validated = Rule37AEvidenceService.validate_reclaim_evidence(
+                voucher=locked_voucher,
+                supplier_status=clean_status,
+                supplier_gstin=eff_gstin,
+                supplier_return_period=eff_period,
+                verification_source=verification_source,
+                verification_reference=arn_str,
+                verification_date=eff_verif_date,
+                verification_timestamp=eff_verif_date,
+                gstr3b_filing_date=g3b_date,
+                gstr3b_arn=arn_str,
+                user=user,
+                manual_verification_reason=manual_verification_reason,
+                evidence_record=locked_evidence,
+                freshness_threshold_days=freshness_threshold_days
+            )
 
             # 3. Duplicate reclaim in same period prevention and idempotency
             idem_key = f"rule37a_rec_{locked_voucher.company.id}_{locked_voucher.id}_{clean_period}"
@@ -2157,7 +2167,7 @@ class GSTAllocationService:
             )
 
             # Create lineage link
-            GSTReversalReclaimLineage.objects.create(
+            lineage = GSTReversalReclaimLineage.objects.create(
                 company=locked_voucher.company,
                 voucher=locked_voucher,
                 reversal_allocation=prior_rev,
@@ -2170,6 +2180,9 @@ class GSTAllocationService:
                 statutory_rule='RULE_37A',
                 created_by=user
             )
+
+            if str(lineage.reclaim_allocation_id) != str(alloc.id) or str(lineage.reversal_allocation_id) != str(prior_rev.id):
+                raise ValidationError("Failed to establish consistent reversal-to-reclaim lineage.")
 
             return alloc
 

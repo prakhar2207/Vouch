@@ -31,7 +31,7 @@ from django.test import TestCase, TransactionTestCase
 from django.utils import timezone
 
 from apps.accounting.models import Voucher, VoucherItem
-from apps.companies.models import Company
+from apps.companies.models import Company, UserCompany
 from apps.gst.models import (
     GSTR2BImport,
     GSTR2BRecord,
@@ -72,6 +72,7 @@ class Rule37ABaseTestCase:
             email='auditor_r25912@apexbelting.demo',
             defaults={'role': 'OWNER', 'is_staff': True, 'is_active': True}
         )
+        UserCompany.objects.get_or_create(user=self.user, company=self.company, defaults={'role': 'OWNER'})
 
         # Isolated Ledgers
         self.group_creditors, _ = LedgerGroup.objects.get_or_create(
@@ -832,6 +833,15 @@ class Rule37APositiveEvidenceReclaimTestCase(TestCase, Rule37ABaseTestCase):
     def test_r25912_23_valid_authorized_manual_evidence_authorizes_reclaim(self):
         """R25912-23: Documented manual confirmation by authorized user authorizes reclaim."""
         self._create_reversal_fixture()
+
+        Rule37AEvidenceService.create_manual_filing_evidence(
+            voucher=self.voucher,
+            user=self.user,
+            document_ref='CA-CERT-2026-999',
+            reason='Verified vendor GST tax payment challan CIN 002938174628',
+            status='APPROVED',
+            verification_timestamp=timezone.now()
+        )
 
         reclaim = GSTAllocationService.create_rule37a_reclaim_allocation(
             voucher=self.voucher,

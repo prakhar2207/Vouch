@@ -8,7 +8,7 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 
 from apps.accounting.models import Voucher
-from apps.gst.models import GSTR2BRecord, SupplierGSTR3BFilingRecord
+from apps.gst.models import GSTR2BRecord, SupplierGSTR3BFilingRecord, Rule37AManualFilingEvidence
 
 
 def compute_rule37a_evidence_hash(
@@ -130,6 +130,202 @@ class Rule37AEvidenceService:
         """
         return voucher.voucher_date.strftime('%m%Y')
 
+    AUTHORIZED_MANUAL_VERIFIER_ROLES = {'OWNER', 'ADMIN', 'ACCOUNTANT', 'CA'}
+
+    @classmethod
+    def is_user_authorized_for_manual_verification(cls, user: Any, company: Any) -> tuple[bool, str]:
+        """
+        Server-side validation of user authorization for Rule 37A manual GST evidence verification.
+        Requires:
+        - Active user
+        - Company membership (via UserCompany or superuser)
+        - Authorized role in {'OWNER', 'ADMIN', 'ACCOUNTANT', 'CA'}
+        Returns (is_authorized, role_or_reason).
+        """
+        if not user or not getattr(user, 'is_authenticated', True):
+            return False, "User is not authenticated."
+        if hasattr(user, 'is_active') and not user.is_active:
+            return False, "User account is inactive."
+        if getattr(user, 'is_superuser', False):
+            return True, "SUPERUSER"
+
+        from apps.accounts.permissions import get_user_company_role
+        role = get_user_company_role(user, company)
+        if not role:
+            user_comp = getattr(user, 'company', None)
+            if user_comp and str(user_comp.id) == str(company.id):
+                role = getattr(user, 'role', None)
+            elif getattr(user, 'role', None) in cls.AUTHORIZED_MANUAL_VERIFIER_ROLES:
+                from apps.companies.models import UserCompany
+                uc_exists = UserCompany.objects.filter(user=user, company=company).exists()
+                if uc_exists:
+                    role = getattr(user, 'role', None)
+
+        if not role:
+            return False, f"User '{getattr(user, 'email', str(user))}' is not a member of company '{company.name if hasattr(company, 'name') else company}'."
+
+        if role not in cls.AUTHORIZED_MANUAL_VERIFIER_ROLES:
+            return False, f"User role '{role}' is not authorized for manual statutory GST evidence verification. Requires one of: {', '.join(sorted(cls.AUTHORIZED_MANUAL_VERIFIER_ROLES))}."
+
+        return True, role
+
+    @classmethod
+    def create_manual_filing_evidence(
+        cls,
+        voucher: Voucher,
+        user: Any,
+        document_ref: str,
+        document_type: str = 'CA_CERTIFICATE',
+        reason: str = '',
+        status: str = 'APPROVED',
+        verification_timestamp: Optional[datetime] = None,
+        supplier_gstin: Optional[str] = None,
+        return_period: Optional[str] = None
+    ) -> Rule37AManualFilingEvidence:
+        """
+        Creates an authoritative persisted Rule37AManualFilingEvidence record.
+        Enforces server-side verifier authorization and statutory validation.
+        """
+        if not user:
+            raise ValidationError("Manual evidence verification requires an authenticated verifier user.")
+        if hasattr(user, 'is_active') and not user.is_active:
+            raise ValidationError(f"Verifier user '{getattr(user, 'email', str(user))}' is inactive.")
+
+        is_auth, auth_detail = cls.is_user_authorized_for_manual_verification(user, voucher.company)
+        if not is_auth:
+            raise ValidationError(f"Manual evidence verifier authorization rejected: {auth_detail}")
+
+        clean_doc_ref = str(document_ref or "").strip()
+        if not clean_doc_ref:
+            raise ValidationError("Manual evidence requires a non-empty documentary reference (e.g. CA certificate or challan CIN).")
+
+        clean_reason = str(reason or "").strip()
+        if not clean_reason:
+            raise ValidationError("Manual evidence requires a documented verification reason.")
+
+        eff_gstin = (supplier_gstin or cls.resolve_supplier_gstin(voucher)).strip().upper()
+        if not eff_gstin:
+            raise ValidationError(f"Invoice voucher #{voucher.voucher_number} has no supplier GSTIN.")
+
+        eff_period = (return_period or cls.resolve_invoice_return_period(voucher)).strip()
+        norm_period = cls.normalize_and_validate_return_period(eff_period)
+        if not norm_period:
+            raise ValidationError(f"Return period '{eff_period}' is invalid or malformed. Must be MMYYYY format.")
+
+        v_ts = verification_timestamp or timezone.now()
+        if timezone.is_naive(v_ts):
+            v_ts = timezone.make_aware(v_ts)
+        if v_ts > timezone.now() + timedelta(minutes=5):
+            raise ValidationError("Manual evidence verification timestamp cannot be in the future.")
+
+        clean_status = str(status or 'APPROVED').strip().upper()
+
+        manual_ev = Rule37AManualFilingEvidence.objects.create(
+            company=voucher.company,
+            voucher=voucher,
+            supplier_gstin=eff_gstin,
+            return_period=norm_period,
+            evidence_document_type=document_type,
+            evidence_document_ref=clean_doc_ref,
+            verification_reason=clean_reason,
+            status=clean_status,
+            verifier_user=user,
+            verifier_role=auth_detail,
+            verification_timestamp=v_ts,
+            created_by=user,
+            approved_by=user if clean_status == 'APPROVED' else None,
+            approved_at=v_ts if clean_status == 'APPROVED' else None
+        )
+        return manual_ev
+
+    @classmethod
+    def approve_manual_filing_evidence(
+        cls,
+        evidence: Rule37AManualFilingEvidence,
+        user: Any
+    ) -> Rule37AManualFilingEvidence:
+        """
+        Approves a submitted or draft manual evidence record.
+        Requires server-side authorization check.
+        """
+        if not user or not user.is_authenticated:
+            raise ValidationError("Approval requires an authenticated user.")
+        if hasattr(user, 'is_active') and not user.is_active:
+            raise ValidationError("Approving user is inactive.")
+
+        is_auth, auth_detail = cls.is_user_authorized_for_manual_verification(user, evidence.company)
+        if not is_auth:
+            raise ValidationError(f"Approval rejected: {auth_detail}")
+
+        from django.db import transaction
+        with transaction.atomic():
+            locked = Rule37AManualFilingEvidence.objects.select_for_update().get(id=evidence.id)
+            if locked.status == 'INVALIDATED':
+                raise ValidationError("Cannot approve an invalidated evidence record.")
+            if locked.status == 'REJECTED':
+                raise ValidationError("Cannot approve a rejected evidence record without amendment.")
+
+            locked.status = 'APPROVED'
+            locked.approved_by = user
+            locked.approved_at = timezone.now()
+            locked.save(update_fields=['status', 'approved_by', 'approved_at', 'evidence_hash', 'updated_at'])
+            return locked
+
+    @classmethod
+    def reject_manual_filing_evidence(
+        cls,
+        evidence: Rule37AManualFilingEvidence,
+        user: Any,
+        reason: str
+    ) -> Rule37AManualFilingEvidence:
+        """
+        Rejects a manual evidence record with mandatory documented reason.
+        """
+        if not user or not user.is_authenticated:
+            raise ValidationError("Rejection requires an authenticated user.")
+
+        clean_reason = str(reason or "").strip()
+        if not clean_reason:
+            raise ValidationError("Rejection reason is mandatory.")
+
+        from django.db import transaction
+        with transaction.atomic():
+            locked = Rule37AManualFilingEvidence.objects.select_for_update().get(id=evidence.id)
+            locked.status = 'REJECTED'
+            locked.rejected_by = user
+            locked.rejected_at = timezone.now()
+            locked.rejection_reason = clean_reason
+            locked.save(update_fields=['status', 'rejected_by', 'rejected_at', 'rejection_reason', 'evidence_hash', 'updated_at'])
+            return locked
+
+    @classmethod
+    def invalidate_manual_filing_evidence(
+        cls,
+        evidence: Rule37AManualFilingEvidence,
+        user: Any,
+        reason: str,
+        superseding_evidence: Optional[Rule37AManualFilingEvidence] = None
+    ) -> Rule37AManualFilingEvidence:
+        """
+        Invalidates a manual evidence record under transaction.atomic() with row-level lock.
+        Preserves original audit history and establishes supersession linkage.
+        """
+        from django.db import transaction
+        with transaction.atomic():
+            locked = Rule37AManualFilingEvidence.objects.select_for_update().get(id=evidence.id)
+            clean_reason = str(reason or "").strip()
+            if not clean_reason:
+                raise ValidationError("Invalidation reason is mandatory.")
+
+            locked.status = 'INVALIDATED'
+            locked.invalidated_by = user
+            locked.invalidated_at = timezone.now()
+            locked.invalidation_reason = clean_reason
+            if superseding_evidence:
+                locked.superseded_by = superseding_evidence
+            locked.save(update_fields=['status', 'invalidated_by', 'invalidated_at', 'invalidation_reason', 'superseded_by', 'evidence_hash', 'updated_at'])
+            return locked
+
     @classmethod
     def resolve_voucher_evidence(
         cls,
@@ -171,6 +367,32 @@ class Rule37AEvidenceService:
                 },
                 "errors": ["Missing supplier GSTIN on voucher"]
             }
+
+        # 0. Manual Evidence Source: Rule37AManualFilingEvidence
+        manual_records = list(Rule37AManualFilingEvidence.objects.filter(
+            company=voucher.company,
+            voucher=voucher,
+            supplier_gstin=supplier_gstin,
+            return_period=inv_period,
+            status='APPROVED'
+        ).order_by('-verification_timestamp'))
+        man_eval = None
+        if manual_records:
+            man_rec = manual_records[0]
+            is_auth, _ = cls.is_user_authorized_for_manual_verification(man_rec.verifier_user, voucher.company)
+            if is_auth and man_rec.evidence_document_ref and man_rec.verification_reason:
+                man_eval = {
+                    "status": "MANUALLY_CONFIRMED",
+                    "supplier_gstr3b_filed": True,
+                    "is_stale": False,
+                    "filing_date": None,
+                    "arn": "",
+                    "source": "MANUAL",
+                    "timestamp": man_rec.verification_timestamp,
+                    "record": man_rec,
+                    "document_ref": man_rec.evidence_document_ref,
+                    "note": man_rec.verification_reason or "Authoritative Rule37AManualFilingEvidence approved by authorized verifier"
+                }
 
         # 1. Primary Evidence Source: SupplierGSTR3BFilingRecord
         supp_records = list(SupplierGSTR3BFilingRecord.objects.filter(
@@ -832,25 +1054,51 @@ class Rule37AEvidenceService:
                     )
                 if evidence_record.matched_voucher_id and str(evidence_record.matched_voucher_id) != str(voucher.id):
                     validation_errors.append("GSTR-2B record is matched to an unrelated voucher.")
+            elif isinstance(evidence_record, Rule37AManualFilingEvidence):
+                if str(evidence_record.voucher_id) != str(voucher.id):
+                    validation_errors.append("Manual evidence record is linked to an unrelated voucher.")
+                if evidence_record.supplier_gstin.strip().upper() != target_gstin:
+                    validation_errors.append(
+                        f"Manual evidence record supplier GSTIN '{evidence_record.supplier_gstin}' does not match invoice supplier GSTIN '{target_gstin}'."
+                    )
+                norm_man = cls.normalize_and_validate_return_period(evidence_record.return_period)
+                if not norm_man or norm_man != target_period:
+                    validation_errors.append(
+                        f"Manual evidence record return period '{evidence_record.return_period}' does not match invoice return period '{target_period}'."
+                    )
+                if evidence_record.status != 'APPROVED':
+                    validation_errors.append(
+                        f"Cannot authorize manual reclaim: manual evidence status is '{evidence_record.status}'. Only 'APPROVED' manual evidence authorizes reclaim."
+                    )
 
         # 5. Auto-Lookup Evidence Record if not provided
         if evidence_record is None and target_gstin and target_period:
-            supp_rec = SupplierGSTR3BFilingRecord.objects.filter(
-                company=voucher.company,
-                supplier_gstin=target_gstin,
-                return_period=target_period
-            ).first()
-            g2b_rec = GSTR2BRecord.objects.filter(
-                company=voucher.company,
-                matched_voucher=voucher
-            ).first()
+            if clean_status == 'MANUALLY_CONFIRMED':
+                man_rec = Rule37AManualFilingEvidence.objects.filter(
+                    company=voucher.company,
+                    voucher=voucher,
+                    supplier_gstin=target_gstin,
+                    return_period=target_period
+                ).order_by('-verification_timestamp').first()
+                if man_rec:
+                    evidence_record = man_rec
+            else:
+                supp_rec = SupplierGSTR3BFilingRecord.objects.filter(
+                    company=voucher.company,
+                    supplier_gstin=target_gstin,
+                    return_period=target_period
+                ).first()
+                g2b_rec = GSTR2BRecord.objects.filter(
+                    company=voucher.company,
+                    matched_voucher=voucher
+                ).first()
 
-            if supp_rec and supp_rec.status == clean_status:
-                evidence_record = supp_rec
-            elif g2b_rec and clean_status == 'VERIFIED_FILED' and g2b_rec.gstr3b_status == 'FILED':
-                norm_p = cls.normalize_and_validate_return_period(g2b_rec.gstr3b_return_period)
-                if norm_p == target_period:
-                    evidence_record = g2b_rec
+                if supp_rec and supp_rec.status == clean_status:
+                    evidence_record = supp_rec
+                elif g2b_rec and clean_status == 'VERIFIED_FILED' and g2b_rec.gstr3b_status == 'FILED':
+                    norm_p = cls.normalize_and_validate_return_period(g2b_rec.gstr3b_return_period)
+                    if norm_p == target_period:
+                        evidence_record = g2b_rec
 
         # 6. Evidence Conflict Check
         if target_gstin and target_period:
@@ -932,6 +1180,38 @@ class Rule37AEvidenceService:
                             "Cannot reclaim under Rule 37A: Supplier has filed GSTR-1, but affirmative proof of GSTR-3B return filing (filing date / ARN) is required. GSTR-1 outward declaration does not discharge tax liability under Section 16(2)(c)."
                         )
         elif clean_status == 'MANUALLY_CONFIRMED':
+            if not evidence_record or not isinstance(evidence_record, Rule37AManualFilingEvidence):
+                validation_errors.append(
+                    "Rule 37A manual confirmation requires an authoritative, persisted, approved Rule37AManualFilingEvidence record. "
+                    "Caller-supplied strings, booleans, or parameters without a persisted approved record are strictly rejected."
+                )
+            else:
+                if evidence_record.status != 'APPROVED':
+                    validation_errors.append(
+                        f"Cannot authorize manual reclaim: manual evidence status is '{evidence_record.status}'. Only 'APPROVED' manual evidence authorizes reclaim."
+                    )
+                eff_user = evidence_record.verifier_user
+                if not eff_user:
+                    validation_errors.append("Rule 37A manual reclaim requires verifier identity (user).")
+                elif hasattr(eff_user, 'is_active') and not eff_user.is_active:
+                    validation_errors.append("Rule 37A manual reclaim verifier user is inactive.")
+                else:
+                    is_auth, auth_detail = cls.is_user_authorized_for_manual_verification(eff_user, voucher.company)
+                    if not is_auth:
+                        validation_errors.append(f"Rule 37A manual reclaim verifier is unauthorized: {auth_detail}")
+
+                eff_doc_ref = evidence_record.evidence_document_ref
+                if not eff_doc_ref or not eff_doc_ref.strip():
+                    validation_errors.append("Rule 37A manual reclaim requires document reference (e.g. CA certificate or challan reference).")
+                eff_reason = evidence_record.verification_reason
+                if not eff_reason or not eff_reason.strip():
+                    validation_errors.append("Rule 37A manual confirmation requires a documented verification reason.")
+                v_timestamp = evidence_record.verification_timestamp
+                if not v_timestamp:
+                    validation_errors.append("Rule 37A manual reclaim requires verification timestamp.")
+                elif v_timestamp > timezone.now() + timedelta(minutes=5):
+                    validation_errors.append("Rule 37A manual reclaim verification timestamp cannot be in the future.")
+
             if not eff_doc_ref:
                 validation_errors.append("Rule 37A manual reclaim requires document reference (e.g. CA certificate or challan reference).")
             if not eff_user:
