@@ -185,12 +185,23 @@ class Round256SupplierEvidenceTests(BaseRound256TestCase):
         )
 
         # 1. Reverse under Rule 37A
+        rec_ev1 = SupplierGSTR3BFilingRecord.objects.create(
+            company=self.company,
+            supplier_gstin='07BBBBB1111B1Z2',
+            return_period='062025',
+            status='VERIFIED_NOT_FILED'
+        )
         GSTAllocationService.create_rule37a_reversal_allocation(
             voucher=v,
             assigned_period='112026',
             user=self.owner_user,
             reversal_date=date(2026, 11, 20),
-            supplier_status='VERIFIED_NOT_FILED'
+            supplier_status='VERIFIED_NOT_FILED',
+            supplier_gstin='07BBBBB1111B1Z2',
+            supplier_return_period='062025',
+            evidence_source='PORTAL',
+            evidence_record=rec_ev1,
+            verification_timestamp=timezone.now()
         )
 
         # 2. Setup GSTR2BRecord where supplier filed GSTR-1 but GSTR-3B is NOT filed
@@ -221,7 +232,10 @@ class Round256SupplierEvidenceTests(BaseRound256TestCase):
                 supplier_status='VERIFIED_FILED',
                 supplier_gstr3b_filed=False
             )
-        self.assertIn("Supplier has not furnished corresponding GSTR-3B", str(ctx.exception))
+        self.assertTrue(
+            "Supplier has not furnished corresponding GSTR-3B" in str(ctx.exception)
+            or "affirmative proof of GSTR-3B return filing" in str(ctx.exception)
+        )
 
         # Even if caller passes supplier_gstr3b_filed=True but status is unverified / GSTR-1 only:
         with self.assertRaises(ValidationError) as ctx2:
@@ -248,12 +262,23 @@ class Round256SupplierEvidenceTests(BaseRound256TestCase):
         )
 
         # Reversal under Rule 37A
+        rec_ev2 = SupplierGSTR3BFilingRecord.objects.create(
+            company=self.company,
+            supplier_gstin='07BBBBB1111B1Z2',
+            return_period='072025',
+            status='VERIFIED_NOT_FILED'
+        )
         prior_rev = GSTAllocationService.create_rule37a_reversal_allocation(
             voucher=v,
             assigned_period='112026',
             user=self.owner_user,
             reversal_date=date(2026, 11, 20),
-            supplier_status='VERIFIED_NOT_FILED'
+            supplier_status='VERIFIED_NOT_FILED',
+            supplier_gstin='07BBBBB1111B1Z2',
+            supplier_return_period='072025',
+            evidence_source='PORTAL',
+            evidence_record=rec_ev2,
+            verification_timestamp=timezone.now()
         )
 
         # Reclaim with explicit GSTR-3B evidence

@@ -435,6 +435,19 @@ class GSTR2BRecord(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    def is_gstr3b_stale(self, threshold_days: int = 30) -> bool:
+        """
+        Evidence Freshness Rule for GSTR-2B GSTR-3B status:
+        Returns True if GSTR-3B verification is older than threshold_days and not conclusively verified filed with ARN.
+        Stale evidence must be treated as DATA_UNAVAILABLE until re-verified.
+        """
+        if self.gstr3b_status == 'FILED' and self.gstr3b_filing_arn and self.gstr3b_filing_date:
+            return False
+        if not self.gstr3b_verified_at:
+            return True
+        age = (timezone.now() - self.gstr3b_verified_at).days
+        return age > threshold_days
+
     class Meta:
         indexes = [
             models.Index(fields=['company', 'supplier_gstin', 'normalized_invoice_number']),
@@ -894,6 +907,18 @@ class GSTReportingAllocation(models.Model):
     superseded_at = models.DateTimeField(null=True, blank=True)
     idempotency_key = models.CharField(max_length=128, unique=True, db_index=True)
 
+    # Rule 37A Statutory Evidence & Provenance Audit Trail
+    evidence_source = models.CharField(max_length=50, blank=True, default='')
+    evidence_status = models.CharField(max_length=30, blank=True, default='')
+    evidence_supplier_gstin = models.CharField(max_length=15, blank=True, default='', db_index=True)
+    evidence_return_period = models.CharField(max_length=7, blank=True, default='', db_index=True)
+    evidence_verified_at = models.DateTimeField(null=True, blank=True)
+    evidence_document_ref = models.CharField(max_length=255, blank=True, default='')
+    evidence_arn = models.CharField(max_length=50, blank=True, default='')
+    evidence_filing_date = models.DateField(null=True, blank=True)
+    evidence_hash = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    evidence_metadata = models.JSONField(default=dict, blank=True)
+
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -926,6 +951,7 @@ class GSTReportingAllocation(models.Model):
             models.Index(fields=['company', 'is_statutorily_eligible', 'assigned_period']),
             models.Index(fields=['company', 'payment_event_id']),
             models.Index(fields=['company', 'payment_fingerprint']),
+            models.Index(fields=['company', 'evidence_supplier_gstin', 'evidence_return_period']),
         ]
         constraints = [
             models.UniqueConstraint(

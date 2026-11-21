@@ -21,6 +21,7 @@ from apps.gst.models import (
     GSTFilingRecord
 )
 from apps.gst.services.allocation_service import GSTAllocationService, quantize_amount
+from apps.gst.services.rule37a_evidence_service import Rule37AEvidenceService
 
 logger = logging.getLogger(__name__)
 
@@ -125,57 +126,18 @@ class ITCTraceService:
         is_payment_overdue = r37_status["is_payment_overdue"]
 
         # Check Rule 37A (Supplier GSTR-3B default)
-        party_gstin = (
-            voucher.party_ledger.gstin
-            if getattr(voucher, 'party_ledger', None) and voucher.party_ledger.gstin
-            else getattr(voucher, 'party_gstin', '') or getattr(voucher, 'buyer_gstin', '') or ''
-        ).strip().upper()
-
-        inv_period = voucher.voucher_date.strftime('%m%Y')
-        supp_record = SupplierGSTR3BFilingRecord.objects.filter(
-            company=voucher.company,
-            supplier_gstin=party_gstin,
-            return_period=inv_period
-        ).first() if party_gstin else None
-
-        g2b_rec = GSTR2BRecord.objects.filter(
-            company=voucher.company,
-            matched_voucher=voucher
-        ).first()
-
-        supp_status = 'UNKNOWN'
-        supp_date = None
-        supp_filed = False
-        is_stale = supp_record.is_stale() if supp_record else False
-
-        if supp_record:
-            if is_stale:
-                supp_status = 'DATA_UNAVAILABLE'
-                supp_filed = False
-            else:
-                supp_status = supp_record.status
-                supp_filed = (supp_record.status in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED'))
-                supp_date = supp_record.filing_date
-        elif g2b_rec:
-            if g2b_rec.gstr3b_status == 'FILED' and g2b_rec.gstr3b_filing_arn:
-                supp_status = 'VERIFIED_FILED'
-                supp_filed = True
-                supp_date = g2b_rec.gstr3b_filing_date
-            elif g2b_rec.gstr3b_status == 'NOT_FILED':
-                supp_status = 'VERIFIED_NOT_FILED'
-            elif g2b_rec.gstr3b_status == 'PENDING':
-                supp_status = 'PENDING'
-            else:
-                supp_status = 'DATA_UNAVAILABLE'
+        # Resolve and validate evidence via unified Rule37AEvidenceService
+        ev_res = Rule37AEvidenceService.resolve_voucher_evidence(voucher)
 
         r37a_status = GSTAllocationService.evaluate_rule37a_status(
             voucher=voucher,
             check_date=today,
-            supplier_gstr3b_filed=supp_filed,
-            supplier_filing_date=supp_date,
-            supplier_status=supp_status,
-            supplier_return_period=inv_period,
-            is_stale_evidence=is_stale
+            supplier_gstr3b_filed=ev_res["supplier_gstr3b_filed"],
+            supplier_filing_date=ev_res["filing_date"],
+            supplier_status=ev_res["status"],
+            supplier_return_period=ev_res["return_period"],
+            supplier_gstin=ev_res["supplier_gstin"],
+            is_stale_evidence=ev_res["is_stale"]
         )
 
         # Allocations summary

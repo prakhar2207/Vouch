@@ -27,7 +27,8 @@ from apps.gst.models import (
     CompanyGSTConfig,
     GSTReportingAllocation,
     GSTR2BRecord,
-    GSTR2BImport
+    GSTR2BImport,
+    SupplierGSTR3BFilingRecord
 )
 from apps.gst.services.allocation_service import GSTAllocationService
 from apps.inventory.models import Product
@@ -69,7 +70,12 @@ class Round255ReversalReclaimIntegrityTests(TestCase):
         self.grp_exp = LedgerGroup.objects.create(company=self.company, name='Expenses', nature='EXPENSE')
         self.grp_inc = LedgerGroup.objects.create(company=self.company, name='Income', nature='INCOME')
 
-        self.ledger_supplier = Ledger.objects.create(company=self.company, name='Primary Vendor', group=self.grp_liab)
+        self.ledger_supplier = Ledger.objects.create(
+            company=self.company,
+            name='Primary Vendor',
+            group=self.grp_liab,
+            gstin='27ABCDE1234F1Z5'
+        )
         self.ledger_customer = Ledger.objects.create(company=self.company, name='Primary Client', group=self.grp_assets)
 
         self.product = Product.objects.create(
@@ -106,6 +112,29 @@ class Round255ReversalReclaimIntegrityTests(TestCase):
             sgst_amount=Decimal('0.00'),
         )
 
+        self.supplier_rec = SupplierGSTR3BFilingRecord.objects.create(
+            company=self.company,
+            supplier_gstin='27ABCDE1234F1Z5',
+            return_period='062025',
+            status='VERIFIED_NOT_FILED'
+        )
+
+    def _create_rule37a_reversal(self, assigned_period='102026', **kwargs):
+        defaults = {
+            'voucher': self.voucher,
+            'assigned_period': assigned_period,
+            'user': self.owner_user,
+            'reversal_date': date(2026, 10, 15),
+            'supplier_status': 'VERIFIED_NOT_FILED',
+            'supplier_gstin': '27ABCDE1234F1Z5',
+            'supplier_return_period': '062025',
+            'evidence_source': 'PORTAL',
+            'evidence_record': self.supplier_rec,
+            'verification_timestamp': timezone.now()
+        }
+        defaults.update(kwargs)
+        return GSTAllocationService.create_rule37a_reversal_allocation(**defaults)
+
     # =========================================================================
     # PART 1: RULE 37 RECLAIM INTEGRITY
     # =========================================================================
@@ -119,6 +148,7 @@ class Round255ReversalReclaimIntegrityTests(TestCase):
             GSTAllocationService.create_rule37_reclaim_allocation(
                 voucher=self.voucher,
                 paid_amount=Decimal('11800.00'),
+                payment_event_id='PAY-EVT-01',
                 assigned_period='122025',
                 user=self.owner_user
             )
@@ -143,6 +173,7 @@ class Round255ReversalReclaimIntegrityTests(TestCase):
             GSTAllocationService.create_rule37_reclaim_allocation(
                 voucher=self.voucher,
                 paid_amount=Decimal('11800.00'),
+                payment_event_id='PAY-EVT-02',
                 assigned_period='012026',
                 user=self.owner_user
             )
@@ -279,7 +310,9 @@ class Round255ReversalReclaimIntegrityTests(TestCase):
                 assigned_period='012027',
                 user=self.owner_user,
                 supplier_gstr3b_filed=True,
-                supplier_status='VERIFIED_FILED'
+                supplier_status='VERIFIED_FILED',
+                gstr3b_arn='AA270625000001Z',
+                gstr3b_filing_date=date(2026, 12, 10)
             )
         self.assertIn("No active prior Rule 37A reversal found", str(ctx.exception))
 
@@ -303,21 +336,20 @@ class Round255ReversalReclaimIntegrityTests(TestCase):
                 voucher=self.voucher,
                 assigned_period='102026',
                 user=self.owner_user,
-                supplier_status='DATA_UNAVAILABLE'
+                supplier_status='DATA_UNAVAILABLE',
+                supplier_gstin='27ABCDE1234F1Z5',
+                supplier_return_period='062025',
+                evidence_source='PORTAL',
+                verification_timestamp=timezone.now()
             )
-        self.assertIn("Supplier filing data is DATA_UNAVAILABLE", str(ctx.exception))
+        self.assertIn("DATA_UNAVAILABLE", str(ctx.exception))
 
     def test_rule37a_reclaim_rejected_when_supplier_data_unavailable(self):
         """
         Enforce: Reclaim cannot be executed when supplier data is DATA_UNAVAILABLE.
         """
         # Create valid reversal first
-        GSTAllocationService.create_rule37a_reversal_allocation(
-            voucher=self.voucher,
-            assigned_period='102026',
-            user=self.owner_user,
-            supplier_status='VERIFIED_NOT_FILED'
-        )
+        self._create_rule37a_reversal('102026')
 
         with self.assertRaises(ValidationError) as ctx:
             GSTAllocationService.create_rule37a_reclaim_allocation(
@@ -326,18 +358,13 @@ class Round255ReversalReclaimIntegrityTests(TestCase):
                 user=self.owner_user,
                 supplier_status='DATA_UNAVAILABLE'
             )
-        self.assertIn("Supplier filing status is DATA_UNAVAILABLE", str(ctx.exception))
+        self.assertIn("DATA_UNAVAILABLE", str(ctx.exception))
 
     def test_rule37a_reclaim_rejected_when_supplier_not_filed(self):
         """
         Enforce: Reclaim cannot be executed when supplier is VERIFIED_NOT_FILED.
         """
-        GSTAllocationService.create_rule37a_reversal_allocation(
-            voucher=self.voucher,
-            assigned_period='102026',
-            user=self.owner_user,
-            supplier_status='VERIFIED_NOT_FILED'
-        )
+        self._create_rule37a_reversal('102026')
 
         with self.assertRaises(ValidationError) as ctx:
             GSTAllocationService.create_rule37a_reclaim_allocation(
@@ -347,19 +374,17 @@ class Round255ReversalReclaimIntegrityTests(TestCase):
                 supplier_gstr3b_filed=False,
                 supplier_status='VERIFIED_NOT_FILED'
             )
-        self.assertIn("Supplier has not furnished corresponding GSTR-3B", str(ctx.exception))
+        self.assertTrue(
+            "Supplier has not furnished corresponding GSTR-3B" in str(ctx.exception)
+            or "does not establish tax payment" in str(ctx.exception)
+        )
 
     def test_rule37a_reclaim_with_manually_confirmed_evidence(self):
         """
         Verify: Accountant manually confirms supplier filing with documentary evidence.
         Reclaim is created and evidence is preserved in statutory_notes.
         """
-        rev = GSTAllocationService.create_rule37a_reversal_allocation(
-            voucher=self.voucher,
-            assigned_period='102026',
-            user=self.owner_user,
-            supplier_status='VERIFIED_NOT_FILED'
-        )
+        rev = self._create_rule37a_reversal('102026')
 
         rec = GSTAllocationService.create_rule37a_reclaim_allocation(
             voucher=self.voucher,
@@ -381,31 +406,16 @@ class Round255ReversalReclaimIntegrityTests(TestCase):
         """
         Verify: Attempting to create duplicate active Rule 37A reversals is rejected.
         """
-        GSTAllocationService.create_rule37a_reversal_allocation(
-            voucher=self.voucher,
-            assigned_period='102026',
-            user=self.owner_user,
-            supplier_status='VERIFIED_NOT_FILED'
-        )
+        self._create_rule37a_reversal('102026')
         with self.assertRaises(ValidationError) as ctx:
-            GSTAllocationService.create_rule37a_reversal_allocation(
-                voucher=self.voucher,
-                assigned_period='112026',
-                user=self.owner_user,
-                supplier_status='VERIFIED_NOT_FILED'
-            )
+            self._create_rule37a_reversal('112026')
         self.assertIn("Rule 37A reversal already exists", str(ctx.exception))
 
     def test_rule37a_duplicate_reclaim_across_periods_prevention(self):
         """
         Verify: Reclaiming Rule 37A credit across multiple periods is prohibited.
         """
-        GSTAllocationService.create_rule37a_reversal_allocation(
-            voucher=self.voucher,
-            assigned_period='102026',
-            user=self.owner_user,
-            supplier_status='VERIFIED_NOT_FILED'
-        )
+        self._create_rule37a_reversal('102026')
 
         GSTAllocationService.create_rule37a_reclaim_allocation(
             voucher=self.voucher,

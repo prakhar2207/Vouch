@@ -18,7 +18,7 @@ import json
 import hashlib
 from decimal import Decimal
 from datetime import date, timedelta
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Union
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -35,6 +35,10 @@ from apps.gst.models import (
     GSTR2BRecord,
     SupplierGSTR3BFilingRecord,
     GSTReversalReclaimLineage,
+)
+from apps.gst.services.rule37a_evidence_service import (
+    Rule37AEvidenceService,
+    compute_rule37a_evidence_hash,
 )
 
 logger = logging.getLogger('apps.gst.allocation_service')
@@ -1425,6 +1429,7 @@ class GSTAllocationService:
         supplier_filing_date: Optional[date] = None,
         supplier_status: str = 'UNKNOWN',
         supplier_return_period: str = '',
+        supplier_gstin: str = '',
         is_stale_evidence: bool = False
     ) -> Dict[str, Any]:
         """
@@ -1448,7 +1453,12 @@ class GSTAllocationService:
         is_supplier_default = False
         default_reason = ''
 
-        if clean_status == 'DATA_UNAVAILABLE':
+        inv_gstin = Rule37AEvidenceService.resolve_supplier_gstin(voucher)
+        if supplier_gstin and inv_gstin and supplier_gstin.strip().upper() != inv_gstin:
+            clean_status = 'DATA_UNAVAILABLE'
+            is_supplier_default = False
+            default_reason = f"Supplier GSTIN '{supplier_gstin}' does not match invoice supplier GSTIN '{inv_gstin}'. Default cannot be evaluated."
+        elif clean_status == 'DATA_UNAVAILABLE':
             # Statutory Guard: Unavailable data is NOT proof of default!
             is_supplier_default = False
             default_reason = 'DATA_UNAVAILABLE: Supplier filing status cannot be verified from GST portal/GSP. Default cannot be presumed.'
@@ -1546,49 +1556,39 @@ class GSTAllocationService:
         assigned_period: str,
         user: Any = None,
         reversal_date: Optional[date] = None,
-        supplier_gstr3b_filed: bool = False,
+        supplier_status: Optional[str] = None,
+        supplier_gstin: Optional[str] = None,
+        supplier_return_period: Optional[str] = None,
+        evidence_source: Optional[str] = None,
+        verification_timestamp: Optional[datetime] = None,
+        evidence_record: Optional[Any] = None,
+        evidence_document_ref: Optional[str] = None,
+        manual_verification_reason: Optional[str] = None,
+        is_stale_evidence: Optional[bool] = None,
+        supplier_gstr3b_filed: Optional[bool] = None,
         supplier_filing_date: Optional[date] = None,
-        supplier_status: str = 'VERIFIED_NOT_FILED',
-        supplier_return_period: str = '',
-        is_stale_evidence: bool = False
+        freshness_threshold_days: int = 30
     ) -> GSTReportingAllocation:
         """
         Creates an ITC reversal allocation under Rule 37A (Supplier default in GSTR-3B) for Table 4(B)(2).
         Must be reversed on or before 30th November following end of FY in which ITC was availed.
-        Enforces:
-        - Rejection if supplier data is DATA_UNAVAILABLE (cannot assume default)
-        - Rejection if supplier data is UNKNOWN or PENDING (requires affirmative evidence)
-        - Rejection if supplier actually filed
-        - Rejection if filing evidence is stale (>30 days old)
-        - Rejection if supplier return period does not match invoice return period
-        - Rejection if statutory default date (30-Sep) has not yet been reached
-        - Prevents duplicate reversals
-        - Flags Section 50 interest if reversed after 30th November with precise interest computation
+        Enforces all 12 statutory negative cases and preserves cryptographic evidence provenance.
         """
-        clean_status = (supplier_status or 'VERIFIED_NOT_FILED').upper()
-        if clean_status == 'DATA_UNAVAILABLE':
-            raise ValidationError(
-                f"Cannot execute Rule 37A reversal: Supplier filing data is DATA_UNAVAILABLE for invoice #{voucher.voucher_number}. "
-                f"Statute requires affirmative non-filing default before reversal."
-            )
-        if clean_status in ('UNKNOWN', '', 'PENDING'):
-            raise ValidationError(
-                f"Cannot execute Rule 37A reversal: Affirmative evidence of supplier non-filing (VERIFIED_NOT_FILED) "
-                f"is required under Rule 37A for invoice #{voucher.voucher_number}. Status is {clean_status}."
-            )
-        if clean_status in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED') or supplier_gstr3b_filed:
-            raise ValidationError(
-                f"Cannot execute Rule 37A reversal: Supplier has filed GSTR-3B for invoice #{voucher.voucher_number}."
-            )
-        if is_stale_evidence:
-            raise ValidationError(
-                f"Cannot execute Rule 37A reversal: Supplier filing evidence is stale (>30 days old). Re-verification required from GSTN."
-            )
-        inv_period = voucher.voucher_date.strftime('%m%Y')
-        if supplier_return_period and supplier_return_period != inv_period:
-            raise ValidationError(
-                f"Cannot execute Rule 37A reversal: Evidence return period '{supplier_return_period}' does not match invoice return period '{inv_period}' for invoice #{voucher.voucher_number}."
-            )
+        # Validate evidence using unified Rule37AEvidenceService
+        validated = Rule37AEvidenceService.validate_reversal_evidence(
+            voucher=voucher,
+            supplier_status=supplier_status,
+            supplier_gstin=supplier_gstin,
+            supplier_return_period=supplier_return_period,
+            evidence_source=evidence_source,
+            verification_timestamp=verification_timestamp,
+            evidence_record=evidence_record,
+            evidence_document_ref=evidence_document_ref,
+            manual_verification_reason=manual_verification_reason,
+            is_stale_evidence=is_stale_evidence,
+            user=user,
+            freshness_threshold_days=freshness_threshold_days
+        )
 
         fy = cls.get_financial_year(voucher.voucher_date)
         default_date = cls.get_rule37a_supplier_default_date(fy)
@@ -1611,14 +1611,13 @@ class GSTAllocationService:
 
             summary = cls.compute_voucher_monetary_summary(locked_voucher)
             clean_period = assigned_period.strip().replace('-', '').replace('/', '')
-            rev_date = reversal_date or timezone.now().date()
-            fy = cls.get_financial_year(locked_voucher.voucher_date)
             deadline = cls.get_rule37a_recipient_reversal_deadline(fy)
             is_overdue = rev_date > deadline
 
             notes = (
                 f"Rule 37A ITC Reversal for invoice #{locked_voucher.voucher_number}: supplier defaulted on GSTR-3B filing. "
-                f"Reversed on {rev_date.strftime('%d-%m-%Y')}."
+                f"Supplier GSTIN: {validated['supplier_gstin']} Period: {validated['supplier_return_period']} "
+                f"Source: {validated['evidence_source']} Reversed on {rev_date.strftime('%d-%m-%Y')}."
             )
             if is_overdue:
                 days_over = (rev_date - deadline).days
@@ -1649,6 +1648,18 @@ class GSTAllocationService:
                 total_tax=summary["total_tax"],
                 is_active=True,
                 idempotency_key=idem_key,
+                evidence_source=validated["evidence_source"],
+                evidence_status=validated["supplier_status"],
+                evidence_supplier_gstin=validated["supplier_gstin"],
+                evidence_return_period=validated["supplier_return_period"],
+                evidence_verified_at=validated["verification_timestamp"],
+                evidence_document_ref=validated["evidence_document_ref"],
+                evidence_hash=validated["evidence_hash"],
+                evidence_metadata={
+                    "evidence_source": validated["evidence_source"],
+                    "manual_verification_reason": validated["manual_verification_reason"],
+                    "verified_by": str(user) if user else ""
+                },
                 created_by=user
             )
             return alloc
@@ -1659,17 +1670,23 @@ class GSTAllocationService:
         voucher: Voucher,
         assigned_period: str,
         user: Any = None,
-        supplier_gstr3b_filed: bool = True,
-        supplier_status: str = 'VERIFIED_FILED',
-        verification_source: str = 'PORTAL',
-        verification_reference: str = '',
-        verification_date: Optional[date] = None,
+        supplier_status: Optional[str] = None,
+        supplier_gstin: Optional[str] = None,
+        supplier_return_period: Optional[str] = None,
+        gstr3b_return_period: Optional[str] = None,
+        verification_source: Optional[str] = None,
+        verification_reference: Optional[str] = None,
+        verification_date: Optional[Union[date, datetime]] = None,
+        verification_timestamp: Optional[Union[date, datetime]] = None,
         reclaim_date: Optional[date] = None,
-        require_prior_reversal: bool = True,
         gstr3b_filing_date: Optional[date] = None,
-        gstr3b_arn: str = '',
-        gstr3b_return_period: str = '',
-        source_reversal_id: Optional[Any] = None
+        gstr3b_arn: Optional[str] = None,
+        source_reversal_id: Optional[Any] = None,
+        manual_verification_reason: Optional[str] = None,
+        evidence_record: Optional[Any] = None,
+        freshness_threshold_days: int = 30,
+        supplier_gstr3b_filed: Optional[bool] = None,
+        require_prior_reversal: bool = True,
     ) -> GSTReportingAllocation:
         """
         Creates an ITC reclaim allocation under Proviso to Rule 37A when supplier subsequently files GSTR-3B.
@@ -1677,19 +1694,85 @@ class GSTAllocationService:
         Enforces:
         - Mandatory prior active Rule 37A reversal (CANNOT be bypassed)
         - Verification that supplier has furnished GSTR-3B (VERIFIED_FILED or MANUALLY_CONFIRMED)
-        - Reject DATA_UNAVAILABLE or VERIFIED_NOT_FILED
+        - Reject DATA_UNAVAILABLE, PENDING, UNKNOWN, or VERIFIED_NOT_FILED
         - GSTR-1 outward date must NEVER be accepted as proof of GSTR-3B payment
         - Prevent duplicate active reclaim across periods
+        - Prevent excessive reclaim: amount cannot exceed active available reversal balance
         - Block Section 17(5) permanently ineligible credit
         - Lineage linkage via GSTReversalReclaimLineage
         """
         clean_period = assigned_period.strip().replace('-', '').replace('/', '')
-        clean_status = (supplier_status or 'VERIFIED_FILED').upper()
+
+        # Block Section 17(5) permanently ineligible credit upfront
+        if getattr(voucher, 'is_section_17_5_blocked', False) or GSTReportingAllocation.objects.filter(
+            voucher=voucher,
+            event_type='ITC_REVERSAL_SEC_17_5',
+            is_active=True
+        ).exists():
+            raise ValidationError("Permanently ineligible ITC under Section 17(5) cannot be reclaimed.")
+
+        # Resolve evidence details using fallback if needed
+        inv_period = voucher.voucher_date.strftime('%m%Y')
+        p_gstin = Rule37AEvidenceService.resolve_supplier_gstin(voucher)
+        eff_gstin = supplier_gstin or p_gstin
+        eff_period = supplier_return_period or gstr3b_return_period or inv_period
+
+        # Auto-lookup supporting evidence record if not passed
+        arn_str = str(gstr3b_arn or verification_reference or "").strip()
+        g3b_date = gstr3b_filing_date
+        clean_status = (supplier_status or "").strip().upper()
+
+        if not clean_status and supplier_gstr3b_filed is True:
+            clean_status = 'VERIFIED_FILED'
+
+        if clean_status == 'VERIFIED_FILED' and (not g3b_date or not arn_str):
+            # Look up SupplierGSTR3BFilingRecord or GSTR2BRecord
+            supp_rec = SupplierGSTR3BFilingRecord.objects.filter(
+                company=voucher.company,
+                supplier_gstin=eff_gstin,
+                return_period=eff_period
+            ).first() if eff_gstin else None
+            g2b_rec = GSTR2BRecord.objects.filter(
+                company=voucher.company,
+                matched_voucher=voucher
+            ).first()
+
+            if supp_rec and supp_rec.status == 'VERIFIED_FILED':
+                g3b_date = g3b_date or supp_rec.filing_date
+                arn_str = arn_str or supp_rec.arn
+                evidence_record = evidence_record or supp_rec
+            elif g2b_rec and g2b_rec.gstr3b_filing_date and g2b_rec.supplier_gstin.strip().upper() == eff_gstin and (not g2b_rec.gstr3b_return_period or g2b_rec.gstr3b_return_period == eff_period):
+                g3b_date = g3b_date or g2b_rec.gstr3b_filing_date
+                arn_str = arn_str or g2b_rec.gstr3b_filing_arn
+                evidence_record = evidence_record or g2b_rec
+            elif g2b_rec and g2b_rec.gstr1_filing_date and not g2b_rec.gstr3b_filing_date:
+                raise ValidationError(
+                    "Cannot reclaim under Rule 37A: Supplier has filed GSTR-1, but affirmative proof of GSTR-3B return "
+                    "filing (filing date / ARN) is required. GSTR-1 outward declaration does not discharge tax liability under Section 16(2)(c)."
+                )
+
+        eff_verif_date = verification_timestamp or verification_date
+
+        validated = Rule37AEvidenceService.validate_reclaim_evidence(
+            voucher=voucher,
+            supplier_status=clean_status,
+            supplier_gstin=eff_gstin,
+            supplier_return_period=eff_period,
+            verification_source=verification_source,
+            verification_reference=arn_str,
+            verification_date=eff_verif_date,
+            gstr3b_filing_date=g3b_date,
+            gstr3b_arn=arn_str,
+            user=user,
+            manual_verification_reason=manual_verification_reason,
+            evidence_record=evidence_record,
+            freshness_threshold_days=freshness_threshold_days
+        )
 
         with transaction.atomic():
             locked_voucher = Voucher.objects.select_for_update().get(id=voucher.id)
 
-            # 1. Permanent ineligibility (Section 17(5)) cannot be reclaimed (checked first)
+            # 1. Permanent ineligibility (Section 17(5)) cannot be reclaimed
             if GSTReportingAllocation.objects.filter(
                 voucher=locked_voucher,
                 event_type='ITC_REVERSAL_SEC_17_5',
@@ -1728,75 +1811,32 @@ class GSTAllocationService:
                     f"Rule 37A reclaim already active in another period for invoice #{locked_voucher.voucher_number}."
                 )
 
-            # 4. Verify supplier actually filed GSTR-3B (Not just GSTR-1!)
-            if clean_status == 'DATA_UNAVAILABLE':
+            # 4. Check remaining available reversal balance & prevent excessive reclaim
+            active_lineages = GSTReversalReclaimLineage.objects.filter(
+                reversal_allocation=prior_rev,
+                reclaim_allocation__is_active=True
+            )
+            already_reclaimed = quantize_amount(sum(l.reclaimed_tax for l in active_lineages))
+            available_balance = quantize_amount(max(Decimal('0.00'), prior_rev.total_tax - already_reclaimed))
+            if available_balance <= Decimal('0.00'):
                 raise ValidationError(
-                    f"Cannot reclaim under Rule 37A: Supplier filing status is DATA_UNAVAILABLE for invoice #{locked_voucher.voucher_number}. Verification required before reclaiming."
+                    f"Rule 37A reclaim rejected: Prior reversal for invoice #{locked_voucher.voucher_number} "
+                    f"has already been fully reclaimed (₹{already_reclaimed} reclaimed of ₹{prior_rev.total_tax})."
                 )
-            if clean_status == 'VERIFIED_NOT_FILED' or not supplier_gstr3b_filed:
-                raise ValidationError(
-                    f"Cannot reclaim under Rule 37A: Supplier has not furnished corresponding GSTR-3B for invoice #{locked_voucher.voucher_number}."
-                )
-            if clean_status not in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED'):
-                raise ValidationError(
-                    f"Cannot reclaim under Rule 37A: Supplier status '{clean_status}' is unverified for invoice #{locked_voucher.voucher_number}."
-                )
-
-            # Evidence verification: ensure GSTR-1 filing is not substituted for GSTR-3B
-            inv_period = locked_voucher.voucher_date.strftime('%m%Y')
-            if gstr3b_return_period and gstr3b_return_period != inv_period:
-                raise ValidationError(
-                    f"Rule 37A reclaim rejected: Evidence return period '{gstr3b_return_period}' does not match invoice return period '{inv_period}'."
-                )
-
-            g3b_date = gstr3b_filing_date
-            arn_str = gstr3b_arn or verification_reference
-            if clean_status != 'MANUALLY_CONFIRMED' and not g3b_date and not arn_str:
-                p_gstin = (
-                    locked_voucher.party_ledger.gstin
-                    if getattr(locked_voucher, 'party_ledger', None) and locked_voucher.party_ledger.gstin
-                    else getattr(locked_voucher, 'party_gstin', '') or getattr(locked_voucher, 'buyer_gstin', '') or ''
-                ).strip().upper()
-
-                supp_rec = SupplierGSTR3BFilingRecord.objects.filter(
-                    company=locked_voucher.company,
-                    supplier_gstin=p_gstin,
-                    return_period=inv_period
-                ).first() if p_gstin else None
-                g2b_rec = GSTR2BRecord.objects.filter(
-                    company=locked_voucher.company,
-                    matched_voucher=locked_voucher
-                ).first()
-
-                if supp_rec and supp_rec.status == 'VERIFIED_FILED':
-                    g3b_date = supp_rec.filing_date
-                    arn_str = supp_rec.arn
-                elif g2b_rec and g2b_rec.gstr3b_filing_date:
-                    g3b_date = g2b_rec.gstr3b_filing_date
-                    arn_str = g2b_rec.gstr3b_filing_arn
-                elif g2b_rec and g2b_rec.gstr1_filing_date and not g2b_rec.gstr3b_filing_date:
-                    raise ValidationError(
-                        "Cannot reclaim under Rule 37A: Supplier has filed GSTR-1, but affirmative proof of GSTR-3B return "
-                        "filing (filing date / ARN) is required. GSTR-1 outward declaration does not discharge tax liability under Section 16(2)(c)."
-                    )
-
-            if clean_status == 'VERIFIED_FILED':
-                if not arn_str or not str(arn_str).strip():
-                    raise ValidationError("Rule 37A reclaim requires verified GSTR-3B filing Application Reference Number (ARN).")
-                if not g3b_date:
-                    raise ValidationError("Rule 37A reclaim requires verified GSTR-3B filing date.")
-            elif clean_status == 'MANUALLY_CONFIRMED':
-                if not verification_reference or not str(verification_reference).strip():
-                    raise ValidationError("Rule 37A manual reclaim requires document reference (e.g. CA certificate or challan reference).")
 
             summary = cls.compute_voucher_monetary_summary(locked_voucher)
+            if summary["total_tax"] > available_balance:
+                raise ValidationError(
+                    f"Rule 37A reclaim rejected: Requested reclaim ₹{summary['total_tax']} exceeds available reversal balance ₹{available_balance}."
+                )
+
             rec_date = reclaim_date or timezone.now().date()
             v_date_str = (verification_date or rec_date).strftime('%d-%m-%Y')
-            ref_str = f" ARN: {arn_str}" if arn_str else (f" Ref: {verification_reference}" if verification_reference else "")
+            ref_str = f" ARN: {validated['arn']}" if validated['arn'] else (f" Ref: {validated['document_ref']}" if validated['document_ref'] else "")
 
             notes = (
                 f"Rule 37A ITC Reclaim for invoice #{locked_voucher.voucher_number}: supplier subsequently filed GSTR-3B. "
-                f"Evidence: [{clean_status}] Source: {verification_source}{ref_str} Verified on: {v_date_str}."
+                f"Evidence: [{validated['supplier_status']}] Source: {validated['evidence_source']}{ref_str} Verified on: {v_date_str}."
             )
 
             idem_key = f"rule37a_rec_{locked_voucher.company.id}_{locked_voucher.id}_{clean_period}"
@@ -1823,10 +1863,41 @@ class GSTAllocationService:
                 total_tax=summary["total_tax"],
                 is_active=True,
                 source_reversal=prior_rev,
-                payment_reference=arn_str,
+                payment_reference=validated['arn'],
                 idempotency_key=idem_key,
+                evidence_source=validated["evidence_source"],
+                evidence_status=validated["supplier_status"],
+                evidence_supplier_gstin=validated["supplier_gstin"],
+                evidence_return_period=validated["supplier_return_period"],
+                evidence_verified_at=validated["verification_timestamp"],
+                evidence_document_ref=validated["document_ref"],
+                evidence_arn=validated["arn"],
+                evidence_filing_date=validated["filing_date"],
+                evidence_hash=validated["evidence_hash"],
+                evidence_metadata={
+                    "evidence_source": validated["evidence_source"],
+                    "manual_verification_reason": validated["manual_verification_reason"],
+                    "verified_by": str(user) if user else ""
+                },
                 created_by=user
             )
+
+            # Create lineage link
+            GSTReversalReclaimLineage.objects.create(
+                company=locked_voucher.company,
+                voucher=locked_voucher,
+                reversal_allocation=prior_rev,
+                reclaim_allocation=alloc,
+                reclaimed_tax=alloc.total_tax,
+                igst_reclaimed=alloc.igst_amount,
+                cgst_reclaimed=alloc.cgst_amount,
+                sgst_reclaimed=alloc.sgst_amount,
+                cess_reclaimed=alloc.cess_amount,
+                statutory_rule='RULE_37A',
+                created_by=user
+            )
+
+            return alloc
 
             # Create lineage link
             GSTReversalReclaimLineage.objects.create(

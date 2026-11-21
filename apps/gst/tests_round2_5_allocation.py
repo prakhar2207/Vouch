@@ -1771,10 +1771,24 @@ class GSTRound25AllocationCertificationTests(TestCase):
         )
 
         # 1. Reverse under Rule 37A in November 2026 return
+        from apps.gst.models import SupplierGSTR3BFilingRecord
+        rec_supp_37a = SupplierGSTR3BFilingRecord.objects.create(
+            company=self.company,
+            supplier_gstin='27CCCC3333C1Z4',
+            return_period='062025',
+            status='VERIFIED_NOT_FILED'
+        )
         rev_37a = GSTAllocationService.create_rule37a_reversal_allocation(
             voucher=pv_37a,
             assigned_period='112026',
-            user=self.owner_user
+            user=self.owner_user,
+            reversal_date=date(2026, 11, 20),
+            supplier_status='VERIFIED_NOT_FILED',
+            supplier_gstin='27CCCC3333C1Z4',
+            supplier_return_period='062025',
+            evidence_source='PORTAL',
+            evidence_record=rec_supp_37a,
+            verification_timestamp=timezone.now()
         )
         self.assertEqual(rev_37a.event_type, 'ITC_REVERSAL_RULE_37A')
         self.assertEqual(rev_37a.igst_amount, Decimal('900.00'))
@@ -1784,6 +1798,7 @@ class GSTRound25AllocationCertificationTests(TestCase):
             voucher=pv_37a,
             assigned_period='012027',
             user=self.owner_user,
+            supplier_status='VERIFIED_FILED',
             gstr3b_arn='AA070826000004A',
             gstr3b_filing_date=date(2027, 1, 15)
         )
@@ -1984,31 +1999,46 @@ class GSTRound25AllocationCertificationTests(TestCase):
         )
 
         # Prior active Rule 37A reversal is mandatory
+        from apps.gst.models import SupplierGSTR3BFilingRecord
+        rec_supp_dup = SupplierGSTR3BFilingRecord.objects.create(
+            company=self.company,
+            supplier_gstin='27CCCC3333C1Z4',
+            return_period='052025',
+            status='VERIFIED_NOT_FILED'
+        )
         GSTAllocationService.create_rule37a_reversal_allocation(
             voucher=pv_dup,
-            assigned_period='112025',
-            user=self.owner_user
+            assigned_period='112026',
+            user=self.owner_user,
+            reversal_date=date(2026, 11, 20),
+            supplier_status='VERIFIED_NOT_FILED',
+            supplier_gstin='27CCCC3333C1Z4',
+            supplier_return_period='052025',
+            evidence_source='PORTAL',
+            evidence_record=rec_supp_dup,
+            verification_timestamp=timezone.now()
         )
 
         # Initial Reclaim
         rec1 = GSTAllocationService.create_rule37a_reclaim_allocation(
             voucher=pv_dup,
-            assigned_period='022026',
+            assigned_period='022027',
             user=self.owner_user,
+            supplier_status='VERIFIED_FILED',
             gstr3b_arn='AA070826000005B',
-            gstr3b_filing_date=date(2026, 2, 15)
+            gstr3b_filing_date=date(2027, 2, 15)
         )
         self.assertEqual(rec1.event_type, 'ITC_RECLAIM')
 
         # Duplicate reclaim attempt with identical period and company
-        from django.db import IntegrityError
-        with self.assertRaises(IntegrityError):
+        with self.assertRaises(ValidationError):
             GSTAllocationService.create_rule37a_reclaim_allocation(
                 voucher=pv_dup,
-                assigned_period='022026',
+                assigned_period='022027',
                 user=self.owner_user,
+                supplier_status='VERIFIED_FILED',
                 gstr3b_arn='AA070826000005B',
-                gstr3b_filing_date=date(2026, 2, 15)
+                gstr3b_filing_date=date(2027, 2, 15)
             )
 
     def test_cross_tenant_gst_snapshot_access_rejected(self):

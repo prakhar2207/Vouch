@@ -389,6 +389,10 @@ class Round257PaymentAndEvidenceTests(TestCase):
                 assigned_period='102026',
                 user=self.owner_user,
                 supplier_status='DATA_UNAVAILABLE',
+                supplier_gstin='07ABCDE1234F1Z5',
+                supplier_return_period='062025',
+                evidence_source='PORTAL',
+                verification_timestamp=timezone.now(),
                 reversal_date=date(2026, 10, 15)
             )
         self.assertIn("DATA_UNAVAILABLE", str(ctx.exception))
@@ -405,7 +409,10 @@ class Round257PaymentAndEvidenceTests(TestCase):
                 assigned_period='102026',
                 user=self.owner_user,
                 supplier_status='VERIFIED_NOT_FILED',
+                supplier_gstin='07ABCDE1234F1Z5',
                 supplier_return_period='082025', # Mismatched return period
+                evidence_source='PORTAL',
+                verification_timestamp=timezone.now(),
                 reversal_date=date(2026, 10, 15)
             )
         self.assertIn("does not match invoice return period", str(ctx.exception))
@@ -433,8 +440,12 @@ class Round257PaymentAndEvidenceTests(TestCase):
                 assigned_period='102026',
                 user=self.owner_user,
                 supplier_status='VERIFIED_NOT_FILED',
+                supplier_gstin='07ABCDE1234F1Z5',
                 supplier_return_period='062025',
                 is_stale_evidence=rec.is_stale(),
+                evidence_source='PORTAL',
+                evidence_record=rec,
+                verification_timestamp=timezone.now(),
                 reversal_date=date(2026, 10, 15)
             )
         self.assertIn("Supplier filing evidence is stale", str(ctx.exception))
@@ -453,7 +464,12 @@ class Round257PaymentAndEvidenceTests(TestCase):
                 assigned_period='092026',
                 user=self.owner_user,
                 supplier_status='VERIFIED_NOT_FILED',
+                supplier_gstin='07ABCDE1234F1Z5',
                 supplier_return_period='082025',
+                evidence_source='MANUAL',
+                evidence_document_ref='DOC-REF-001',
+                manual_verification_reason='Supplier confirmed in writing non-filing',
+                verification_timestamp=timezone.now(),
                 reversal_date=date(2026, 9, 15)
             )
         self.assertIn("Statutory default date (30-09-2026) has not been reached", str(ctx.exception))
@@ -464,7 +480,12 @@ class Round257PaymentAndEvidenceTests(TestCase):
             assigned_period='102026',
             user=self.owner_user,
             supplier_status='VERIFIED_NOT_FILED',
+            supplier_gstin='07ABCDE1234F1Z5',
             supplier_return_period='082025',
+            evidence_source='MANUAL',
+            evidence_document_ref='DOC-REF-001',
+            manual_verification_reason='Supplier confirmed in writing non-filing',
+            verification_timestamp=timezone.now(),
             reversal_date=date(2026, 10, 15)
         )
         self.assertEqual(rev.event_type, 'ITC_REVERSAL_RULE_37A')
@@ -474,8 +495,23 @@ class Round257PaymentAndEvidenceTests(TestCase):
         Enforce: Rule 37A reclaim with VERIFIED_FILED requires valid ARN and filing date.
         """
         v = self._create_purchase_voucher('INV-SUPP-05', v_date=date(2025, 8, 10))
+        rec_supp5 = SupplierGSTR3BFilingRecord.objects.create(
+            company=self.company,
+            supplier_gstin='07ABCDE1234F1Z5',
+            return_period='082025',
+            status='VERIFIED_NOT_FILED'
+        )
         GSTAllocationService.create_rule37a_reversal_allocation(
-            voucher=v, assigned_period='102026', user=self.owner_user, reversal_date=date(2026, 10, 15)
+            voucher=v,
+            assigned_period='102026',
+            user=self.owner_user,
+            supplier_status='VERIFIED_NOT_FILED',
+            supplier_gstin='07ABCDE1234F1Z5',
+            supplier_return_period='082025',
+            evidence_source='PORTAL',
+            evidence_record=rec_supp5,
+            verification_timestamp=timezone.now(),
+            reversal_date=date(2026, 10, 15)
         )
 
         # Missing ARN
@@ -506,8 +542,23 @@ class Round257PaymentAndEvidenceTests(TestCase):
         Enforce: GSTR-1 outward date cannot be substituted for GSTR-3B tax payment.
         """
         v = self._create_purchase_voucher('INV-SUPP-06', v_date=date(2025, 8, 10))
+        rec_supp6 = SupplierGSTR3BFilingRecord.objects.create(
+            company=self.company,
+            supplier_gstin='07ABCDE1234F1Z5',
+            return_period='082025',
+            status='VERIFIED_NOT_FILED'
+        )
         GSTAllocationService.create_rule37a_reversal_allocation(
-            voucher=v, assigned_period='102026', user=self.owner_user, reversal_date=date(2026, 10, 15)
+            voucher=v,
+            assigned_period='102026',
+            user=self.owner_user,
+            supplier_status='VERIFIED_NOT_FILED',
+            supplier_gstin='07ABCDE1234F1Z5',
+            supplier_return_period='082025',
+            evidence_source='PORTAL',
+            evidence_record=rec_supp6,
+            verification_timestamp=timezone.now(),
+            reversal_date=date(2026, 10, 15)
         )
 
         batch = GSTR2BImport.objects.create(
@@ -545,8 +596,23 @@ class Round257PaymentAndEvidenceTests(TestCase):
         Enforce: MANUALLY_CONFIRMED reclaim requires document reference and records audit trail.
         """
         v = self._create_purchase_voucher('INV-SUPP-07', v_date=date(2025, 8, 10))
+        rec_supp7 = SupplierGSTR3BFilingRecord.objects.create(
+            company=self.company,
+            supplier_gstin='07ABCDE1234F1Z5',
+            return_period='082025',
+            status='VERIFIED_NOT_FILED'
+        )
         GSTAllocationService.create_rule37a_reversal_allocation(
-            voucher=v, assigned_period='102026', user=self.owner_user, reversal_date=date(2026, 10, 15)
+            voucher=v,
+            assigned_period='102026',
+            user=self.owner_user,
+            supplier_status='VERIFIED_NOT_FILED',
+            supplier_gstin='07ABCDE1234F1Z5',
+            supplier_return_period='082025',
+            evidence_source='PORTAL',
+            evidence_record=rec_supp7,
+            verification_timestamp=timezone.now(),
+            reversal_date=date(2026, 10, 15)
         )
 
         # Missing reference note fails
@@ -567,7 +633,8 @@ class Round257PaymentAndEvidenceTests(TestCase):
             user=self.owner_user,
             supplier_status='MANUALLY_CONFIRMED',
             verification_reference='CA-CERT-2026-8889',
-            verification_source='CA_CERTIFICATE'
+            verification_source='CA_CERTIFICATE',
+            verification_timestamp=timezone.now()
         )
         self.assertEqual(rec.event_type, 'ITC_RECLAIM')
         self.assertIn("CA_CERTIFICATE", rec.statutory_notes)
@@ -613,11 +680,22 @@ class Round257PaymentAndEvidenceTests(TestCase):
         # FY 2025-26 -> Safe harbor deadline is 30-Nov-2026
 
         # Reversed on 20-Nov-2026 (Safe harbor)
+        rec_safe = SupplierGSTR3BFilingRecord.objects.create(
+            company=self.company,
+            supplier_gstin='07ABCDE1234F1Z5',
+            return_period='062025',
+            status='VERIFIED_NOT_FILED'
+        )
         rev_safe = GSTAllocationService.create_rule37a_reversal_allocation(
             voucher=v,
             assigned_period='112026',
             user=self.owner_user,
             supplier_status='VERIFIED_NOT_FILED',
+            supplier_gstin='07ABCDE1234F1Z5',
+            supplier_return_period='062025',
+            evidence_source='PORTAL',
+            evidence_record=rec_safe,
+            verification_timestamp=timezone.now(),
             reversal_date=date(2026, 11, 20)
         )
         self.assertNotIn("OVERDUE", rev_safe.statutory_notes)
@@ -629,6 +707,11 @@ class Round257PaymentAndEvidenceTests(TestCase):
             assigned_period='122026',
             user=self.owner_user,
             supplier_status='VERIFIED_NOT_FILED',
+            supplier_gstin='07ABCDE1234F1Z5',
+            supplier_return_period='062025',
+            evidence_source='PORTAL',
+            evidence_record=rec_safe,
+            verification_timestamp=timezone.now(),
             reversal_date=date(2026, 12, 20)
         )
         self.assertIn("OVERDUE (20 days past deadline 30-11-2026)", rev_late.statutory_notes)
