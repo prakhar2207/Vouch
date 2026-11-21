@@ -17,7 +17,7 @@ import logging
 import json
 import hashlib
 from decimal import Decimal
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional, List, Dict, Any, Tuple, Union
 from django.utils import timezone
 from django.core.exceptions import ValidationError
@@ -1430,14 +1430,18 @@ class GSTAllocationService:
         supplier_status: str = 'UNKNOWN',
         supplier_return_period: str = '',
         supplier_gstin: str = '',
-        is_stale_evidence: bool = False
+        is_stale_evidence: bool = False,
+        evidence_source: Optional[str] = None,
+        verification_timestamp: Optional[datetime] = None,
+        freshness_threshold_days: int = 30
     ) -> Dict[str, Any]:
         """
         Evaluates Rule 37A statutory timeline and compliance state:
         - Supplier default date: 30 September post FY end
         - Recipient reversal deadline: 30 November post FY end
         - Distinguishes: VERIFIED_FILED, VERIFIED_NOT_FILED, DATA_UNAVAILABLE, MANUALLY_CONFIRMED, PENDING, UNKNOWN
-        - Does NOT treat DATA_UNAVAILABLE or PENDING as default!
+        - Invariant: UNKNOWN, DATA_UNAVAILABLE, PENDING, null, and missing evidence NEVER establish default!
+        - Raw boolean (e.g. False or True) without independently validated evidence NEVER establishes filing state!
         """
         v_date = voucher.voucher_date
         fy = cls.get_financial_year(v_date)
@@ -1445,16 +1449,19 @@ class GSTAllocationService:
         reversal_deadline = cls.get_rule37a_recipient_reversal_deadline(fy)
         today = check_date or timezone.now().date()
 
-        # Resolve supplier filing state
+        # Resolve supplier filing state (Fail-Closed: UNKNOWN never converts to default)
         clean_status = (supplier_status or 'UNKNOWN').upper()
-        if clean_status == 'UNKNOWN' and supplier_gstr3b_filed is not None:
-            clean_status = 'VERIFIED_FILED' if supplier_gstr3b_filed else 'VERIFIED_NOT_FILED'
 
         is_supplier_default = False
         default_reason = ''
 
         inv_gstin = Rule37AEvidenceService.resolve_supplier_gstin(voucher)
-        if supplier_gstin and inv_gstin and supplier_gstin.strip().upper() != inv_gstin:
+        clean_supp_gstin = (supplier_gstin or '').strip().upper()
+        clean_inv_gstin = (inv_gstin or '').strip().upper()
+        inv_period = v_date.strftime('%m%Y')
+        clean_period = (supplier_return_period or '').strip().replace('-', '').replace('/', '')
+
+        if clean_supp_gstin and clean_inv_gstin and clean_supp_gstin != clean_inv_gstin:
             clean_status = 'DATA_UNAVAILABLE'
             is_supplier_default = False
             default_reason = f"Supplier GSTIN '{supplier_gstin}' does not match invoice supplier GSTIN '{inv_gstin}'. Default cannot be evaluated."
@@ -1477,14 +1484,32 @@ class GSTAllocationService:
             is_supplier_default = False
             default_reason = 'Supplier filing manually confirmed by accountant with documentary evidence.'
         elif clean_status == 'VERIFIED_NOT_FILED':
-            if is_stale_evidence:
+            if not clean_supp_gstin or not clean_inv_gstin or clean_supp_gstin != clean_inv_gstin:
+                clean_status = 'DATA_UNAVAILABLE'
+                is_supplier_default = False
+                default_reason = f"Supplier GSTIN '{supplier_gstin}' does not match invoice supplier GSTIN '{inv_gstin}'. Default cannot be evaluated."
+            elif not clean_period or clean_period != inv_period:
+                clean_status = 'DATA_UNAVAILABLE'
+                is_supplier_default = False
+                default_reason = f"Supplier filing evidence period '{supplier_return_period}' does not match invoice return period '{inv_period}'. Non-filing cannot be assumed."
+            elif is_stale_evidence:
                 clean_status = 'DATA_UNAVAILABLE'
                 is_supplier_default = False
                 default_reason = 'Supplier filing evidence is stale (>30 days old). Re-verification required from GSTN.'
-            elif supplier_return_period and supplier_return_period != v_date.strftime('%m%Y'):
-                clean_status = 'DATA_UNAVAILABLE'
-                is_supplier_default = False
-                default_reason = f"Supplier filing evidence period '{supplier_return_period}' does not match invoice return period '{v_date.strftime('%m%Y')}'. Non-filing cannot be assumed."
+            elif verification_timestamp is not None:
+                vt_date = verification_timestamp.date() if isinstance(verification_timestamp, datetime) else verification_timestamp
+                ref_date = check_date if (check_date and check_date >= vt_date) else timezone.now().date()
+                age_days = (ref_date - vt_date).days
+                if age_days > freshness_threshold_days or age_days < 0:
+                    clean_status = 'DATA_UNAVAILABLE'
+                    is_supplier_default = False
+                    default_reason = f"Supplier filing verification timestamp is stale ({age_days} days old). Re-verification required from GSTN."
+                elif today >= default_date:
+                    is_supplier_default = True
+                    default_reason = f"Supplier confirmed NOT FILED as of {today.strftime('%d-%m-%Y')} (past 30-Sep default date {default_date.strftime('%d-%m-%Y')})."
+                else:
+                    is_supplier_default = False
+                    default_reason = f"Statutory default date ({default_date.strftime('%d-%m-%Y')}) not yet reached."
             elif today >= default_date:
                 is_supplier_default = True
                 default_reason = f"Supplier confirmed NOT FILED as of {today.strftime('%d-%m-%Y')} (past 30-Sep default date {default_date.strftime('%d-%m-%Y')})."
@@ -1522,7 +1547,8 @@ class GSTAllocationService:
             )
 
         # Reclaim eligibility: reversal exists, supplier filed/confirmed, not already reclaimed, not blocked under 17(5)
-        supplier_has_filed = clean_status in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED') or bool(supplier_gstr3b_filed)
+        # Fail-Closed: raw boolean without verified status NEVER establishes filing!
+        supplier_has_filed = clean_status in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED')
         reclaim_eligible = bool(
             existing_reversal and
             supplier_has_filed and

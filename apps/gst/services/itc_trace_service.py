@@ -137,8 +137,10 @@ class ITCTraceService:
             supplier_status=ev_res["status"],
             supplier_return_period=ev_res["return_period"],
             supplier_gstin=ev_res["supplier_gstin"],
-            is_stale_evidence=ev_res["is_stale"]
+            is_stale_evidence=ev_res["is_stale"],
+            verification_timestamp=ev_res.get("verification_timestamp")
         )
+        supp_status = r37a_status.get("supplier_status", "UNKNOWN")
 
         # Allocations summary
         all_allocs = GSTReportingAllocation.objects.filter(voucher=voucher, is_active=True)
