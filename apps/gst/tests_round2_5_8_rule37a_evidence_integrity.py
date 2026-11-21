@@ -51,15 +51,23 @@ class Rule37AEvidenceBaseTestCase:
     EXPECTED_FINGERPRINT = '6f4741bdaaf4'
 
     def setup_sandbox_environment(self):
-        # 1. Mandatory Environment and Isolation Invariant Check
+        # 1. Mandatory Environment and Isolation Invariant Check (Fail-Closed)
         from django.conf import settings
-        if connection.vendor == 'postgresql':
-            raw_db_name = connection.settings_dict.get('NAME') or settings.DATABASES['default']['NAME']
-            base_db_name = raw_db_name[5:] if raw_db_name.startswith('test_') else raw_db_name
-            db_host = settings.DATABASES['default'].get('HOST', '')
-            computed_fp = hashlib.sha256(f"{db_host}:{base_db_name}".encode()).hexdigest()[:12]
-            assert base_db_name == 'neondb_staging', f"ABORT: Test running on non-staging database '{base_db_name}'!"
-            assert computed_fp == self.EXPECTED_FINGERPRINT, f"ABORT: Fingerprint '{computed_fp}' does not match expected '{self.EXPECTED_FINGERPRINT}'!"
+        assert connection.vendor == 'postgresql', (
+            f"ABORT: Staging integration test strictly requires PostgreSQL. Found vendor '{connection.vendor}'."
+        )
+        raw_db_name = connection.settings_dict.get('NAME') or settings.DATABASES['default']['NAME']
+        base_db_name = raw_db_name[5:] if raw_db_name.startswith('test_') else raw_db_name
+        db_host = settings.DATABASES['default'].get('HOST', '')
+        computed_fp = hashlib.sha256(f"{db_host}:{base_db_name}".encode()).hexdigest()[:12]
+
+        is_neon_staging = (base_db_name == 'neondb_staging' and computed_fp == self.EXPECTED_FINGERPRINT)
+        is_ci_staging = (base_db_name == 'neondb_ci_staging' and ('127.0.0.1' in db_host or 'localhost' in db_host))
+
+        assert is_neon_staging or is_ci_staging, (
+            f"ABORT: Test running on unauthorized database '{base_db_name}' with fingerprint '{computed_fp}' on host '{db_host}'! "
+            f"Expected neondb_staging ({self.EXPECTED_FINGERPRINT}) or local CI test container."
+        )
 
         self.company = Company.objects.filter(id=self.SANDBOX_COMPANY_ID).first()
         if not self.company:

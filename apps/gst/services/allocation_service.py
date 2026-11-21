@@ -1665,6 +1665,26 @@ class GSTAllocationService:
             return alloc
 
     @classmethod
+    def get_active_rule37a_reversal_balance(cls, voucher: Voucher) -> Decimal:
+        """
+        Returns the active remaining un-reclaimed Rule 37A reversal balance for a voucher.
+        """
+        prior_rev = GSTReportingAllocation.objects.filter(
+            voucher=voucher,
+            event_type='ITC_REVERSAL_RULE_37A',
+            is_active=True
+        ).first()
+        if not prior_rev:
+            return Decimal('0.00')
+
+        active_lineages = GSTReversalReclaimLineage.objects.filter(
+            reversal_allocation=prior_rev,
+            reclaim_allocation__is_active=True
+        )
+        already_reclaimed = quantize_amount(sum(l.reclaimed_tax for l in active_lineages))
+        return quantize_amount(max(Decimal('0.00'), prior_rev.total_tax - already_reclaimed))
+
+    @classmethod
     def create_rule37a_reclaim_allocation(
         cls,
         voucher: Voucher,
@@ -1741,10 +1761,12 @@ class GSTAllocationService:
                 g3b_date = g3b_date or supp_rec.filing_date
                 arn_str = arn_str or supp_rec.arn
                 evidence_record = evidence_record or supp_rec
-            elif g2b_rec and g2b_rec.gstr3b_filing_date and g2b_rec.supplier_gstin.strip().upper() == eff_gstin and (not g2b_rec.gstr3b_return_period or g2b_rec.gstr3b_return_period == eff_period):
-                g3b_date = g3b_date or g2b_rec.gstr3b_filing_date
-                arn_str = arn_str or g2b_rec.gstr3b_filing_arn
-                evidence_record = evidence_record or g2b_rec
+            elif g2b_rec and g2b_rec.gstr3b_filing_date and g2b_rec.supplier_gstin.strip().upper() == eff_gstin:
+                norm_p = Rule37AEvidenceService.normalize_and_validate_return_period(g2b_rec.gstr3b_return_period)
+                if norm_p and norm_p == eff_period:
+                    g3b_date = g3b_date or g2b_rec.gstr3b_filing_date
+                    arn_str = arn_str or g2b_rec.gstr3b_filing_arn
+                    evidence_record = evidence_record or g2b_rec
             elif g2b_rec and g2b_rec.gstr1_filing_date and not g2b_rec.gstr3b_filing_date:
                 raise ValidationError(
                     "Cannot reclaim under Rule 37A: Supplier has filed GSTR-1, but affirmative proof of GSTR-3B return "

@@ -485,7 +485,7 @@ class SupplierGSTR3BFilingRecord(models.Model):
     verification_source = models.CharField(max_length=50, default='API')
     evidence_document_ref = models.CharField(max_length=255, blank=True, default='')
     notes = models.TextField(blank=True, default='')
-    verified_at = models.DateTimeField(auto_now=True)
+    verified_at = models.DateTimeField(null=True, blank=True, default=timezone.now)
     verified_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

@@ -1,5 +1,5 @@
 import hashlib
-from datetime import date, datetime
+from datetime import date, datetime, timezone as dt_timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Union
 
@@ -43,6 +43,25 @@ class Rule37AEvidenceService:
     """
 
     DEFAULT_FRESHNESS_DAYS = 30
+
+    @classmethod
+    def normalize_and_validate_return_period(cls, period_str: Optional[str]) -> Optional[str]:
+        """
+        Normalizes and validates a GST return period.
+        Strict requirement: Must be a 6-digit MMYYYY string (or MM-YYYY / MM/YYYY normalized).
+        Month must be 01..12, Year must be valid 4 digits.
+        Returns normalized 'MMYYYY' or None if blank, null, or malformed.
+        """
+        if not period_str:
+            return None
+        cleaned = str(period_str).strip().replace('-', '').replace('/', '')
+        if len(cleaned) != 6 or not cleaned.isdigit():
+            return None
+        month = int(cleaned[:2])
+        year = int(cleaned[2:])
+        if month < 1 or month > 12 or year < 2017 or year > 2099:
+            return None
+        return cleaned
 
     @classmethod
     def resolve_supplier_gstin(cls, voucher: Voucher) -> str:
@@ -106,42 +125,98 @@ class Rule37AEvidenceService:
             }
 
         # 1. Primary Evidence Source: SupplierGSTR3BFilingRecord
-        supp_record = SupplierGSTR3BFilingRecord.objects.filter(
+        supp_records = list(SupplierGSTR3BFilingRecord.objects.filter(
             company=voucher.company,
             supplier_gstin=supplier_gstin,
             return_period=inv_period
-        ).first()
+        ))
 
         supp_eval = None
-        if supp_record:
-            is_supp_stale = supp_record.is_stale(threshold_days=freshness_threshold_days)
-            if is_supp_stale:
+        if supp_records:
+            # Check internal consistency if multiple records exist
+            distinct_statuses = {r.status for r in supp_records}
+            if len(distinct_statuses) > 1 and ('VERIFIED_FILED' in distinct_statuses and 'VERIFIED_NOT_FILED' in distinct_statuses):
+                # Multiple contradictory records for same period
                 supp_eval = {
                     "status": "DATA_UNAVAILABLE",
                     "supplier_gstr3b_filed": False,
-                    "is_stale": True,
+                    "is_stale": False,
                     "filing_date": None,
                     "arn": "",
-                    "source": supp_record.verification_source or "SUPPLIER_RECORD",
-                    "timestamp": supp_record.verified_at,
-                    "record": supp_record,
-                    "document_ref": supp_record.evidence_document_ref,
-                    "note": f"Supplier filing record is stale (verified >{freshness_threshold_days} days ago). Re-verification required."
+                    "source": "SUPPLIER_RECORD",
+                    "timestamp": None,
+                    "record": None,
+                    "document_ref": "",
+                    "note": f"Contradictory SupplierGSTR3BFilingRecord entries for supplier {supplier_gstin} and period {inv_period}."
                 }
             else:
+                # Deterministically select the latest verified record
+                supp_record = sorted(
+                    supp_records,
+                    key=lambda r: (r.verified_at or datetime.min.replace(tzinfo=dt_timezone.utc)),
+                    reverse=True
+                )[0]
+
+                is_supp_stale = supp_record.is_stale(threshold_days=freshness_threshold_days)
                 is_filed = supp_record.status in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED')
-                supp_eval = {
-                    "status": supp_record.status,
-                    "supplier_gstr3b_filed": is_filed,
-                    "is_stale": False,
-                    "filing_date": supp_record.filing_date,
-                    "arn": supp_record.arn,
-                    "source": supp_record.verification_source or "SUPPLIER_RECORD",
-                    "timestamp": supp_record.verified_at,
-                    "record": supp_record,
-                    "document_ref": supp_record.evidence_document_ref,
-                    "note": supp_record.notes or "Authoritative SupplierGSTR3BFilingRecord"
-                }
+
+                if is_filed:
+                    # Positive filing fact with verified ARN & filing date:
+                    # An affirmative filing fact is an immutable historical event on GST portal.
+                    # Preserve original source verification timestamp separately from filing date.
+                    supp_eval = {
+                        "status": supp_record.status,
+                        "supplier_gstr3b_filed": True,
+                        "is_stale": False,
+                        "filing_date": supp_record.filing_date,
+                        "arn": supp_record.arn,
+                        "source": supp_record.verification_source or "SUPPLIER_RECORD",
+                        "timestamp": supp_record.verified_at,
+                        "record": supp_record,
+                        "document_ref": supp_record.evidence_document_ref,
+                        "note": supp_record.notes or "Authoritative SupplierGSTR3BFilingRecord"
+                    }
+                else:
+                    # Negative non-filing evidence: Must have verification timestamp and must be fresh
+                    if not supp_record.verified_at:
+                        supp_eval = {
+                            "status": "DATA_UNAVAILABLE",
+                            "supplier_gstr3b_filed": False,
+                            "is_stale": True,
+                            "filing_date": None,
+                            "arn": "",
+                            "source": supp_record.verification_source or "SUPPLIER_RECORD",
+                            "timestamp": None,
+                            "record": supp_record,
+                            "document_ref": supp_record.evidence_document_ref,
+                            "note": "Negative non-filing evidence has no verification timestamp. Freshness cannot be established."
+                        }
+                    elif is_supp_stale:
+                        supp_eval = {
+                            "status": "DATA_UNAVAILABLE",
+                            "supplier_gstr3b_filed": False,
+                            "is_stale": True,
+                            "filing_date": None,
+                            "arn": "",
+                            "source": supp_record.verification_source or "SUPPLIER_RECORD",
+                            "timestamp": supp_record.verified_at,
+                            "record": supp_record,
+                            "document_ref": supp_record.evidence_document_ref,
+                            "note": f"Supplier filing record is stale (verified >{freshness_threshold_days} days ago). Re-verification required."
+                        }
+                    else:
+                        supp_eval = {
+                            "status": supp_record.status,
+                            "supplier_gstr3b_filed": False,
+                            "is_stale": False,
+                            "filing_date": None,
+                            "arn": "",
+                            "source": supp_record.verification_source or "SUPPLIER_RECORD",
+                            "timestamp": supp_record.verified_at,
+                            "record": supp_record,
+                            "document_ref": supp_record.evidence_document_ref,
+                            "note": supp_record.notes or "Authoritative SupplierGSTR3BFilingRecord"
+                        }
 
         # 2. Fallback Evidence Source: GSTR2BRecord
         gstr2b_matches = list(GSTR2BRecord.objects.filter(
@@ -149,52 +224,141 @@ class Rule37AEvidenceService:
             matched_voucher=voucher
         ))
 
-        g2b_eval = None
+        # Filter strictly for matching supplier GSTIN and exact, validated GSTR-3B return period
+        valid_g2b_matches = []
+        has_matching_supplier_g2b = False
         for g2b in gstr2b_matches:
+            # Multi-tenant isolation guard
+            if str(g2b.company_id) != str(voucher.company_id):
+                continue
+
             # Statutory Guard: Must match exact supplier GSTIN
-            if g2b.supplier_gstin.strip().upper() != supplier_gstin:
+            if not g2b.supplier_gstin or g2b.supplier_gstin.strip().upper() != supplier_gstin:
                 continue
 
-            # Statutory Guard: Must match exact invoice return period
-            g2b_period = (g2b.gstr3b_return_period or "").strip()
-            if g2b_period and g2b_period != inv_period:
+            has_matching_supplier_g2b = True
+
+            # Statutory Guard: Must have non-empty, valid GSTR-3B return period matching exact invoice period
+            # DO NOT infer or fall back to GSTR-2B batch statement period (g2b.return_period)
+            raw_period = getattr(g2b, 'gstr3b_return_period', None) or ""
+            norm_period = cls.normalize_and_validate_return_period(raw_period)
+            if not norm_period or norm_period != inv_period:
+                # Blank, null, malformed, or mismatched period: strictly exclude
                 continue
 
-            # Check staleness on GSTR2BRecord
-            is_g2b_stale = g2b.is_gstr3b_stale(threshold_days=freshness_threshold_days)
+            valid_g2b_matches.append(g2b)
 
-            # Evaluate GSTR-3B filing evidence
-            if g2b.gstr3b_status == 'FILED' and g2b.gstr3b_filing_arn and g2b.gstr3b_filing_date:
+        g2b_eval = None
+        if not valid_g2b_matches and has_matching_supplier_g2b:
+            # GSTR-2B record exists for voucher, but lacks verified exact-period GSTR-3B filing evidence
+            g2b_eval = {
+                "status": "DATA_UNAVAILABLE",
+                "supplier_gstr3b_filed": False,
+                "is_stale": False,
+                "filing_date": None,
+                "arn": "",
+                "source": "GSTR2B",
+                "timestamp": None,
+                "record": None,
+                "document_ref": "",
+                "note": f"GSTR-2B record present for voucher #{voucher.voucher_number}, but lacks verified GSTR-3B filing evidence for exact period {inv_period}."
+            }
+        elif valid_g2b_matches:
+            # Check for conflicting GSTR-2B records for the same voucher/period
+            g2b_statuses = {g.gstr3b_status for g in valid_g2b_matches}
+            if 'FILED' in g2b_statuses and 'NOT_FILED' in g2b_statuses:
                 g2b_eval = {
-                    "status": "VERIFIED_FILED",
-                    "supplier_gstr3b_filed": True,
+                    "status": "DATA_UNAVAILABLE",
+                    "supplier_gstr3b_filed": False,
                     "is_stale": False,
-                    "filing_date": g2b.gstr3b_filing_date,
-                    "arn": g2b.gstr3b_filing_arn,
-                    "source": g2b.gstr3b_verification_source or "GSTR2B",
-                    "timestamp": g2b.gstr3b_verified_at,
-                    "record": g2b,
+                    "filing_date": None,
+                    "arn": "",
+                    "source": "GSTR2B",
+                    "timestamp": None,
+                    "record": None,
                     "document_ref": "",
-                    "note": f"GSTR-2B GSTR-3B filing verified with ARN {g2b.gstr3b_filing_arn}"
+                    "note": f"Contradictory GSTR2BRecord entries for voucher #{voucher.voucher_number} and period {inv_period}."
                 }
-                break
-            elif g2b.gstr3b_status == 'NOT_FILED':
-                if is_g2b_stale:
+            else:
+                # Deterministically pick the record with latest verification timestamp
+                g2b = sorted(
+                    valid_g2b_matches,
+                    key=lambda r: (r.gstr3b_verified_at or datetime.min.replace(tzinfo=dt_timezone.utc)),
+                    reverse=True
+                )[0]
+
+                is_g2b_stale = g2b.is_gstr3b_stale(threshold_days=freshness_threshold_days)
+
+                # Evaluate GSTR-3B filing evidence
+                if g2b.gstr3b_status == 'FILED' and g2b.gstr3b_filing_arn and g2b.gstr3b_filing_date:
                     g2b_eval = {
-                        "status": "DATA_UNAVAILABLE",
-                        "supplier_gstr3b_filed": False,
-                        "is_stale": True,
-                        "filing_date": None,
-                        "arn": "",
+                        "status": "VERIFIED_FILED",
+                        "supplier_gstr3b_filed": True,
+                        "is_stale": False,
+                        "filing_date": g2b.gstr3b_filing_date,
+                        "arn": g2b.gstr3b_filing_arn,
                         "source": g2b.gstr3b_verification_source or "GSTR2B",
                         "timestamp": g2b.gstr3b_verified_at,
                         "record": g2b,
                         "document_ref": "",
-                        "note": f"GSTR-2B non-filing record is stale (verified >{freshness_threshold_days} days ago). Re-verification required."
+                        "note": f"GSTR-2B GSTR-3B filing verified with ARN {g2b.gstr3b_filing_arn}"
                     }
-                else:
+                elif g2b.gstr3b_status == 'NOT_FILED':
+                    if not g2b.gstr3b_verified_at:
+                        g2b_eval = {
+                            "status": "DATA_UNAVAILABLE",
+                            "supplier_gstr3b_filed": False,
+                            "is_stale": True,
+                            "filing_date": None,
+                            "arn": "",
+                            "source": g2b.gstr3b_verification_source or "GSTR2B",
+                            "timestamp": None,
+                            "record": g2b,
+                            "document_ref": "",
+                            "note": "GSTR-2B non-filing record has no verification timestamp. Freshness cannot be established."
+                        }
+                    elif is_g2b_stale:
+                        g2b_eval = {
+                            "status": "DATA_UNAVAILABLE",
+                            "supplier_gstr3b_filed": False,
+                            "is_stale": True,
+                            "filing_date": None,
+                            "arn": "",
+                            "source": g2b.gstr3b_verification_source or "GSTR2B",
+                            "timestamp": g2b.gstr3b_verified_at,
+                            "record": g2b,
+                            "document_ref": "",
+                            "note": f"GSTR-2B non-filing record is stale (verified >{freshness_threshold_days} days ago). Re-verification required."
+                        }
+                    else:
+                        g2b_eval = {
+                            "status": "VERIFIED_NOT_FILED",
+                            "supplier_gstr3b_filed": False,
+                            "is_stale": False,
+                            "filing_date": None,
+                            "arn": "",
+                            "source": g2b.gstr3b_verification_source or "GSTR2B",
+                            "timestamp": g2b.gstr3b_verified_at,
+                            "record": g2b,
+                            "document_ref": "",
+                            "note": "GSTR-2B indicates GSTR-3B NOT_FILED for exact return period"
+                        }
+                elif g2b.gstr1_filing_date and not g2b.gstr3b_filing_date:
                     g2b_eval = {
-                        "status": "VERIFIED_NOT_FILED",
+                        "status": "DATA_UNAVAILABLE",
+                        "supplier_gstr3b_filed": False,
+                        "is_stale": False,
+                        "filing_date": None,
+                        "arn": "",
+                        "source": "GSTR2B",
+                        "timestamp": g2b.gstr3b_verified_at,
+                        "record": g2b,
+                        "document_ref": "",
+                        "note": "Supplier filed GSTR-1, but GSTR-3B tax payment is unverified. GSTR-1 date cannot establish GSTR-3B filing."
+                    }
+                elif g2b.gstr3b_status == 'PENDING':
+                    g2b_eval = {
+                        "status": "PENDING",
                         "supplier_gstr3b_filed": False,
                         "is_stale": False,
                         "filing_date": None,
@@ -203,44 +367,12 @@ class Rule37AEvidenceService:
                         "timestamp": g2b.gstr3b_verified_at,
                         "record": g2b,
                         "document_ref": "",
-                        "note": "GSTR-2B indicates GSTR-3B NOT_FILED for exact return period"
+                        "note": "GSTR-2B indicates supplier verification is PENDING from GST portal"
                     }
-                break
-            elif g2b.gstr3b_status == 'PENDING':
-                g2b_eval = {
-                    "status": "PENDING",
-                    "supplier_gstr3b_filed": False,
-                    "is_stale": False,
-                    "filing_date": None,
-                    "arn": "",
-                    "source": g2b.gstr3b_verification_source or "GSTR2B",
-                    "timestamp": g2b.gstr3b_verified_at,
-                    "record": g2b,
-                    "document_ref": "",
-                    "note": "GSTR-2B indicates supplier verification is PENDING from GST portal"
-                }
-                break
-            elif g2b.gstr1_filing_date and not g2b.gstr3b_filing_date:
-                # GSTR-1 outward date present, but GSTR-3B not discharged
-                g2b_eval = {
-                    "status": "DATA_UNAVAILABLE",
-                    "supplier_gstr3b_filed": False,
-                    "is_stale": False,
-                    "filing_date": None,
-                    "arn": "",
-                    "source": "GSTR2B",
-                    "timestamp": g2b.gstr3b_verified_at,
-                    "record": g2b,
-                    "document_ref": "",
-                    "note": "Supplier filed GSTR-1, but GSTR-3B tax payment is unverified. GSTR-1 date cannot establish GSTR-3B filing."
-                }
-                break
 
         # 3. Detect and Reconcile Conflicts Across Sources
         if supp_eval and g2b_eval:
-            supp_filed = supp_eval["supplier_gstr3b_filed"]
-            g2b_filed = g2b_eval["supplier_gstr3b_filed"]
-            # Conflict: One says filed and the other says not filed
+            # Direct contradiction: One filed, one not filed
             if (supp_eval["status"] in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED') and g2b_eval["status"] == 'VERIFIED_NOT_FILED') or \
                (supp_eval["status"] == 'VERIFIED_NOT_FILED' and g2b_eval["status"] in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED')):
                 return {
@@ -252,7 +384,7 @@ class Rule37AEvidenceService:
                     "filing_date": None,
                     "arn": "",
                     "evidence_source": "CONFLICTING_SOURCES",
-                    "verification_timestamp": timezone.now(),
+                    "verification_timestamp": None,
                     "evidence_record": None,
                     "document_ref": "",
                     "provenance": {
@@ -264,8 +396,41 @@ class Rule37AEvidenceService:
                     "errors": ["Conflicting supplier filing evidence across records"]
                 }
 
-        # 4. Authoritative selection (prefer primary SupplierGSTR3BFilingRecord over fallback GSTR2BRecord)
-        chosen = supp_eval or g2b_eval
+            # Ambiguity: One NOT_FILED, other PENDING (cannot automate reversal on ambiguous evidence)
+            if (supp_eval["status"] == 'VERIFIED_NOT_FILED' and g2b_eval["status"] == 'PENDING') or \
+               (supp_eval["status"] == 'PENDING' and g2b_eval["status"] == 'VERIFIED_NOT_FILED'):
+                return {
+                    "status": "DATA_UNAVAILABLE",
+                    "supplier_gstr3b_filed": False,
+                    "is_stale": False,
+                    "supplier_gstin": supplier_gstin,
+                    "return_period": inv_period,
+                    "filing_date": None,
+                    "arn": "",
+                    "evidence_source": "AMBIGUOUS_SOURCES",
+                    "verification_timestamp": None,
+                    "evidence_record": None,
+                    "document_ref": "",
+                    "provenance": {
+                        "source": "AMBIGUOUS_SOURCES",
+                        "supp_record_status": supp_eval["status"],
+                        "gstr2b_status": g2b_eval["status"],
+                        "reason": "Ambiguous evidence: One source reports NOT_FILED while another reports PENDING. Reversal requires verified, unambiguous evidence."
+                    },
+                    "errors": ["Ambiguous supplier filing evidence across records"]
+                }
+
+            # Priority to affirmative proof of filing:
+            # If one source has affirmative verified filing with ARN and filing date,
+            # it is not overridden by another source that merely has PENDING or DATA_UNAVAILABLE.
+            if supp_eval["status"] in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED'):
+                chosen = supp_eval
+            elif g2b_eval["status"] in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED'):
+                chosen = g2b_eval
+            else:
+                chosen = supp_eval or g2b_eval
+        else:
+            chosen = supp_eval or g2b_eval
 
         if not chosen:
             return {
@@ -296,7 +461,7 @@ class Rule37AEvidenceService:
             "filing_date": chosen["filing_date"],
             "arn": chosen["arn"],
             "evidence_source": chosen["source"],
-            "verification_timestamp": chosen["timestamp"] or timezone.now(),
+            "verification_timestamp": chosen["timestamp"],
             "evidence_record": chosen["record"],
             "document_ref": chosen.get("document_ref", ""),
             "provenance": {
@@ -415,14 +580,14 @@ class Rule37AEvidenceService:
 
         if evidence_record:
             if isinstance(evidence_record, SupplierGSTR3BFilingRecord):
-                if evidence_record.company_id == voucher.company_id and \
+                if str(evidence_record.company_id) == str(voucher.company_id) and \
                    evidence_record.supplier_gstin.strip().upper() == clean_gstin and \
                    evidence_record.return_period.strip() == clean_period and \
                    evidence_record.status == 'VERIFIED_NOT_FILED' and \
                    not evidence_record.is_stale(threshold_days=freshness_threshold_days):
                     has_real_evidence = True
             elif isinstance(evidence_record, GSTR2BRecord):
-                if evidence_record.company_id == voucher.company_id and \
+                if str(evidence_record.company_id) == str(voucher.company_id) and \
                    evidence_record.supplier_gstin.strip().upper() == clean_gstin and \
                    evidence_record.gstr3b_return_period.strip() == clean_period and \
                    evidence_record.gstr3b_status == 'NOT_FILED' and \
@@ -521,6 +686,18 @@ class Rule37AEvidenceService:
                 raise ValidationError("Rule 37A reclaim requires verified GSTR-3B filing Application Reference Number (ARN).")
             if not g3b_date:
                 raise ValidationError("Rule 37A reclaim requires verified GSTR-3B filing date.")
+
+            # Preserve original verification timestamp without synthesizing fake timezone.now()
+            if verification_date:
+                v_timestamp = verification_date if isinstance(verification_date, datetime) else timezone.datetime.combine(
+                    verification_date, timezone.datetime.min.time(), tzinfo=timezone.get_current_timezone()
+                )
+            elif evidence_record and getattr(evidence_record, 'verified_at', None):
+                v_timestamp = evidence_record.verified_at
+            elif evidence_record and getattr(evidence_record, 'gstr3b_verified_at', None):
+                v_timestamp = evidence_record.gstr3b_verified_at
+            else:
+                v_timestamp = None
         elif clean_status == 'MANUALLY_CONFIRMED':
             if not clean_arn and not verification_reference:
                 raise ValidationError("Rule 37A manual reclaim requires document reference (e.g. CA certificate or challan reference).")
@@ -529,10 +706,9 @@ class Rule37AEvidenceService:
             if not verification_date:
                 raise ValidationError("Rule 37A manual reclaim requires verification timestamp.")
 
-        v_timestamp = verification_date if isinstance(verification_date, datetime) else (
-            timezone.datetime.combine(verification_date, timezone.datetime.min.time(), tzinfo=timezone.get_current_timezone())
-            if isinstance(verification_date, date) else timezone.now()
-        )
+            v_timestamp = verification_date if isinstance(verification_date, datetime) else timezone.datetime.combine(
+                verification_date, timezone.datetime.min.time(), tzinfo=timezone.get_current_timezone()
+            )
 
         evidence_hash = compute_rule37a_evidence_hash(
             company_id=voucher.company_id,
@@ -543,7 +719,7 @@ class Rule37AEvidenceService:
             status=clean_status,
             arn=clean_arn,
             filing_date_str=g3b_date.isoformat() if g3b_date else "",
-            verified_at_str=v_timestamp.isoformat(),
+            verified_at_str=v_timestamp.isoformat() if v_timestamp else "",
             document_ref=str(verification_reference or "").strip()
         )
 
