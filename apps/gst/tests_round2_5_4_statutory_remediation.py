@@ -257,7 +257,8 @@ class Round254StatutoryRemediationTests(TestCase):
             voucher=v_in,
             paid_amount=Decimal('5900.00'),
             assigned_period='022026',
-            user=self.owner_user
+            user=self.owner_user,
+            payment_event_id='PAY-254-001'
         )
 
         gstr3b = GSTReturnsService.prepare_gstr3b(
@@ -548,7 +549,9 @@ class Round254StatutoryRemediationTests(TestCase):
             voucher=v_in,
             assigned_period='012027',
             user=self.owner_user,
-            supplier_gstr3b_filed=True
+            supplier_gstr3b_filed=True,
+            gstr3b_arn='AA070826000003Z',
+            gstr3b_filing_date=date(2027, 1, 15)
         )
         self.assertEqual(rec.event_type, 'ITC_RECLAIM')
         self.assertEqual(rec.assigned_period, '012027')
@@ -1041,7 +1044,8 @@ class Round254StatutoryRemediationTests(TestCase):
             voucher=v_inv,
             paid_amount=Decimal('11800.00'),
             assigned_period='082026',
-            user=self.owner_user
+            user=self.owner_user,
+            payment_event_id='PAY-254-002'
         )
 
         # Verify Ledgers remained 100% untouched

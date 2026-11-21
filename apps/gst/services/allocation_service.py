@@ -14,6 +14,8 @@ Statutory Rules Enforced:
 """
 
 import logging
+import json
+import hashlib
 from decimal import Decimal
 from datetime import date, timedelta
 from typing import Optional, List, Dict, Any, Tuple
@@ -42,6 +44,34 @@ def quantize_amount(val) -> Decimal:
     if val is None:
         return Decimal('0.00')
     return Decimal(str(val)).quantize(Decimal('0.01'))
+
+
+def compute_payment_event_fingerprint(
+    company_id: Any,
+    voucher_id: Any,
+    payment_event_id: str,
+    paid_amount: Decimal,
+    payment_date: Optional[date] = None,
+    payment_allocation_id: Optional[Any] = None,
+    payment_reference: Optional[str] = None,
+    currency: str = 'INR'
+) -> str:
+    """
+    Computes canonical immutable SHA-256 fingerprint of a payment event.
+    Ensures payload integrity across idempotency retries under P0 payment-event requirements.
+    """
+    payload = {
+        "company_id": str(company_id),
+        "voucher_id": str(voucher_id),
+        "payment_event_id": str(payment_event_id).strip(),
+        "paid_amount": str(quantize_amount(paid_amount)),
+        "currency": currency.upper(),
+        "payment_date": str(payment_date) if payment_date else "",
+        "payment_allocation_id": str(payment_allocation_id) if payment_allocation_id else "",
+        "payment_reference": str(payment_reference or "").strip(),
+    }
+    canonical_str = json.dumps(payload, sort_keys=True)
+    return hashlib.sha256(canonical_str.encode('utf-8')).hexdigest()
 
 
 class GSTAllocationService:
@@ -1084,7 +1114,8 @@ class GSTAllocationService:
         payment_event_id: str = "",
         payment_allocation: Any = None,
         payment_reference: str = "",
-        source_reversal_id: Optional[Any] = None
+        source_reversal_id: Optional[Any] = None,
+        allow_legacy_unidentified: bool = False
     ) -> GSTReportingAllocation:
         """
         Creates an ITC reclaim allocation under Third Proviso to Section 16(2) and Rule 37(4).
@@ -1095,7 +1126,8 @@ class GSTAllocationService:
         - Specific or FIFO reversal tracking via GSTReversalReclaimLineage
         - Permanently ineligible Section 17(5) blocked credit strictly rejected
         - Cumulative reclaim cannot exceed remaining reversed balance
-        - Stable source-event idempotency via payment_event_id
+        - Stable source-event idempotency via payment_event_id & canonical fingerprint
+        - Cross-invoice and payload conflict detection on identical event IDs
         - Support for multiple genuine partial payments of identical amounts
         """
         clean_period = assigned_period.strip().replace('-', '').replace('/', '')
@@ -1113,19 +1145,59 @@ class GSTAllocationService:
 
         with transaction.atomic():
             locked_voucher = Voucher.objects.select_for_update().get(id=voucher.id)
+            rec_date = reclaim_date or timezone.now().date()
 
-            # 1. Stable source-event idempotency check
+            # 1. Stable source-event idempotency and conflict validation
             if payment_event_id:
+                clean_event_id = str(payment_event_id).strip()
+                current_fingerprint = compute_payment_event_fingerprint(
+                    company_id=locked_voucher.company_id,
+                    voucher_id=locked_voucher.id,
+                    payment_event_id=clean_event_id,
+                    paid_amount=paid,
+                    payment_date=rec_date,
+                    payment_allocation_id=getattr(payment_allocation, 'id', None) or (payment_allocation if isinstance(payment_allocation, (str, int)) else None),
+                    payment_reference=payment_reference
+                )
+
+                # Tenant-scoped lookup for active reclaim with this payment_event_id
                 existing = GSTReportingAllocation.objects.filter(
                     company=locked_voucher.company,
-                    voucher=locked_voucher,
-                    payment_event_id=payment_event_id,
+                    payment_event_id=clean_event_id,
                     is_active=True
                 ).first()
+
                 if existing:
+                    # Conflict 1: Reusing event ID across different vouchers
+                    if existing.voucher_id != locked_voucher.id:
+                        raise ValidationError(
+                            f"Payment-Event Idempotency Conflict: payment_event_id '{clean_event_id}' is already "
+                            f"registered against voucher #{existing.voucher.voucher_number} ({existing.voucher_id}), "
+                            f"cannot reuse for voucher #{locked_voucher.voucher_number} ({locked_voucher.id})."
+                        )
+                    # Conflict 2: Payload fingerprint mismatch (amount, date, allocation, reference)
+                    if existing.payment_fingerprint and existing.payment_fingerprint != current_fingerprint:
+                        raise ValidationError(
+                            f"Payment-Event Idempotency Conflict: An allocation for payment_event_id '{clean_event_id}' "
+                            f"already exists with fingerprint '{existing.payment_fingerprint}', but incoming payload produces "
+                            f"different fingerprint '{current_fingerprint}'. Payload modification on identical event ID is prohibited."
+                        )
+                    # Conflict 3: Fallback check on existing allocation
+                    if existing.payment_allocation != payment_allocation:
+                        raise ValidationError(
+                            f"Payment-Event Idempotency Conflict: payment_event_id '{clean_event_id}' is linked to a different payment allocation."
+                        )
+                    # Identical retry: return existing allocation (idempotent success)
                     return existing
             else:
-                idem_key = f"rule37_rec_{locked_voucher.company.id}_{locked_voucher.id}_{clean_period}_{int(paid*100)}"
+                if not allow_legacy_unidentified:
+                    raise ValidationError(
+                        "Statutory Compliance Invariant: Rule 37 reclaim requires a stable source 'payment_event_id' "
+                        "(e.g. payment allocation ID or bank transaction ID). Unidentified reclaims are prohibited in production."
+                    )
+                clean_event_id = ""
+                current_fingerprint = ""
+                idem_key = f"rule37_rec_legacy_{locked_voucher.company.id}_{locked_voucher.id}_{clean_period}_{int(paid*100)}"
                 existing = GSTReportingAllocation.objects.filter(idempotency_key=idem_key, is_active=True).first()
                 if existing:
                     return existing
@@ -1154,11 +1226,14 @@ class GSTAllocationService:
                     f"Cannot reclaim under Rule 37: No active prior Rule 37 reversal found for invoice #{locked_voucher.voucher_number}."
                 )
 
-            # 3. Calculate available reversal balance considering existing lineages and reclaims
+            # 3. Calculate available reversal balance considering existing active lineages and reclaims
             reversal_balances = []
             total_available_from_lineages = Decimal('0.00')
             for rev in active_reversals:
-                lineages = GSTReversalReclaimLineage.objects.filter(reversal_allocation=rev)
+                lineages = GSTReversalReclaimLineage.objects.filter(
+                    reversal_allocation=rev,
+                    reclaim_allocation__is_active=True
+                )
                 already_reclaimed_for_rev = quantize_amount(sum(l.reclaimed_tax for l in lineages))
                 avail = quantize_amount(max(Decimal('0.00'), rev.total_tax - already_reclaimed_for_rev))
                 reversal_balances.append({
@@ -1210,11 +1285,10 @@ class GSTAllocationService:
                 else:
                     igst_rec += diff
 
-            rec_date = reclaim_date or timezone.now().date()
             if payment_event_id:
-                idem_key = f"rule37_rec_{locked_voucher.company.id}_{locked_voucher.id}_{payment_event_id}"
+                idem_key = f"rule37_rec_{locked_voucher.company.id}_{clean_event_id}"
             else:
-                idem_key = f"rule37_rec_{locked_voucher.company.id}_{locked_voucher.id}_{clean_period}_{int(paid*100)}"
+                idem_key = f"rule37_rec_legacy_{locked_voucher.company.id}_{locked_voucher.id}_{clean_period}_{int(paid*100)}"
 
             primary_rev = active_reversals[0]
 
@@ -1246,8 +1320,9 @@ class GSTAllocationService:
                 is_active=True,
                 source_reversal=primary_rev,
                 payment_allocation=payment_allocation,
-                payment_event_id=payment_event_id or '',
+                payment_event_id=clean_event_id if payment_event_id else '',
                 payment_reference=payment_reference or '',
+                payment_fingerprint=current_fingerprint,
                 idempotency_key=idem_key,
                 created_by=user
             )
@@ -1294,6 +1369,31 @@ class GSTAllocationService:
             return alloc
 
     @classmethod
+    def supersede_payment_reclaim_allocation(
+        cls,
+        allocation: GSTReportingAllocation,
+        reason: str,
+        user: Any = None
+    ) -> GSTReportingAllocation:
+        """
+        Statutory Correction & Reversal Pathway:
+        Safely supersedes an existing reclaim allocation without mutating historical records.
+        Preserves GSTReversalReclaimLineage audit trail and frees reversal balance for subsequent corrected payments.
+        Enforces immutability of historical accounting facts under Section 155.
+        """
+        with transaction.atomic():
+            locked_alloc = GSTReportingAllocation.objects.select_for_update().get(id=allocation.id)
+            if not locked_alloc.is_active:
+                return locked_alloc
+            locked_alloc.is_active = False
+            locked_alloc.status = 'SUPERSEDED'
+            locked_alloc.superseded_at = timezone.now()
+            clean_reason = str(reason).strip()
+            locked_alloc.statutory_notes += f" [SUPERSEDED on {timezone.now().date().isoformat()}: {clean_reason}]"
+            locked_alloc.save(update_fields=['is_active', 'status', 'superseded_at', 'statutory_notes', 'updated_at'])
+            return locked_alloc
+
+    @classmethod
     def get_rule37a_supplier_default_date(cls, financial_year: str) -> date:
         """
         Computes the statutory Rule 37A supplier default date:
@@ -1323,14 +1423,16 @@ class GSTAllocationService:
         check_date: Optional[date] = None,
         supplier_gstr3b_filed: Optional[bool] = None,
         supplier_filing_date: Optional[date] = None,
-        supplier_status: str = 'UNKNOWN'
+        supplier_status: str = 'UNKNOWN',
+        supplier_return_period: str = '',
+        is_stale_evidence: bool = False
     ) -> Dict[str, Any]:
         """
         Evaluates Rule 37A statutory timeline and compliance state:
         - Supplier default date: 30 September post FY end
         - Recipient reversal deadline: 30 November post FY end
-        - Distinguishes: VERIFIED_FILED, VERIFIED_NOT_FILED, DATA_UNAVAILABLE, MANUALLY_CONFIRMED, UNKNOWN
-        - Does NOT treat DATA_UNAVAILABLE as default!
+        - Distinguishes: VERIFIED_FILED, VERIFIED_NOT_FILED, DATA_UNAVAILABLE, MANUALLY_CONFIRMED, PENDING, UNKNOWN
+        - Does NOT treat DATA_UNAVAILABLE or PENDING as default!
         """
         v_date = voucher.voucher_date
         fy = cls.get_financial_year(v_date)
@@ -1350,6 +1452,9 @@ class GSTAllocationService:
             # Statutory Guard: Unavailable data is NOT proof of default!
             is_supplier_default = False
             default_reason = 'DATA_UNAVAILABLE: Supplier filing status cannot be verified from GST portal/GSP. Default cannot be presumed.'
+        elif clean_status == 'PENDING':
+            is_supplier_default = False
+            default_reason = 'PENDING: Supplier GSTR-3B verification is pending from GST portal. Default cannot be presumed.'
         elif clean_status == 'VERIFIED_FILED':
             if supplier_filing_date and supplier_filing_date > default_date:
                 # Supplier filed, but late (after 30-Sep)
@@ -1362,7 +1467,15 @@ class GSTAllocationService:
             is_supplier_default = False
             default_reason = 'Supplier filing manually confirmed by accountant with documentary evidence.'
         elif clean_status == 'VERIFIED_NOT_FILED':
-            if today >= default_date:
+            if is_stale_evidence:
+                clean_status = 'DATA_UNAVAILABLE'
+                is_supplier_default = False
+                default_reason = 'Supplier filing evidence is stale (>30 days old). Re-verification required from GSTN.'
+            elif supplier_return_period and supplier_return_period != v_date.strftime('%m%Y'):
+                clean_status = 'DATA_UNAVAILABLE'
+                is_supplier_default = False
+                default_reason = f"Supplier filing evidence period '{supplier_return_period}' does not match invoice return period '{v_date.strftime('%m%Y')}'. Non-filing cannot be assumed."
+            elif today >= default_date:
                 is_supplier_default = True
                 default_reason = f"Supplier confirmed NOT FILED as of {today.strftime('%d-%m-%Y')} (past 30-Sep default date {default_date.strftime('%d-%m-%Y')})."
             else:
@@ -1435,15 +1548,20 @@ class GSTAllocationService:
         reversal_date: Optional[date] = None,
         supplier_gstr3b_filed: bool = False,
         supplier_filing_date: Optional[date] = None,
-        supplier_status: str = 'VERIFIED_NOT_FILED'
+        supplier_status: str = 'VERIFIED_NOT_FILED',
+        supplier_return_period: str = '',
+        is_stale_evidence: bool = False
     ) -> GSTReportingAllocation:
         """
         Creates an ITC reversal allocation under Rule 37A (Supplier default in GSTR-3B) for Table 4(B)(2).
         Must be reversed on or before 30th November following end of FY in which ITC was availed.
         Enforces:
         - Rejection if supplier data is DATA_UNAVAILABLE (cannot assume default)
-        - Rejection if supplier data is UNKNOWN (requires affirmative evidence)
+        - Rejection if supplier data is UNKNOWN or PENDING (requires affirmative evidence)
         - Rejection if supplier actually filed
+        - Rejection if filing evidence is stale (>30 days old)
+        - Rejection if supplier return period does not match invoice return period
+        - Rejection if statutory default date (30-Sep) has not yet been reached
         - Prevents duplicate reversals
         - Flags Section 50 interest if reversed after 30th November with precise interest computation
         """
@@ -1453,7 +1571,7 @@ class GSTAllocationService:
                 f"Cannot execute Rule 37A reversal: Supplier filing data is DATA_UNAVAILABLE for invoice #{voucher.voucher_number}. "
                 f"Statute requires affirmative non-filing default before reversal."
             )
-        if clean_status in ('UNKNOWN', ''):
+        if clean_status in ('UNKNOWN', '', 'PENDING'):
             raise ValidationError(
                 f"Cannot execute Rule 37A reversal: Affirmative evidence of supplier non-filing (VERIFIED_NOT_FILED) "
                 f"is required under Rule 37A for invoice #{voucher.voucher_number}. Status is {clean_status}."
@@ -1461,6 +1579,23 @@ class GSTAllocationService:
         if clean_status in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED') or supplier_gstr3b_filed:
             raise ValidationError(
                 f"Cannot execute Rule 37A reversal: Supplier has filed GSTR-3B for invoice #{voucher.voucher_number}."
+            )
+        if is_stale_evidence:
+            raise ValidationError(
+                f"Cannot execute Rule 37A reversal: Supplier filing evidence is stale (>30 days old). Re-verification required from GSTN."
+            )
+        inv_period = voucher.voucher_date.strftime('%m%Y')
+        if supplier_return_period and supplier_return_period != inv_period:
+            raise ValidationError(
+                f"Cannot execute Rule 37A reversal: Evidence return period '{supplier_return_period}' does not match invoice return period '{inv_period}' for invoice #{voucher.voucher_number}."
+            )
+
+        fy = cls.get_financial_year(voucher.voucher_date)
+        default_date = cls.get_rule37a_supplier_default_date(fy)
+        rev_date = reversal_date or timezone.now().date()
+        if rev_date < default_date:
+            raise ValidationError(
+                f"Cannot execute Rule 37A reversal: Statutory default date ({default_date.strftime('%d-%m-%Y')}) has not been reached for FY {fy}."
             )
 
         with transaction.atomic():
@@ -1582,7 +1717,18 @@ class GSTAllocationService:
                     f"Cannot reclaim under Rule 37A: No active prior Rule 37A reversal found for invoice #{locked_voucher.voucher_number}."
                 )
 
-            # 3. Verify supplier actually filed GSTR-3B (Not just GSTR-1!)
+            # 3. Duplicate reclaim prevention across different periods
+            if GSTReportingAllocation.objects.filter(
+                voucher=locked_voucher,
+                event_type='ITC_RECLAIM',
+                allocation_reason='RECLAIM_RULE_37A',
+                is_active=True
+            ).exclude(assigned_period=clean_period).exists():
+                raise ValidationError(
+                    f"Rule 37A reclaim already active in another period for invoice #{locked_voucher.voucher_number}."
+                )
+
+            # 4. Verify supplier actually filed GSTR-3B (Not just GSTR-1!)
             if clean_status == 'DATA_UNAVAILABLE':
                 raise ValidationError(
                     f"Cannot reclaim under Rule 37A: Supplier filing status is DATA_UNAVAILABLE for invoice #{locked_voucher.voucher_number}. Verification required before reclaiming."
@@ -1597,6 +1743,12 @@ class GSTAllocationService:
                 )
 
             # Evidence verification: ensure GSTR-1 filing is not substituted for GSTR-3B
+            inv_period = locked_voucher.voucher_date.strftime('%m%Y')
+            if gstr3b_return_period and gstr3b_return_period != inv_period:
+                raise ValidationError(
+                    f"Rule 37A reclaim rejected: Evidence return period '{gstr3b_return_period}' does not match invoice return period '{inv_period}'."
+                )
+
             g3b_date = gstr3b_filing_date
             arn_str = gstr3b_arn or verification_reference
             if clean_status != 'MANUALLY_CONFIRMED' and not g3b_date and not arn_str:
@@ -1608,8 +1760,9 @@ class GSTAllocationService:
 
                 supp_rec = SupplierGSTR3BFilingRecord.objects.filter(
                     company=locked_voucher.company,
-                    supplier_gstin=p_gstin
-                ).order_by('-return_period').first() if p_gstin else None
+                    supplier_gstin=p_gstin,
+                    return_period=inv_period
+                ).first() if p_gstin else None
                 g2b_rec = GSTR2BRecord.objects.filter(
                     company=locked_voucher.company,
                     matched_voucher=locked_voucher
@@ -1627,16 +1780,14 @@ class GSTAllocationService:
                         "filing (filing date / ARN) is required. GSTR-1 outward declaration does not discharge tax liability under Section 16(2)(c)."
                     )
 
-            # 4. Duplicate reclaim prevention across different periods
-            if GSTReportingAllocation.objects.filter(
-                voucher=locked_voucher,
-                event_type='ITC_RECLAIM',
-                allocation_reason='RECLAIM_RULE_37A',
-                is_active=True
-            ).exclude(assigned_period=clean_period).exists():
-                raise ValidationError(
-                    f"Rule 37A reclaim already active in another period for invoice #{locked_voucher.voucher_number}."
-                )
+            if clean_status == 'VERIFIED_FILED':
+                if not arn_str or not str(arn_str).strip():
+                    raise ValidationError("Rule 37A reclaim requires verified GSTR-3B filing Application Reference Number (ARN).")
+                if not g3b_date:
+                    raise ValidationError("Rule 37A reclaim requires verified GSTR-3B filing date.")
+            elif clean_status == 'MANUALLY_CONFIRMED':
+                if not verification_reference or not str(verification_reference).strip():
+                    raise ValidationError("Rule 37A manual reclaim requires document reference (e.g. CA certificate or challan reference).")
 
             summary = cls.compute_voucher_monetary_summary(locked_voucher)
             rec_date = reclaim_date or timezone.now().date()
@@ -1728,6 +1879,7 @@ class GSTAllocationService:
                 "voucher_number": voucher.voucher_number,
                 "voucher_type": voucher.voucher_type,
                 "status": "NOT_APPLICABLE",
+                "category": "NOT_APPLICABLE",
                 "is_eligible": False,
                 "total_tax": total_tax,
                 "financial_year": fy,
@@ -1742,6 +1894,7 @@ class GSTAllocationService:
                 "voucher_number": voucher.voucher_number,
                 "voucher_type": voucher.voucher_type,
                 "status": "BLOCKED_SEC_17_5",
+                "category": "PERMANENTLY_BLOCKED",
                 "is_eligible": False,
                 "total_tax": total_tax,
                 "financial_year": fy,
@@ -1760,6 +1913,7 @@ class GSTAllocationService:
                 "voucher_number": voucher.voucher_number,
                 "voucher_type": voucher.voucher_type,
                 "status": "RECLAIMED",
+                "category": "ELIGIBLE_CLAIMED",
                 "is_eligible": True,
                 "total_tax": total_tax,
                 "reclaimed_tax": active_reclaim.total_tax,
@@ -1780,6 +1934,7 @@ class GSTAllocationService:
                 "voucher_number": voucher.voucher_number,
                 "voucher_type": voucher.voucher_type,
                 "status": "REVERSED_RULE_37",
+                "category": "REVERSED_CONDITIONAL",
                 "is_eligible": False,
                 "total_tax": total_tax,
                 "reversed_tax": active_rev_37.total_tax,
@@ -1798,6 +1953,7 @@ class GSTAllocationService:
                 "voucher_number": voucher.voucher_number,
                 "voucher_type": voucher.voucher_type,
                 "status": "REVERSED_RULE_37A",
+                "category": "REVERSED_CONDITIONAL",
                 "is_eligible": False,
                 "total_tax": total_tax,
                 "reversed_tax": active_rev_37a.total_tax,
@@ -1819,6 +1975,7 @@ class GSTAllocationService:
                     "voucher_number": voucher.voucher_number,
                     "voucher_type": voucher.voucher_type,
                     "status": "RECEIPT_PENDING",
+                    "category": "NOT_YET_ELIGIBLE",
                     "is_eligible": False,
                     "total_tax": total_tax,
                     "financial_year": fy,
@@ -1830,6 +1987,7 @@ class GSTAllocationService:
                     "voucher_number": voucher.voucher_number,
                     "voucher_type": voucher.voucher_type,
                     "status": "PARTIAL_RECEIPT",
+                    "category": "PARTIALLY_ELIGIBLE",
                     "is_eligible": True,
                     "total_tax": total_tax,
                     "claimed_tax": active_inward.total_tax,
@@ -1843,6 +2001,7 @@ class GSTAllocationService:
                     "voucher_number": voucher.voucher_number,
                     "voucher_type": voucher.voucher_type,
                     "status": "ALREADY_CLAIMED",
+                    "category": "CLAIMED",
                     "is_eligible": True,
                     "total_tax": total_tax,
                     "assigned_period": active_inward.assigned_period,
@@ -1855,6 +2014,7 @@ class GSTAllocationService:
                     "voucher_number": voucher.voucher_number,
                     "voucher_type": voucher.voucher_type,
                     "status": "CLAIMABLE",
+                    "category": "ELIGIBLE",
                     "is_eligible": True,
                     "total_tax": total_tax,
                     "assigned_period": active_inward.assigned_period,
@@ -1878,6 +2038,7 @@ class GSTAllocationService:
                     "voucher_number": voucher.voucher_number,
                     "voucher_type": voucher.voucher_type,
                     "status": "RELIEF_SEC_16_5",
+                    "category": "SPECIAL_STATUTORY_EXCEPTION",
                     "is_eligible": True,
                     "statutory_cutoff": cutoff_date,
                     "total_tax": total_tax,
@@ -1890,6 +2051,7 @@ class GSTAllocationService:
                     "voucher_number": voucher.voucher_number,
                     "voucher_type": voucher.voucher_type,
                     "status": "STATUTE_BARRED_SEC_16_4",
+                    "category": "TIME_BARRED",
                     "is_eligible": False,
                     "statutory_cutoff": cutoff_date,
                     "total_tax": total_tax,
@@ -1904,6 +2066,7 @@ class GSTAllocationService:
                     "voucher_number": voucher.voucher_number,
                     "voucher_type": voucher.voucher_type,
                     "status": "RELIEF_SEC_16_6",
+                    "category": "SPECIAL_STATUTORY_EXCEPTION",
                     "is_eligible": True,
                     "statutory_cutoff": cutoff_date,
                     "total_tax": total_tax,
@@ -1917,6 +2080,7 @@ class GSTAllocationService:
                 "voucher_number": voucher.voucher_number,
                 "voucher_type": voucher.voucher_type,
                 "status": "STATUTE_BARRED_SEC_16_4",
+                "category": "TIME_BARRED",
                 "is_eligible": False,
                 "statutory_cutoff": cutoff_date,
                 "total_tax": total_tax,
@@ -1929,6 +2093,7 @@ class GSTAllocationService:
             "voucher_number": voucher.voucher_number,
             "voucher_type": voucher.voucher_type,
             "status": "CLAIMABLE",
+            "category": "ELIGIBLE",
             "is_eligible": True,
             "statutory_cutoff": cutoff_date,
             "total_tax": total_tax,

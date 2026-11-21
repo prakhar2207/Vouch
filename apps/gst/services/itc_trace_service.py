@@ -131,10 +131,12 @@ class ITCTraceService:
             else getattr(voucher, 'party_gstin', '') or getattr(voucher, 'buyer_gstin', '') or ''
         ).strip().upper()
 
+        inv_period = voucher.voucher_date.strftime('%m%Y')
         supp_record = SupplierGSTR3BFilingRecord.objects.filter(
             company=voucher.company,
-            supplier_gstin=party_gstin
-        ).order_by('-return_period').first() if party_gstin else None
+            supplier_gstin=party_gstin,
+            return_period=inv_period
+        ).first() if party_gstin else None
 
         g2b_rec = GSTR2BRecord.objects.filter(
             company=voucher.company,
@@ -144,17 +146,25 @@ class ITCTraceService:
         supp_status = 'UNKNOWN'
         supp_date = None
         supp_filed = False
+        is_stale = supp_record.is_stale() if supp_record else False
+
         if supp_record:
-            supp_status = supp_record.status
-            supp_filed = (supp_record.status in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED'))
-            supp_date = supp_record.filing_date
+            if is_stale:
+                supp_status = 'DATA_UNAVAILABLE'
+                supp_filed = False
+            else:
+                supp_status = supp_record.status
+                supp_filed = (supp_record.status in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED'))
+                supp_date = supp_record.filing_date
         elif g2b_rec:
-            if g2b_rec.gstr3b_status == 'FILED':
+            if g2b_rec.gstr3b_status == 'FILED' and g2b_rec.gstr3b_filing_arn:
                 supp_status = 'VERIFIED_FILED'
                 supp_filed = True
                 supp_date = g2b_rec.gstr3b_filing_date
-            elif g2b_rec.gstr3b_status in ('NOT_FILED', 'PENDING'):
+            elif g2b_rec.gstr3b_status == 'NOT_FILED':
                 supp_status = 'VERIFIED_NOT_FILED'
+            elif g2b_rec.gstr3b_status == 'PENDING':
+                supp_status = 'PENDING'
             else:
                 supp_status = 'DATA_UNAVAILABLE'
 
@@ -163,7 +173,9 @@ class ITCTraceService:
             check_date=today,
             supplier_gstr3b_filed=supp_filed,
             supplier_filing_date=supp_date,
-            supplier_status=supp_status
+            supplier_status=supp_status,
+            supplier_return_period=inv_period,
+            is_stale_evidence=is_stale
         )
 
         # Allocations summary
@@ -238,6 +250,14 @@ class ITCTraceService:
             recommendations.append(
                 f"Supplier has now furnished GSTR-3B. Reclaim ₹{reversed_37a} in GSTR-3B Table 4(D)(1). "
                 f"Rule 37A reclaims are exempt from Section 16(4) time-limits."
+            )
+        elif supp_status in ('DATA_UNAVAILABLE', 'PENDING', 'UNKNOWN'):
+            headline = "Pending Verification: Supplier GSTR-3B Evidence Unavailable"
+            risk_level = "ATTENTION"
+            badge = "PENDING_VERIFICATION"
+            recommendations.append(
+                f"Supplier GSTR-3B tax payment evidence is currently {supp_status.lower().replace('_', ' ')} from the GST portal. "
+                "Default cannot be presumed without verified affirmative proof. Re-query GSTN or obtain manual challan confirmation."
             )
         else:
             recommendations.append("All statutory compliance checks passed. Invoice is eligible for full ITC claim.")

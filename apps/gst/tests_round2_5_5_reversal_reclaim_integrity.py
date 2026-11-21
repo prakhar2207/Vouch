@@ -166,7 +166,8 @@ class Round255ReversalReclaimIntegrityTests(TestCase):
             voucher=self.voucher,
             paid_amount=Decimal('2950.00'),
             assigned_period='012026',
-            user=self.owner_user
+            user=self.owner_user,
+            payment_event_id='PAY-PARTIAL-001'
         )
         self.assertEqual(rec.total_tax, Decimal('450.00'))
         self.assertEqual(rec.event_type, 'ITC_RECLAIM')
@@ -197,7 +198,8 @@ class Round255ReversalReclaimIntegrityTests(TestCase):
             voucher=self.voucher,
             paid_amount=Decimal('3540.00'),
             assigned_period='012026',
-            user=self.owner_user
+            user=self.owner_user,
+            payment_event_id='PAY-SEQ-001'
         )
         self.assertEqual(rec1.total_tax, Decimal('540.00'))
 
@@ -206,7 +208,8 @@ class Round255ReversalReclaimIntegrityTests(TestCase):
             voucher=self.voucher,
             paid_amount=Decimal('4720.00'),
             assigned_period='022026',
-            user=self.owner_user
+            user=self.owner_user,
+            payment_event_id='PAY-SEQ-002'
         )
         self.assertEqual(rec2.total_tax, Decimal('720.00'))
 
@@ -215,7 +218,8 @@ class Round255ReversalReclaimIntegrityTests(TestCase):
             voucher=self.voucher,
             paid_amount=Decimal('3540.00'),
             assigned_period='032026',
-            user=self.owner_user
+            user=self.owner_user,
+            payment_event_id='PAY-SEQ-003'
         )
         self.assertEqual(rec3.total_tax, Decimal('540.00'))
 
@@ -228,7 +232,8 @@ class Round255ReversalReclaimIntegrityTests(TestCase):
                 voucher=self.voucher,
                 paid_amount=Decimal('1000.00'),
                 assigned_period='042026',
-                user=self.owner_user
+                user=self.owner_user,
+                payment_event_id='PAY-SEQ-004'
             )
         self.assertIn("already been fully reclaimed", str(ctx.exception))
 
@@ -247,13 +252,15 @@ class Round255ReversalReclaimIntegrityTests(TestCase):
             voucher=self.voucher,
             paid_amount=Decimal('5900.00'),
             assigned_period='012026',
-            user=self.owner_user
+            user=self.owner_user,
+            payment_event_id='PAY-IDEM-001'
         )
         rec2 = GSTAllocationService.create_rule37_reclaim_allocation(
             voucher=self.voucher,
             paid_amount=Decimal('5900.00'),
             assigned_period='012026',
-            user=self.owner_user
+            user=self.owner_user,
+            payment_event_id='PAY-IDEM-001'
         )
         self.assertEqual(rec1.id, rec2.id)
         self.assertEqual(GSTReportingAllocation.objects.filter(voucher=self.voucher, event_type='ITC_RECLAIM').count(), 1)
@@ -404,7 +411,9 @@ class Round255ReversalReclaimIntegrityTests(TestCase):
             voucher=self.voucher,
             assigned_period='122026',
             user=self.owner_user,
-            supplier_status='VERIFIED_FILED'
+            supplier_status='VERIFIED_FILED',
+            gstr3b_arn='AA070826000001X',
+            gstr3b_filing_date=date(2026, 11, 20)
         )
 
         with self.assertRaises(ValidationError) as ctx:
@@ -412,7 +421,9 @@ class Round255ReversalReclaimIntegrityTests(TestCase):
                 voucher=self.voucher,
                 assigned_period='012027',
                 user=self.owner_user,
-                supplier_status='VERIFIED_FILED'
+                supplier_status='VERIFIED_FILED',
+                gstr3b_arn='AA070826000002Y',
+                gstr3b_filing_date=date(2026, 11, 20)
             )
         self.assertIn("Rule 37A reclaim already active in another period", str(ctx.exception))
 
@@ -505,7 +516,8 @@ class Round255ReversalReclaimIntegrityTests(TestCase):
             voucher=self.voucher,
             paid_amount=Decimal('11800.00'),
             assigned_period='012026',
-            user=self.owner_user
+            user=self.owner_user,
+            payment_event_id='PAY-INVAR-001'
         )
 
         self.assertEqual(Voucher.objects.count(), initial_voucher_count)

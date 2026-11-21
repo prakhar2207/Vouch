@@ -123,12 +123,15 @@ class Command(BaseCommand):
                 # 2. Evaluate Rule 37A (Supplier GSTR-3B Default)
                 report["rule37a"]["evaluated"] += 1
                 
-                # Check SupplierGSTR3BFilingRecord first
-                party_gstin = getattr(v, 'party_gstin', '')
+                # Check SupplierGSTR3BFilingRecord for the exact invoice return period
+                party_gstin = getattr(v, 'party_gstin', '') or (v.party_ledger.gstin if getattr(v, 'party_ledger', None) and v.party_ledger.gstin else '')
+                party_gstin = party_gstin.strip().upper()
+                inv_period = v.voucher_date.strftime('%m%Y')
                 supp_record = SupplierGSTR3BFilingRecord.objects.filter(
                     company=comp,
-                    supplier_gstin=party_gstin
-                ).order_by('-return_period').first() if party_gstin else None
+                    supplier_gstin=party_gstin,
+                    return_period=inv_period
+                ).first() if party_gstin else None
 
                 # Check GSTR2BRecord
                 gstr2b_rec = GSTR2BRecord.objects.filter(
@@ -139,18 +142,26 @@ class Command(BaseCommand):
                 supplier_status = 'UNKNOWN'
                 supplier_filing_date = None
                 supplier_gstr3b_filed = False
+                is_stale = supp_record.is_stale() if supp_record else False
 
                 if supp_record:
-                    supplier_status = supp_record.status
-                    supplier_gstr3b_filed = (supp_record.status in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED'))
-                    supplier_filing_date = supp_record.filing_date
+                    if is_stale:
+                        supplier_status = 'DATA_UNAVAILABLE'
+                        supplier_gstr3b_filed = False
+                    else:
+                        supplier_status = supp_record.status
+                        supplier_gstr3b_filed = (supp_record.status in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED'))
+                        supplier_filing_date = supp_record.filing_date
                 elif gstr2b_rec:
-                    if gstr2b_rec.gstr3b_status == 'FILED':
+                    if gstr2b_rec.gstr3b_status == 'FILED' and gstr2b_rec.gstr3b_filing_arn:
                         supplier_status = 'VERIFIED_FILED'
                         supplier_gstr3b_filed = True
                         supplier_filing_date = gstr2b_rec.gstr3b_filing_date
-                    elif gstr2b_rec.gstr3b_status in ('NOT_FILED', 'PENDING'):
+                    elif gstr2b_rec.gstr3b_status == 'NOT_FILED':
                         supplier_status = 'VERIFIED_NOT_FILED'
+                        supplier_gstr3b_filed = False
+                    elif gstr2b_rec.gstr3b_status == 'PENDING':
+                        supplier_status = 'PENDING'
                         supplier_gstr3b_filed = False
                     else:
                         supplier_status = 'DATA_UNAVAILABLE'
@@ -162,7 +173,9 @@ class Command(BaseCommand):
                     check_date=eval_date,
                     supplier_gstr3b_filed=supplier_gstr3b_filed,
                     supplier_filing_date=supplier_filing_date,
-                    supplier_status=supplier_status
+                    supplier_status=supplier_status,
+                    supplier_return_period=inv_period,
+                    is_stale_evidence=is_stale
                 )
 
                 if r37a_res["supplier_status"] == 'VERIFIED_FILED':

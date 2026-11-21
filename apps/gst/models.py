@@ -456,6 +456,8 @@ class SupplierGSTR3BFilingRecord(models.Model):
         ('VERIFIED_NOT_FILED', 'Verified Not Filed'),
         ('DATA_UNAVAILABLE', 'Data Unavailable from GSTN / Provider'),
         ('MANUALLY_CONFIRMED', 'Manually Confirmed by User / Tax Auditor'),
+        ('PENDING', 'Pending Verification from GST Portal'),
+        ('UNKNOWN', 'Unknown / Unchecked'),
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -491,6 +493,19 @@ class SupplierGSTR3BFilingRecord(models.Model):
                 name='unique_supplier_gstr3b_record'
             )
         ]
+
+    def is_stale(self, threshold_days: int = 30) -> bool:
+        """
+        Statutory Evidence Freshness Rule:
+        Returns True if verification is older than threshold_days and not conclusively verified filed.
+        Stale evidence must be treated as DATA_UNAVAILABLE until re-verified from GSTN.
+        """
+        if self.status == 'VERIFIED_FILED' and self.arn and self.filing_date:
+            return False  # Once filed with ARN, filing status is an immutable historical fact
+        if not self.verified_at:
+            return True
+        age = (timezone.now() - self.verified_at).days
+        return age > threshold_days
 
     def __str__(self):
         return f"{self.supplier_gstin} - {self.return_period}: {self.status} (ARN: {self.arn or 'None'})"
@@ -868,6 +883,7 @@ class GSTReportingAllocation(models.Model):
     )
     payment_event_id = models.CharField(max_length=100, blank=True, default='', db_index=True)
     payment_reference = models.CharField(max_length=100, blank=True, default='')
+    payment_fingerprint = models.CharField(max_length=64, blank=True, default='', db_index=True)
     superseded_by = models.ForeignKey(
         'self',
         on_delete=models.PROTECT,
@@ -909,6 +925,7 @@ class GSTReportingAllocation(models.Model):
             models.Index(fields=['company', 'event_type', 'assigned_period']),
             models.Index(fields=['company', 'is_statutorily_eligible', 'assigned_period']),
             models.Index(fields=['company', 'payment_event_id']),
+            models.Index(fields=['company', 'payment_fingerprint']),
         ]
         constraints = [
             models.UniqueConstraint(
@@ -917,9 +934,9 @@ class GSTReportingAllocation(models.Model):
                 name='unique_active_allocation_per_voucher_event'
             ),
             models.UniqueConstraint(
-                fields=['company', 'voucher', 'payment_event_id'],
+                fields=['company', 'payment_event_id'],
                 condition=models.Q(is_active=True) & ~models.Q(payment_event_id=''),
-                name='unique_active_reclaim_per_payment_event'
+                name='unique_active_reclaim_per_company_payment_event'
             ),
         ]
 

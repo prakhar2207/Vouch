@@ -1737,7 +1737,8 @@ class GSTRound25AllocationCertificationTests(TestCase):
             voucher=pv,
             paid_amount=Decimal('5900.00'),
             assigned_period='032026',
-            user=self.owner_user
+            user=self.owner_user,
+            payment_event_id='PAY-ROUND25-001'
         )
         self.assertEqual(rec_alloc.event_type, 'ITC_RECLAIM')
         self.assertEqual(rec_alloc.igst_amount, Decimal('900.00'))
@@ -1782,7 +1783,9 @@ class GSTRound25AllocationCertificationTests(TestCase):
         rec_37a = GSTAllocationService.create_rule37a_reclaim_allocation(
             voucher=pv_37a,
             assigned_period='012027',
-            user=self.owner_user
+            user=self.owner_user,
+            gstr3b_arn='AA070826000004A',
+            gstr3b_filing_date=date(2027, 1, 15)
         )
         self.assertEqual(rec_37a.event_type, 'ITC_RECLAIM')
         self.assertEqual(rec_37a.igst_amount, Decimal('900.00'))
@@ -1991,7 +1994,9 @@ class GSTRound25AllocationCertificationTests(TestCase):
         rec1 = GSTAllocationService.create_rule37a_reclaim_allocation(
             voucher=pv_dup,
             assigned_period='022026',
-            user=self.owner_user
+            user=self.owner_user,
+            gstr3b_arn='AA070826000005B',
+            gstr3b_filing_date=date(2026, 2, 15)
         )
         self.assertEqual(rec1.event_type, 'ITC_RECLAIM')
 
@@ -2001,7 +2006,9 @@ class GSTRound25AllocationCertificationTests(TestCase):
             GSTAllocationService.create_rule37a_reclaim_allocation(
                 voucher=pv_dup,
                 assigned_period='022026',
-                user=self.owner_user
+                user=self.owner_user,
+                gstr3b_arn='AA070826000005B',
+                gstr3b_filing_date=date(2026, 2, 15)
             )
 
     def test_cross_tenant_gst_snapshot_access_rejected(self):
