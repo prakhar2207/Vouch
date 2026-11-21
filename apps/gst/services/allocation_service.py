@@ -1421,6 +1421,37 @@ class GSTAllocationService:
         return date(end_year, 11, 30)
 
     @classmethod
+    def get_rule37a_available_reversal_balance(cls, voucher: Voucher) -> Decimal:
+        """
+        Calculates the remaining reversed ITC balance available for reclaim under Rule 37A.
+        Derived from active ITC_REVERSAL_RULE_37A allocations minus cumulative active reclaims.
+        """
+        active_reversals = GSTReportingAllocation.objects.filter(
+            voucher=voucher,
+            event_type='ITC_REVERSAL_RULE_37A',
+            is_active=True
+        )
+        if not active_reversals.exists():
+            return Decimal('0.00')
+
+        total_reversed = quantize_amount(sum(r.total_tax for r in active_reversals))
+        active_lineages = GSTReversalReclaimLineage.objects.filter(
+            reversal_allocation__in=active_reversals,
+            reclaim_allocation__is_active=True
+        )
+        already_reclaimed = quantize_amount(sum(l.reclaimed_tax for l in active_lineages))
+        if already_reclaimed == Decimal('0.00'):
+            direct_reclaims = GSTReportingAllocation.objects.filter(
+                voucher=voucher,
+                event_type='ITC_RECLAIM',
+                allocation_reason='RECLAIM_RULE_37A',
+                is_active=True
+            )
+            already_reclaimed = quantize_amount(sum(rec.total_tax for rec in direct_reclaims))
+
+        return quantize_amount(max(Decimal('0.00'), total_reversed - already_reclaimed))
+
+    @classmethod
     def evaluate_rule37a_status(
         cls,
         voucher: Voucher,
@@ -1646,16 +1677,61 @@ class GSTAllocationService:
                 end_date=today
             )
 
-        # Reclaim eligibility: reversal exists, supplier filed/confirmed, not already reclaimed, not blocked under 17(5)
-        # Fail-Closed: raw boolean without verified status NEVER establishes filing!
-        supplier_has_filed = clean_status in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED')
-        reclaim_eligible = bool(
-            existing_reversal and
-            supplier_has_filed and
-            clean_status != 'DATA_UNAVAILABLE' and
-            not existing_reclaim and
-            not getattr(voucher, 'is_section_17_5_blocked', False)
-        )
+        # Reclaim eligibility under Proviso to Rule 37A:
+        # P0 Safeguard: An ITC reclaim must NEVER become eligible merely because a caller supplies
+        # a positive filing status or boolean. Reclaim authorization MUST be derived from
+        # independently validated, supplier-specific, company-specific, invoice-period-specific filing evidence.
+        is_17_5_blocked = getattr(voucher, 'is_section_17_5_blocked', False) or GSTReportingAllocation.objects.filter(
+            voucher=voucher,
+            event_type='ITC_REVERSAL_SEC_17_5',
+            is_active=True
+        ).exists()
+
+        available_reversal_balance = Decimal('0.00')
+        if existing_reversal:
+            active_lineages = GSTReversalReclaimLineage.objects.filter(
+                reversal_allocation=existing_reversal,
+                reclaim_allocation__is_active=True
+            )
+            already_reclaimed = quantize_amount(sum(l.reclaimed_tax for l in active_lineages))
+            available_reversal_balance = quantize_amount(max(Decimal('0.00'), existing_reversal.total_tax - already_reclaimed))
+
+        reclaim_eligible = False
+        reclaim_ineligible_reason = ""
+
+        if not existing_reversal:
+            reclaim_ineligible_reason = "No prior active Rule 37A reversal exists."
+        elif is_17_5_blocked:
+            reclaim_ineligible_reason = "ITC is permanently ineligible under Section 17(5)."
+        elif available_reversal_balance <= Decimal('0.00'):
+            reclaim_ineligible_reason = "Prior Rule 37A reversal has already been fully reclaimed."
+        elif existing_reclaim:
+            reclaim_ineligible_reason = "An active Rule 37A reclaim allocation already exists on this voucher."
+        elif clean_status not in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED'):
+            reclaim_ineligible_reason = f"Supplier status '{clean_status}' does not establish positive filing."
+        else:
+            # Independently validate positive filing evidence
+            pos_eval = Rule37AEvidenceService.validate_positive_filing_evidence(
+                voucher=voucher,
+                supplier_status=clean_status,
+                supplier_gstin=clean_supp_gstin or Rule37AEvidenceService.resolve_supplier_gstin(voucher),
+                supplier_return_period=clean_period or Rule37AEvidenceService.resolve_invoice_return_period(voucher),
+                verification_source=evidence_source,
+                verification_reference=evidence_document_ref,
+                verification_timestamp=verification_timestamp,
+                gstr3b_filing_date=supplier_filing_date,
+                gstr3b_arn=evidence_document_ref,
+                user=user,
+                manual_verification_reason=manual_verification_reason,
+                evidence_record=evidence_record,
+                freshness_threshold_days=freshness_threshold_days,
+                raise_exception=False
+            )
+            if pos_eval.is_valid:
+                reclaim_eligible = True
+            else:
+                reclaim_eligible = False
+                reclaim_ineligible_reason = pos_eval.validation_reason
 
         return {
             "voucher_id": str(voucher.id),
@@ -1671,6 +1747,8 @@ class GSTAllocationService:
             "interest_applicable": interest_applicable,
             "interest_details": interest_details,
             "reclaim_eligible": reclaim_eligible,
+            "reclaimable_balance": available_reversal_balance,
+            "reclaim_ineligible_reason": reclaim_ineligible_reason,
             "has_existing_reversal": bool(existing_reversal),
             "has_existing_reclaim": bool(existing_reclaim),
         }
@@ -1833,6 +1911,8 @@ class GSTAllocationService:
         freshness_threshold_days: int = 30,
         supplier_gstr3b_filed: Optional[bool] = None,
         require_prior_reversal: bool = True,
+        reclaim_tax: Optional[Decimal] = None,
+        idempotent: bool = False,
     ) -> GSTReportingAllocation:
         """
         Creates an ITC reclaim allocation under Proviso to Rule 37A when supplier subsequently files GSTR-3B.
@@ -1846,6 +1926,7 @@ class GSTAllocationService:
         - Prevent excessive reclaim: amount cannot exceed active available reversal balance
         - Block Section 17(5) permanently ineligible credit
         - Lineage linkage via GSTReversalReclaimLineage
+        - Atomic transaction & row-level locking concurrency protection
         """
         clean_period = assigned_period.strip().replace('-', '').replace('/', '')
 
@@ -1901,6 +1982,7 @@ class GSTAllocationService:
 
         eff_verif_date = verification_timestamp or verification_date
 
+        # Authoritative positive filing evidence validation
         validated = Rule37AEvidenceService.validate_reclaim_evidence(
             voucher=voucher,
             supplier_status=clean_status,
@@ -1909,6 +1991,7 @@ class GSTAllocationService:
             verification_source=verification_source,
             verification_reference=arn_str,
             verification_date=eff_verif_date,
+            verification_timestamp=eff_verif_date,
             gstr3b_filing_date=g3b_date,
             gstr3b_arn=arn_str,
             user=user,
@@ -1930,15 +2013,21 @@ class GSTAllocationService:
 
             # 2. Mandatory prior active Rule 37A reversal (CANNOT BE BYPASSED)
             if source_reversal_id:
-                prior_rev = GSTReportingAllocation.objects.filter(
+                rev_candidate = GSTReportingAllocation.objects.select_for_update().filter(
                     id=source_reversal_id,
-                    voucher=locked_voucher,
+                    company=locked_voucher.company,
                     event_type='ITC_REVERSAL_RULE_37A',
                     is_active=True
                 ).first()
+                if not rev_candidate or str(rev_candidate.voucher_id) != str(locked_voucher.id):
+                    raise ValidationError(
+                        f"Rule 37A reversal {source_reversal_id} is not linked to invoice #{locked_voucher.voucher_number}."
+                    )
+                prior_rev = rev_candidate
             else:
-                prior_rev = GSTReportingAllocation.objects.filter(
+                prior_rev = GSTReportingAllocation.objects.select_for_update().filter(
                     voucher=locked_voucher,
+                    company=locked_voucher.company,
                     event_type='ITC_REVERSAL_RULE_37A',
                     is_active=True
                 ).first()
@@ -1948,35 +2037,73 @@ class GSTAllocationService:
                     f"Cannot reclaim under Rule 37A: No active prior Rule 37A reversal found for invoice #{locked_voucher.voucher_number}."
                 )
 
-            # 3. Duplicate reclaim prevention across different periods
-            if GSTReportingAllocation.objects.filter(
+            # Tenant isolation validation on reversal
+            if str(prior_rev.company_id) != str(locked_voucher.company_id) or str(prior_rev.voucher_id) != str(locked_voucher.id):
+                raise ValidationError("Reversal allocation does not belong to the locked voucher company or voucher.")
+
+            # 3. Duplicate reclaim in same period prevention and idempotency
+            idem_key = f"rule37a_rec_{locked_voucher.company.id}_{locked_voucher.id}_{clean_period}"
+            existing_same_period = GSTReportingAllocation.objects.filter(
+                company=locked_voucher.company,
                 voucher=locked_voucher,
                 event_type='ITC_RECLAIM',
                 allocation_reason='RECLAIM_RULE_37A',
+                assigned_period=clean_period,
                 is_active=True
-            ).exclude(assigned_period=clean_period).exists():
-                raise ValidationError(
-                    f"Rule 37A reclaim already active in another period for invoice #{locked_voucher.voucher_number}."
-                )
+            ).first()
+
+            if existing_same_period:
+                if idempotent:
+                    return existing_same_period
+                else:
+                    raise ValidationError(
+                        f"Rule 37A reclaim already active in period {clean_period} for invoice #{locked_voucher.voucher_number}."
+                    )
 
             # 4. Check remaining available reversal balance & prevent excessive reclaim
-            active_lineages = GSTReversalReclaimLineage.objects.filter(
-                reversal_allocation=prior_rev,
-                reclaim_allocation__is_active=True
-            )
-            already_reclaimed = quantize_amount(sum(l.reclaimed_tax for l in active_lineages))
-            available_balance = quantize_amount(max(Decimal('0.00'), prior_rev.total_tax - already_reclaimed))
+            available_balance = cls.get_rule37a_available_reversal_balance(locked_voucher)
             if available_balance <= Decimal('0.00'):
                 raise ValidationError(
                     f"Rule 37A reclaim rejected: Prior reversal for invoice #{locked_voucher.voucher_number} "
-                    f"has already been fully reclaimed (₹{already_reclaimed} reclaimed of ₹{prior_rev.total_tax})."
+                    f"has already been fully reclaimed."
                 )
 
             summary = cls.compute_voucher_monetary_summary(locked_voucher)
-            if summary["total_tax"] > available_balance:
+            effective_reclaim_tax = quantize_amount(reclaim_tax if reclaim_tax is not None else summary["total_tax"])
+            if effective_reclaim_tax <= Decimal('0.00'):
                 raise ValidationError(
-                    f"Rule 37A reclaim rejected: Requested reclaim ₹{summary['total_tax']} exceeds available reversal balance ₹{available_balance}."
+                    f"Rule 37A reclaim rejected: Reclaim tax amount ₹{effective_reclaim_tax} must be greater than zero."
                 )
+            if effective_reclaim_tax > available_balance:
+                raise ValidationError(
+                    f"Rule 37A reclaim rejected: Requested reclaim ₹{effective_reclaim_tax} exceeds available reversal balance ₹{available_balance}."
+                )
+
+            # Compute tax breakdown for full or partial reclaim
+            if effective_reclaim_tax == summary["total_tax"]:
+                taxable_val = summary["taxable_value"]
+                igst_rec = summary["igst_amount"]
+                cgst_rec = summary["cgst_amount"]
+                sgst_rec = summary["sgst_amount"]
+                cess_rec = summary["cess_amount"]
+            else:
+                tot_v_tax = summary["total_tax"]
+                ratio = (effective_reclaim_tax / tot_v_tax) if tot_v_tax > Decimal('0.00') else Decimal('1.00')
+                taxable_val = quantize_amount(summary["taxable_value"] * ratio)
+                igst_rec = quantize_amount(summary["igst_amount"] * ratio)
+                cgst_rec = quantize_amount(summary["cgst_amount"] * ratio)
+                sgst_rec = quantize_amount(summary["sgst_amount"] * ratio)
+                cess_rec = quantize_amount(summary["cess_amount"] * ratio)
+                diff = effective_reclaim_tax - (igst_rec + cgst_rec + sgst_rec + cess_rec)
+                if diff != Decimal('0.00'):
+                    if igst_rec > Decimal('0.00'):
+                        igst_rec += diff
+                    elif cgst_rec > Decimal('0.00'):
+                        cgst_rec += diff
+                    elif sgst_rec > Decimal('0.00'):
+                        sgst_rec += diff
+                    else:
+                        igst_rec += diff
 
             rec_date = reclaim_date or timezone.now().date()
             v_date_str = (verification_date or rec_date).strftime('%d-%m-%Y')
@@ -1987,7 +2114,6 @@ class GSTAllocationService:
                 f"Evidence: [{validated['supplier_status']}] Source: {validated['evidence_source']}{ref_str} Verified on: {v_date_str}."
             )
 
-            idem_key = f"rule37a_rec_{locked_voucher.company.id}_{locked_voucher.id}_{clean_period}"
             alloc = GSTReportingAllocation.objects.create(
                 company=locked_voucher.company,
                 voucher=locked_voucher,
@@ -2003,12 +2129,12 @@ class GSTAllocationService:
                 is_statutorily_eligible=True,
                 statutory_rule='Proviso to CGST Rules Rule 37A (Reclaim after supplier files GSTR-3B)',
                 statutory_notes=notes,
-                taxable_value=summary["taxable_value"],
-                igst_amount=summary["igst_amount"],
-                cgst_amount=summary["cgst_amount"],
-                sgst_amount=summary["sgst_amount"],
-                cess_amount=summary["cess_amount"],
-                total_tax=summary["total_tax"],
+                taxable_value=taxable_val,
+                igst_amount=igst_rec,
+                cgst_amount=cgst_rec,
+                sgst_amount=sgst_rec,
+                cess_amount=cess_rec,
+                total_tax=effective_reclaim_tax,
                 is_active=True,
                 source_reversal=prior_rev,
                 payment_reference=validated['arn'],
@@ -2029,23 +2155,6 @@ class GSTAllocationService:
                 },
                 created_by=user
             )
-
-            # Create lineage link
-            GSTReversalReclaimLineage.objects.create(
-                company=locked_voucher.company,
-                voucher=locked_voucher,
-                reversal_allocation=prior_rev,
-                reclaim_allocation=alloc,
-                reclaimed_tax=alloc.total_tax,
-                igst_reclaimed=alloc.igst_amount,
-                cgst_reclaimed=alloc.cgst_amount,
-                sgst_reclaimed=alloc.sgst_amount,
-                cess_reclaimed=alloc.cess_amount,
-                statutory_rule='RULE_37A',
-                created_by=user
-            )
-
-            return alloc
 
             # Create lineage link
             GSTReversalReclaimLineage.objects.create(

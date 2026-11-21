@@ -1,4 +1,5 @@
 import hashlib
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone as dt_timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Union
@@ -32,6 +33,53 @@ def compute_rule37a_evidence_hash(
         f"{arn.strip()}|{filing_date_str.strip()}|{verified_at_str.strip()}|{document_ref.strip()}"
     )
     return hashlib.sha256(raw_payload.encode('utf-8')).hexdigest()
+
+
+@dataclass
+class PositiveFilingEvidenceValidationResult:
+    """
+    Structured, type-safe result of statutory positive filing evidence validation under Rule 37A.
+    Eliminates reliance on raw booleans and unauthenticated status strings.
+    """
+    is_valid: bool
+    filing_status: str
+    supplier_gstin: str
+    return_period: str
+    company_id: Optional[str]
+    evidence_source: str
+    evidence_record_id: Optional[str]
+    filing_date: Optional[date]
+    filing_arn: str
+    verification_timestamp: Optional[datetime]
+    document_ref: str
+    manual_verification_reason: str
+    validation_errors: List[str]
+    validation_reason: str
+    evidence_hash: str = ""
+    evidence_record: Optional[Any] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "is_valid": self.is_valid,
+            "filing_status": self.filing_status,
+            "supplier_status": self.filing_status,
+            "supplier_gstin": self.supplier_gstin,
+            "return_period": self.return_period,
+            "supplier_return_period": self.return_period,
+            "company_id": self.company_id,
+            "evidence_source": self.evidence_source,
+            "evidence_record_id": self.evidence_record_id,
+            "filing_date": self.filing_date,
+            "filing_arn": self.filing_arn,
+            "arn": self.filing_arn,
+            "verification_timestamp": self.verification_timestamp,
+            "document_ref": self.document_ref,
+            "manual_verification_reason": self.manual_verification_reason,
+            "validation_errors": list(self.validation_errors),
+            "validation_reason": self.validation_reason,
+            "evidence_hash": self.evidence_hash,
+            "evidence_record": self.evidence_record,
+        }
 
 
 class Rule37AEvidenceService:
@@ -158,24 +206,64 @@ class Rule37AEvidenceService:
                 )[0]
 
                 is_supp_stale = supp_record.is_stale(threshold_days=freshness_threshold_days)
-                is_filed = supp_record.status in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED')
 
-                if is_filed:
-                    # Positive filing fact with verified ARN & filing date:
-                    # An affirmative filing fact is an immutable historical event on GST portal.
-                    # Preserve original source verification timestamp separately from filing date.
-                    supp_eval = {
-                        "status": supp_record.status,
-                        "supplier_gstr3b_filed": True,
-                        "is_stale": False,
-                        "filing_date": supp_record.filing_date,
-                        "arn": supp_record.arn,
-                        "source": supp_record.verification_source or "SUPPLIER_RECORD",
-                        "timestamp": supp_record.verified_at,
-                        "record": supp_record,
-                        "document_ref": supp_record.evidence_document_ref,
-                        "note": supp_record.notes or "Authoritative SupplierGSTR3BFilingRecord"
-                    }
+                if supp_record.status == 'VERIFIED_FILED':
+                    # Affirmative positive filing proof requires verified ARN & filing date
+                    if not supp_record.arn or not supp_record.filing_date:
+                        supp_eval = {
+                            "status": "DATA_UNAVAILABLE",
+                            "supplier_gstr3b_filed": False,
+                            "is_stale": False,
+                            "filing_date": None,
+                            "arn": "",
+                            "source": supp_record.verification_source or "SUPPLIER_RECORD",
+                            "timestamp": supp_record.verified_at,
+                            "record": supp_record,
+                            "document_ref": supp_record.evidence_document_ref,
+                            "note": "Supplier record has status VERIFIED_FILED but lacks verified filing date or ARN."
+                        }
+                    else:
+                        supp_eval = {
+                            "status": supp_record.status,
+                            "supplier_gstr3b_filed": True,
+                            "is_stale": False,
+                            "filing_date": supp_record.filing_date,
+                            "arn": supp_record.arn,
+                            "source": supp_record.verification_source or "SUPPLIER_RECORD",
+                            "timestamp": supp_record.verified_at,
+                            "record": supp_record,
+                            "document_ref": supp_record.evidence_document_ref,
+                            "note": supp_record.notes or "Authoritative SupplierGSTR3BFilingRecord"
+                        }
+                elif supp_record.status == 'MANUALLY_CONFIRMED':
+                    # Manual confirmation requires documentary reference, verifying user, and timestamp
+                    doc_ref = supp_record.evidence_document_ref or supp_record.arn
+                    if not doc_ref or not supp_record.verified_by or not supp_record.verified_at:
+                        supp_eval = {
+                            "status": "DATA_UNAVAILABLE",
+                            "supplier_gstr3b_filed": False,
+                            "is_stale": False,
+                            "filing_date": None,
+                            "arn": "",
+                            "source": "MANUAL",
+                            "timestamp": supp_record.verified_at,
+                            "record": supp_record,
+                            "document_ref": doc_ref or "",
+                            "note": "Manual confirmation record lacks documentary reference, verifier user, or verification timestamp."
+                        }
+                    else:
+                        supp_eval = {
+                            "status": supp_record.status,
+                            "supplier_gstr3b_filed": True,
+                            "is_stale": False,
+                            "filing_date": supp_record.filing_date,
+                            "arn": supp_record.arn,
+                            "source": "MANUAL",
+                            "timestamp": supp_record.verified_at,
+                            "record": supp_record,
+                            "document_ref": doc_ref,
+                            "note": supp_record.notes or "Manual confirmation by authorized user"
+                        }
                 else:
                     # Negative non-filing evidence: Must have verification timestamp and must be fresh
                     if not supp_record.verified_at:
@@ -647,111 +735,294 @@ class Rule37AEvidenceService:
         }
 
     @classmethod
+    def validate_positive_filing_evidence(
+        cls,
+        voucher: Voucher,
+        supplier_status: Optional[str] = None,
+        supplier_gstin: Optional[str] = None,
+        supplier_return_period: Optional[str] = None,
+        verification_source: Optional[str] = None,
+        verification_reference: Optional[str] = None,
+        verification_date: Optional[Union[date, datetime, str]] = None,
+        verification_timestamp: Optional[Union[date, datetime, str]] = None,
+        gstr3b_filing_date: Optional[Union[date, str]] = None,
+        gstr3b_arn: Optional[str] = None,
+        user: Optional[Any] = None,
+        manual_verification_reason: Optional[str] = None,
+        evidence_record: Optional[Any] = None,
+        freshness_threshold_days: int = DEFAULT_FRESHNESS_DAYS,
+        raise_exception: bool = False
+    ) -> PositiveFilingEvidenceValidationResult:
+        """
+        Authoritative validation of positive supplier GSTR-3B filing evidence under Rule 37A and Section 16(2)(c).
+        Enforces:
+        - Supplier identity: GSTIN must match invoice supplier GSTIN
+        - Tenant & company isolation: Evidence company must match voucher company
+        - Exact return period: Must match invoice return period (MMYYYY)
+        - Positive filing proof: Verified status, ARN, filing date, active supporting record in DB
+        - Manual verification: Verifier identity (user), documentary reference, documented reason, timestamp
+        - Evidence conflicts: Contradictory evidence across sources fails closed
+        - Type-safe result: Returns PositiveFilingEvidenceValidationResult
+        """
+        validation_errors: List[str] = []
+
+        # 1. Supplier Identity Validation
+        inv_gstin = cls.resolve_supplier_gstin(voucher)
+        if not inv_gstin:
+            validation_errors.append("Invoice voucher has no supplier GSTIN. Filing evidence cannot be validated.")
+
+        clean_supp_gstin = str(supplier_gstin or "").strip().upper()
+        if clean_supp_gstin and inv_gstin and clean_supp_gstin != inv_gstin:
+            validation_errors.append(
+                f"Rule 37A positive evidence rejected: Evidence supplier GSTIN '{supplier_gstin}' does not match invoice supplier GSTIN '{inv_gstin}'."
+            )
+        target_gstin = clean_supp_gstin or inv_gstin
+
+        # 2. Return Period Validation
+        inv_period = cls.resolve_invoice_return_period(voucher)
+        clean_period = None
+        if supplier_return_period:
+            clean_period = cls.normalize_and_validate_return_period(supplier_return_period)
+            if not clean_period:
+                validation_errors.append(f"Rule 37A positive evidence rejected: Return period '{supplier_return_period}' is malformed.")
+            elif clean_period != inv_period:
+                validation_errors.append(
+                    f"Rule 37A positive evidence rejected: Evidence return period '{supplier_return_period}' does not match invoice return period '{inv_period}'."
+                )
+        target_period = clean_period or inv_period
+
+        # 3. Status Validation
+        clean_status = str(supplier_status or "").strip().upper()
+        if not clean_status:
+            validation_errors.append("Rule 37A positive filing evidence requires an explicit supplier filing status.")
+        elif clean_status in ('DATA_UNAVAILABLE', 'PENDING', 'UNKNOWN', 'VERIFIED_NOT_FILED'):
+            validation_errors.append(
+                f"Cannot authorize positive filing: supplier status '{clean_status}' does not establish tax payment or discharge under Section 16(2)(c)."
+            )
+        elif clean_status not in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED'):
+            validation_errors.append(
+                f"Cannot authorize positive filing: supplier status '{clean_status}' is not eligible for positive filing authorization."
+            )
+
+        # 4. Tenant and Company Isolation & Evidence Record Validation
+        if evidence_record is not None:
+            rec_comp_id = str(getattr(evidence_record, 'company_id', None) or '')
+            if rec_comp_id and rec_comp_id != str(voucher.company_id):
+                validation_errors.append(
+                    f"Cross-Tenant Evidence Violation: Evidence record company '{rec_comp_id}' does not match voucher company '{voucher.company_id}'."
+                )
+            if isinstance(evidence_record, SupplierGSTR3BFilingRecord):
+                if evidence_record.supplier_gstin.strip().upper() != target_gstin:
+                    validation_errors.append(
+                        f"Evidence record supplier GSTIN '{evidence_record.supplier_gstin}' does not match invoice supplier GSTIN '{target_gstin}'."
+                    )
+                if evidence_record.return_period.strip() != target_period:
+                    validation_errors.append(
+                        f"Evidence record return period '{evidence_record.return_period}' does not match invoice return period '{target_period}'."
+                    )
+            elif isinstance(evidence_record, GSTR2BRecord):
+                if evidence_record.supplier_gstin.strip().upper() != target_gstin:
+                    validation_errors.append(
+                        f"GSTR-2B evidence record supplier GSTIN '{evidence_record.supplier_gstin}' does not match invoice supplier GSTIN '{target_gstin}'."
+                    )
+                norm_g2b = cls.normalize_and_validate_return_period(evidence_record.gstr3b_return_period)
+                if not norm_g2b or norm_g2b != target_period:
+                    validation_errors.append(
+                        f"GSTR-2B evidence record return period '{evidence_record.gstr3b_return_period}' does not match invoice return period '{target_period}'."
+                    )
+                if evidence_record.matched_voucher_id and str(evidence_record.matched_voucher_id) != str(voucher.id):
+                    validation_errors.append("GSTR-2B record is matched to an unrelated voucher.")
+
+        # 5. Auto-Lookup Evidence Record if not provided
+        if evidence_record is None and target_gstin and target_period:
+            supp_rec = SupplierGSTR3BFilingRecord.objects.filter(
+                company=voucher.company,
+                supplier_gstin=target_gstin,
+                return_period=target_period
+            ).first()
+            g2b_rec = GSTR2BRecord.objects.filter(
+                company=voucher.company,
+                matched_voucher=voucher
+            ).first()
+
+            if supp_rec and supp_rec.status == clean_status:
+                evidence_record = supp_rec
+            elif g2b_rec and clean_status == 'VERIFIED_FILED' and g2b_rec.gstr3b_status == 'FILED':
+                norm_p = cls.normalize_and_validate_return_period(g2b_rec.gstr3b_return_period)
+                if norm_p == target_period:
+                    evidence_record = g2b_rec
+
+        # 6. Evidence Conflict Check
+        if target_gstin and target_period:
+            supp_records = list(SupplierGSTR3BFilingRecord.objects.filter(
+                company=voucher.company,
+                supplier_gstin=target_gstin,
+                return_period=target_period
+            ))
+            statuses = {r.status for r in supp_records}
+            if 'VERIFIED_FILED' in statuses and 'VERIFIED_NOT_FILED' in statuses:
+                validation_errors.append(
+                    f"Contradictory SupplierGSTR3BFilingRecord entries detected for supplier {target_gstin} and period {target_period}."
+                )
+
+            g2b_match = GSTR2BRecord.objects.filter(
+                company=voucher.company,
+                matched_voucher=voucher
+            ).first()
+            if supp_records and g2b_match:
+                active_supp = supp_records[0]
+                if (active_supp.status in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED') and g2b_match.gstr3b_status == 'NOT_FILED') or \
+                   (active_supp.status == 'VERIFIED_NOT_FILED' and g2b_match.gstr3b_status == 'FILED'):
+                    validation_errors.append(
+                        f"Conflicting positive and negative filing evidence across portal records and supplier records."
+                    )
+
+        # 7. Pathway-Specific Validation
+        clean_source = str(verification_source or ("PORTAL" if clean_status == "VERIFIED_FILED" else "MANUAL")).strip().upper()
+        clean_arn = str(gstr3b_arn or verification_reference or (getattr(evidence_record, 'arn', '') if isinstance(evidence_record, SupplierGSTR3BFilingRecord) else getattr(evidence_record, 'gstr3b_filing_arn', ''))).strip()
+        eff_filing_date = gstr3b_filing_date or (getattr(evidence_record, 'filing_date', None) if isinstance(evidence_record, SupplierGSTR3BFilingRecord) else getattr(evidence_record, 'gstr3b_filing_date', None))
+        if isinstance(eff_filing_date, str):
+            try:
+                eff_filing_date = date.fromisoformat(eff_filing_date.strip())
+            except Exception:
+                validation_errors.append("Invalid GSTR-3B filing date format.")
+                eff_filing_date = None
+
+        v_timestamp = None
+        raw_v_date = verification_timestamp or verification_date or getattr(evidence_record, 'verified_at', None) or getattr(evidence_record, 'gstr3b_verified_at', None)
+        if raw_v_date:
+            if isinstance(raw_v_date, datetime):
+                v_timestamp = raw_v_date if timezone.is_aware(raw_v_date) else timezone.make_aware(raw_v_date)
+            elif isinstance(raw_v_date, date):
+                v_timestamp = timezone.datetime.combine(
+                    raw_v_date, timezone.datetime.min.time(), tzinfo=timezone.get_current_timezone()
+                )
+            elif isinstance(raw_v_date, str):
+                try:
+                    dt = datetime.fromisoformat(raw_v_date.strip().replace('Z', '+00:00'))
+                    v_timestamp = dt if timezone.is_aware(dt) else timezone.make_aware(dt)
+                except Exception:
+                    validation_errors.append("Invalid verification timestamp format.")
+
+        eff_user = user or getattr(evidence_record, 'verified_by', None)
+        eff_doc_ref = str(verification_reference or (getattr(evidence_record, 'evidence_document_ref', '') if isinstance(evidence_record, SupplierGSTR3BFilingRecord) else '') or clean_arn or "").strip()
+        eff_reason = str(manual_verification_reason or (getattr(evidence_record, 'notes', '') if isinstance(evidence_record, SupplierGSTR3BFilingRecord) else '') or "").strip()
+
+        if clean_status == 'VERIFIED_FILED':
+            if not clean_arn:
+                validation_errors.append("Rule 37A reclaim requires verified GSTR-3B filing Application Reference Number (ARN).")
+            if not eff_filing_date:
+                validation_errors.append("Rule 37A reclaim requires verified GSTR-3B filing date.")
+            elif eff_filing_date > timezone.now().date() + timedelta(days=1):
+                validation_errors.append(f"Rule 37A positive evidence rejected: GSTR-3B filing date '{eff_filing_date}' cannot be in the future.")
+
+            if not evidence_record:
+                validation_errors.append(
+                    "Rule 37A positive filing evidence (VERIFIED_FILED) requires a verified, persisted evidence record (SupplierGSTR3BFilingRecord or GSTR2BRecord) in the database."
+                )
+            else:
+                if isinstance(evidence_record, SupplierGSTR3BFilingRecord):
+                    if evidence_record.status not in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED'):
+                        validation_errors.append(f"SupplierGSTR3BFilingRecord status '{evidence_record.status}' does not establish affirmative filing.")
+                elif isinstance(evidence_record, GSTR2BRecord):
+                    if evidence_record.gstr3b_status != 'FILED':
+                        validation_errors.append(f"GSTR2BRecord status '{evidence_record.gstr3b_status}' does not establish affirmative GSTR-3B filing.")
+                    if evidence_record.gstr1_filing_date and not evidence_record.gstr3b_filing_date:
+                        validation_errors.append(
+                            "Cannot reclaim under Rule 37A: Supplier has filed GSTR-1, but affirmative proof of GSTR-3B return filing (filing date / ARN) is required. GSTR-1 outward declaration does not discharge tax liability under Section 16(2)(c)."
+                        )
+        elif clean_status == 'MANUALLY_CONFIRMED':
+            if not eff_doc_ref:
+                validation_errors.append("Rule 37A manual reclaim requires document reference (e.g. CA certificate or challan reference).")
+            if not eff_user:
+                validation_errors.append("Rule 37A manual reclaim requires verifier identity (user).")
+            elif hasattr(eff_user, 'is_active') and not eff_user.is_active:
+                validation_errors.append("Rule 37A manual reclaim verifier user is inactive.")
+            if not eff_reason:
+                validation_errors.append("Rule 37A manual confirmation requires a documented verification reason.")
+            if not v_timestamp:
+                validation_errors.append("Rule 37A manual reclaim requires verification timestamp.")
+
+        is_valid = len(validation_errors) == 0
+        validation_reason = "; ".join(validation_errors) if validation_errors else "Positive supplier filing evidence fully validated."
+
+        evidence_hash = ""
+        if is_valid:
+            evidence_hash = compute_rule37a_evidence_hash(
+                company_id=voucher.company_id,
+                voucher_id=voucher.id,
+                supplier_gstin=target_gstin,
+                return_period=target_period,
+                evidence_source=clean_source,
+                status=clean_status,
+                arn=clean_arn,
+                filing_date_str=eff_filing_date.isoformat() if eff_filing_date else "",
+                verified_at_str=v_timestamp.isoformat() if v_timestamp else "",
+                document_ref=eff_doc_ref
+            )
+
+        res = PositiveFilingEvidenceValidationResult(
+            is_valid=is_valid,
+            filing_status=clean_status,
+            supplier_gstin=target_gstin,
+            return_period=target_period,
+            company_id=str(voucher.company_id),
+            evidence_source=clean_source,
+            evidence_record_id=str(evidence_record.id) if evidence_record and hasattr(evidence_record, 'id') else None,
+            filing_date=eff_filing_date,
+            filing_arn=clean_arn,
+            verification_timestamp=v_timestamp,
+            document_ref=eff_doc_ref,
+            manual_verification_reason=eff_reason,
+            validation_errors=validation_errors,
+            validation_reason=validation_reason,
+            evidence_hash=evidence_hash,
+            evidence_record=evidence_record
+        )
+
+        if raise_exception and not is_valid:
+            raise ValidationError(validation_reason)
+
+        return res
+
+    @classmethod
     def validate_reclaim_evidence(
         cls,
         voucher: Voucher,
         supplier_status: Optional[str],
         supplier_gstin: Optional[str],
         supplier_return_period: Optional[str],
-        verification_source: Optional[str],
+        verification_source: Optional[str] = None,
         verification_reference: Optional[str] = None,
-        verification_date: Optional[Union[date, datetime]] = None,
-        gstr3b_filing_date: Optional[date] = None,
+        verification_date: Optional[Union[date, datetime, str]] = None,
+        gstr3b_filing_date: Optional[Union[date, str]] = None,
         gstr3b_arn: Optional[str] = None,
         user: Optional[Any] = None,
         manual_verification_reason: Optional[str] = None,
         evidence_record: Optional[Any] = None,
-        freshness_threshold_days: int = DEFAULT_FRESHNESS_DAYS
+        freshness_threshold_days: int = DEFAULT_FRESHNESS_DAYS,
+        verification_timestamp: Optional[Union[date, datetime, str]] = None
     ) -> Dict[str, Any]:
         """
         Rigorous validation of evidence for Rule 37A ITC Reclaim under Proviso to Rule 37A.
         Enforces Section 16(2)(c) tax discharge requirements.
+        Delegates to authoritative validate_positive_filing_evidence with raise_exception=True.
         """
-        if not supplier_status or not str(supplier_status).strip():
-            raise ValidationError("Rule 37A reclaim requires an explicit supplier filing status.")
-
-        clean_status = str(supplier_status).strip().upper()
-
-        if clean_status in ('DATA_UNAVAILABLE', 'PENDING', 'UNKNOWN', 'VERIFIED_NOT_FILED'):
-            raise ValidationError(
-                f"Cannot reclaim under Rule 37A: Supplier filing status '{clean_status}' does not establish tax payment for invoice #{voucher.voucher_number}."
-            )
-
-        if clean_status not in ('VERIFIED_FILED', 'MANUALLY_CONFIRMED'):
-            raise ValidationError(
-                f"Cannot reclaim under Rule 37A: Supplier status '{clean_status}' is not eligible for reclaim on invoice #{voucher.voucher_number}."
-            )
-
-        inv_gstin = cls.resolve_supplier_gstin(voucher)
-        if supplier_gstin and inv_gstin and supplier_gstin.strip().upper() != inv_gstin:
-            raise ValidationError(
-                f"Rule 37A reclaim rejected: Evidence supplier GSTIN '{supplier_gstin}' does not match invoice supplier GSTIN '{inv_gstin}'."
-            )
-
-        inv_period = cls.resolve_invoice_return_period(voucher)
-        if supplier_return_period:
-            clean_period = str(supplier_return_period).strip().replace('-', '').replace('/', '')
-            if clean_period != inv_period:
-                raise ValidationError(
-                    f"Rule 37A reclaim rejected: Evidence return period '{supplier_return_period}' does not match invoice return period '{inv_period}'."
-                )
-
-        clean_source = str(verification_source or ("PORTAL" if clean_status == "VERIFIED_FILED" else "MANUAL")).strip().upper()
-        clean_arn = str(gstr3b_arn or verification_reference or "").strip()
-        g3b_date = gstr3b_filing_date
-
-        if clean_status == 'VERIFIED_FILED':
-            if not clean_arn:
-                raise ValidationError("Rule 37A reclaim requires verified GSTR-3B filing Application Reference Number (ARN).")
-            if not g3b_date:
-                raise ValidationError("Rule 37A reclaim requires verified GSTR-3B filing date.")
-
-            # Preserve original verification timestamp without synthesizing fake timezone.now()
-            if verification_date:
-                v_timestamp = verification_date if isinstance(verification_date, datetime) else timezone.datetime.combine(
-                    verification_date, timezone.datetime.min.time(), tzinfo=timezone.get_current_timezone()
-                )
-            elif evidence_record and getattr(evidence_record, 'verified_at', None):
-                v_timestamp = evidence_record.verified_at
-            elif evidence_record and getattr(evidence_record, 'gstr3b_verified_at', None):
-                v_timestamp = evidence_record.gstr3b_verified_at
-            else:
-                v_timestamp = None
-        elif clean_status == 'MANUALLY_CONFIRMED':
-            if not clean_arn and not verification_reference:
-                raise ValidationError("Rule 37A manual reclaim requires document reference (e.g. CA certificate or challan reference).")
-            if not user:
-                raise ValidationError("Rule 37A manual reclaim requires verifier identity (user).")
-            if not verification_date:
-                raise ValidationError("Rule 37A manual reclaim requires verification timestamp.")
-
-            v_timestamp = verification_date if isinstance(verification_date, datetime) else timezone.datetime.combine(
-                verification_date, timezone.datetime.min.time(), tzinfo=timezone.get_current_timezone()
-            )
-
-        evidence_hash = compute_rule37a_evidence_hash(
-            company_id=voucher.company_id,
-            voucher_id=voucher.id,
-            supplier_gstin=inv_gstin,
-            return_period=inv_period,
-            evidence_source=clean_source,
-            status=clean_status,
-            arn=clean_arn,
-            filing_date_str=g3b_date.isoformat() if g3b_date else "",
-            verified_at_str=v_timestamp.isoformat() if v_timestamp else "",
-            document_ref=str(verification_reference or "").strip()
+        res = cls.validate_positive_filing_evidence(
+            voucher=voucher,
+            supplier_status=supplier_status,
+            supplier_gstin=supplier_gstin,
+            supplier_return_period=supplier_return_period,
+            verification_source=verification_source,
+            verification_reference=verification_reference,
+            verification_date=verification_date,
+            verification_timestamp=verification_timestamp or verification_date,
+            gstr3b_filing_date=gstr3b_filing_date,
+            gstr3b_arn=gstr3b_arn,
+            user=user,
+            manual_verification_reason=manual_verification_reason,
+            evidence_record=evidence_record,
+            freshness_threshold_days=freshness_threshold_days,
+            raise_exception=True
         )
-
-        return {
-            "supplier_status": clean_status,
-            "supplier_gstin": inv_gstin,
-            "supplier_return_period": inv_period,
-            "evidence_source": clean_source,
-            "verification_timestamp": v_timestamp,
-            "filing_date": g3b_date,
-            "arn": clean_arn,
-            "document_ref": str(verification_reference or "").strip(),
-            "manual_verification_reason": str(manual_verification_reason or "").strip(),
-            "evidence_hash": evidence_hash,
-            "evidence_record": evidence_record
-        }
+        return res.to_dict()
