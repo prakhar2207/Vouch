@@ -1,6 +1,8 @@
 import json
 import logging
 from decimal import Decimal
+from datetime import date
+from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -153,18 +155,27 @@ class ITCReconciliationListView(APIView):
                 if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
                     vouchers = vouchers.filter(voucher_date__year=int(parts[0]), voucher_date__month=int(parts[1]))
 
+        today = timezone.now().date()
+        current_fy_start_year = today.year if today.month >= 4 else today.year - 1
+        prev_fy_start = date(current_fy_start_year - 1, 4, 1)
+        prev_fy_end = date(current_fy_start_year, 3, 31)
+
         for v in vouchers:
             matched_rec = v.gstr2b_matches.first()
             eff_status = v.itc_match_status or 'UNCHECKED'
             if eff_status == 'UNCHECKED':
                 eff_status = 'MATCHED' if matched_rec else 'MISSING_IN_2B'
 
-            if filter_status not in ['ALL', 'MATCHED', 'MISMATCHED', 'MISSING_IN_2B']:
+            if filter_status == 'EXPIRING_SEC16_4':
+                is_prev_fy = bool(v.voucher_date and prev_fy_start <= v.voucher_date <= prev_fy_end)
+                if not (is_prev_fy and eff_status in ['MISSING_IN_2B', 'MISMATCHED']):
+                    continue
+            elif filter_status not in ['ALL', 'MATCHED', 'MISMATCHED', 'MISSING_IN_2B']:
                 if filter_status == 'MISSING_IN_BOOKS':
                     continue
 
             # Check status match
-            if filter_status != 'ALL' and eff_status != filter_status:
+            if filter_status not in ['ALL', 'EXPIRING_SEC16_4'] and eff_status != filter_status:
                 continue
 
             # Calculate book values
