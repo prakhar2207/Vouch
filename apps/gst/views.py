@@ -161,11 +161,19 @@ class CompanyGSTConfigAPIView(APIView):
 class CompanyGSTConfigTestConnectionAPIView(APIView):
     """
     POST /api/v1/gst/config/<uuid:company_id>/test-connection/
-    Tests connectivity and authentication with the configured GST gateway (Sandbox by Quicko).
+    Developer/staff diagnostic operation: strictly restricted from ordinary production UI.
+    Accessible only through authorized internal diagnostics or staff tooling.
     """
-    permission_classes = [IsAuthenticated, CanViewGST]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request, company_id):
+        # Strict restriction: developer diagnostic operation not accessible to ordinary users
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({
+                "success": False,
+                "error": "Test connection is an internal diagnostic tool restricted to system administrators."
+            }, status=status.HTTP_403_FORBIDDEN)
+
         company = get_company_or_404(request.user, company_id)
         from apps.gst.services.authentication_service import SandboxAuthenticationService
         result = SandboxAuthenticationService.test_connection(company=company)
@@ -481,7 +489,8 @@ class GSTRDirectPortalPreflightAPIView(APIView):
 
     def get(self, request, company_id):
         company = get_company_or_404(request.user, company_id)
-        result = GSTPortalService.get_preflight_status(company)
+        gstin = request.query_params.get('gstin') or request.data.get('gstin') if hasattr(request, 'data') else request.query_params.get('gstin')
+        result = GSTPortalService.get_preflight_status(company, gstin=gstin)
         return Response({"success": True, "preflight": result})
 
 
@@ -536,6 +545,7 @@ class GSTRDirectPortalUploadGSTR1APIView(APIView):
     """
     POST /api/v1/gst/portal/upload-gstr1/
     Directly uploads GSTR-1 returns to the GST Portal / Sandbox without manual JSON file download.
+    Requires an active taxpayer session token.
     """
     permission_classes = [IsAuthenticated, CanFileGST]
 
@@ -548,14 +558,18 @@ class GSTRDirectPortalUploadGSTR1APIView(APIView):
 
         company = get_company_or_404(request.user, company_id)
         auth_token = request.data.get('auth_token')
+        gstin = request.data.get('gstin')
 
         result = GSTPortalService.upload_gstr1_direct(
             company=company,
             start_date=start_date,
             end_date=end_date,
-            auth_token=auth_token
+            gstin=gstin,
+            auth_token=auth_token,
+            user=request.user
         )
-        return Response(result)
+        status_code = status.HTTP_200_OK if result.get('success') else status.HTTP_400_BAD_REQUEST
+        return Response(result, status=status_code)
 
 
 class GSTRDirectPortalStatusAPIView(APIView):
@@ -567,7 +581,8 @@ class GSTRDirectPortalStatusAPIView(APIView):
 
     def get(self, request, company_id, ref_id):
         company = get_company_or_404(request.user, company_id)
-        result = GSTPortalService.get_portal_status(company, ref_id)
+        gstin = request.query_params.get('gstin')
+        result = GSTPortalService.get_portal_status(company, ref_id, gstin=gstin, user=request.user)
         return Response(result)
 
 
@@ -583,8 +598,9 @@ class GSTRDirectPortalDisconnectAPIView(APIView):
         if not company_id:
             return Response({"success": False, "error": "company_id is required."}, status=status.HTTP_400_BAD_REQUEST)
         company = get_company_or_404(request.user, company_id)
+        gstin = request.data.get('gstin')
 
-        result = GSTPortalService.disconnect_portal_session(company)
+        result = GSTPortalService.disconnect_portal_session(company, gstin=gstin, user=request.user)
         return Response(result)
 
 
@@ -600,8 +616,9 @@ class GSTRDirectPortalRefreshSessionAPIView(APIView):
         if not company_id:
             return Response({"success": False, "error": "company_id is required."}, status=status.HTTP_400_BAD_REQUEST)
         company = get_company_or_404(request.user, company_id)
+        gstin = request.data.get('gstin')
 
-        result = GSTPortalService.refresh_portal_session(company)
+        result = GSTPortalService.refresh_portal_session(company, gstin=gstin, user=request.user)
         if not result.get('success'):
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
         return Response(result)

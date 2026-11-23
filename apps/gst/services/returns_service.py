@@ -1554,7 +1554,7 @@ class GSTReturnsService:
             return_period=return_period,
             defaults={
                 "gst_registration": registration,
-                "arn": arn or f"ARN-{uuid.uuid4().hex[:12].upper()}",
+                "arn": arn or "",
                 "status": status,
                 "payload_hash": p_hash,
                 "response_snapshot": response or {},

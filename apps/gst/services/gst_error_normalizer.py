@@ -1,11 +1,13 @@
 """
 GST Error Normalizer Service
-Provides centralized error message normalization and structured error classification
-for GST compliance integrations. Ensures no raw provider responses, HTTP status traces,
-parameter names, or vendor/infrastructure details leak to customer-facing interfaces.
+Provides centralized error message normalization, data sanitization,
+and structured error classification for GST compliance integrations.
+Ensures zero leaks of credentials, raw HTTP stack traces, correlation IDs,
+or unhandled vendor errors to customers.
 """
 
 import re
+import uuid
 import logging
 from typing import Optional, Dict, Any
 
@@ -25,29 +27,90 @@ PORTAL_HELP_GUIDE = {
     ]
 }
 
+# Sensitive keys that must be redacted before logging or auditing
+SENSITIVE_KEYS = {
+    'password', 'otp', 'api_secret', 'client-secret', 'client_secret',
+    'auth_token', 'access_token', 'app_key', 'token', 'secret',
+    'eway_password', 'einvoice_password', 'sandbox_api_secret'
+}
 
-def get_structured_gst_error(raw_error: Optional[str], status_code: int = 400, category: str = "general") -> Dict[str, Any]:
+REDACTION_PATTERN = re.compile(
+    r'(password|otp|secret|token|bearer|key)\s*[:=]\s*["\']?([^"\'\s,;&]+)["\']?',
+    re.IGNORECASE
+)
+
+
+def redact_sensitive_str(text: Optional[str]) -> str:
+    """Masks secrets, passwords, OTPs, and tokens in raw strings."""
+    if not text:
+        return ""
+    return REDACTION_PATTERN.sub(r'\1=***REDACTED***', str(text))
+
+
+def sanitize_audit_payload(data: Any) -> Any:
+    """
+    Recursively redacts sensitive credentials (OTPs, passwords, tokens, secrets)
+    from dictionary or list structures before persisting to GSTAuditLog or server logs.
+    """
+    if isinstance(data, dict):
+        sanitized = {}
+        for k, v in data.items():
+            if str(k).lower() in SENSITIVE_KEYS:
+                sanitized[k] = "***REDACTED***"
+            elif isinstance(v, (dict, list)):
+                sanitized[k] = sanitize_audit_payload(v)
+            elif isinstance(v, str) and str(k).lower() == 'otp':
+                sanitized[k] = "***REDACTED***"
+            else:
+                sanitized[k] = v
+        return sanitized
+    elif isinstance(data, list):
+        return [sanitize_audit_payload(item) for item in data]
+    elif isinstance(data, str):
+        return redact_sensitive_str(data)
+    return data
+
+
+def get_structured_gst_error(
+    raw_error: Optional[str],
+    status_code: int = 400,
+    category: str = "general",
+    correlation_id: Optional[str] = None
+) -> Dict[str, Any]:
     """
     Analyzes raw external provider responses, HTTP status codes, and exceptions,
     returning structured, customer-safe error classification with actionable guidance.
+    Never exposes raw exceptions, credentials, or internal provider names.
     """
+    cid = correlation_id or f"GST-ERR-{uuid.uuid4().hex[:10].upper()}"
+
     if not raw_error:
         if category == "otp_request":
             return {
                 "code": "OTP_DELIVERY_FAILURE",
                 "message": "We couldn't send your OTP. Please verify your GST Portal username and try again.",
                 "action": "RECHECK_USERNAME",
+                "correlation_id": cid,
             }
         elif category == "otp_verify":
             return {
                 "code": "INCORRECT_OTP",
                 "message": "The OTP entered is incorrect or has expired. Please check and try again.",
                 "action": "REENTER_OTP",
+                "correlation_id": cid,
+            }
+        elif category == "filing":
+            return {
+                "code": "SUBMISSION_REJECTED",
+                "message": "Return submission was rejected by the GST Portal. Please check return contents.",
+                "action": "REVIEW_RETURN",
+                "correlation_id": cid,
             }
         return {
             "code": "PROVIDER_OUTAGE",
             "message": "We couldn't connect to the GST Portal right now. Please try again.",
             "action": "RETRY_LATER",
+            "correlation_id": cid,
         }
 
     raw_str = str(raw_error).strip()
@@ -59,6 +122,7 @@ def get_structured_gst_error(raw_error: Optional[str], status_code: int = 400, c
             "code": "RATE_LIMIT_EXCEEDED",
             "message": "Too many requests to the GST Portal. Please wait a few moments before trying again.",
             "action": "RETRY_LATER",
+            "correlation_id": cid,
         }
 
     # 2. Network connectivity, timeout, or external gateway 5xx outage
@@ -75,6 +139,7 @@ def get_structured_gst_error(raw_error: Optional[str], status_code: int = 400, c
             "code": "PROVIDER_OUTAGE",
             "message": "The GST Portal is temporarily unavailable. Please try again shortly.",
             "action": "RETRY_LATER",
+            "correlation_id": cid,
         }
 
     # 3. GSP/ASP Consent or Mapping Missing
@@ -84,6 +149,7 @@ def get_structured_gst_error(raw_error: Optional[str], status_code: int = 400, c
             "message": "GST Portal authorization for SriLekh's integration partner is missing. Please select Quicko Infosoft Private Limited under Manage API Access on the GST Portal.",
             "action": "ENABLE_PORTAL_API_ACCESS",
             "portal_help": PORTAL_HELP_GUIDE,
+            "correlation_id": cid,
         }
 
     # 4. API Access disabled on government portal
@@ -97,6 +163,7 @@ def get_structured_gst_error(raw_error: Optional[str], status_code: int = 400, c
             "message": "GST API access is currently disabled for this GST registration. Please enable API access in your GST Portal account and try again.",
             "action": "ENABLE_PORTAL_API_ACCESS",
             "portal_help": PORTAL_HELP_GUIDE,
+            "correlation_id": cid,
         }
 
     # 5. Invalid or Expired OTP
@@ -107,6 +174,7 @@ def get_structured_gst_error(raw_error: Optional[str], status_code: int = 400, c
             "code": "EXPIRED_OTP",
             "message": "The OTP entered has expired. Please request a new OTP to continue.",
             "action": "REQUEST_NEW_OTP",
+            "correlation_id": cid,
         }
     if "otp" in raw_lower and any(
         term in raw_lower for term in ["invalid", "incorrect", "mismatch", "failed", "wrong"]
@@ -115,6 +183,7 @@ def get_structured_gst_error(raw_error: Optional[str], status_code: int = 400, c
             "code": "INCORRECT_OTP",
             "message": "The OTP entered is incorrect or has expired. Please check and try again.",
             "action": "REENTER_OTP",
+            "correlation_id": cid,
         }
 
     # 6. Taxpayer / Username not found
@@ -123,12 +192,14 @@ def get_structured_gst_error(raw_error: Optional[str], status_code: int = 400, c
             "code": "INVALID_USERNAME",
             "message": "The GST Portal username entered does not match your GST registration. Please verify your username.",
             "action": "RECHECK_USERNAME",
+            "correlation_id": cid,
         }
     if "username" in raw_lower and any(term in raw_lower for term in ["invalid", "not found", "incorrect", "unknown"]):
         return {
             "code": "INVALID_USERNAME",
             "message": "Please check your GST Portal username and try again.",
             "action": "RECHECK_USERNAME",
+            "correlation_id": cid,
         }
 
     # 7. Session Expired or Token Invalid
@@ -137,35 +208,74 @@ def get_structured_gst_error(raw_error: Optional[str], status_code: int = 400, c
             "code": "EXPIRED_SESSION",
             "message": "Your GST Portal connection session has expired. Please reconnect to continue.",
             "action": "RECONNECT",
+            "correlation_id": cid,
         }
 
-    # 8. Internal parameter, credential, or signature issues (e.g. x-source, client credentials)
+    # 8. Token integrity & validation failures
+    if "session token" in raw_lower or "malformed token" in raw_lower or "invalid token" in raw_lower:
+        return {
+            "code": "INVALID_SESSION_TOKEN",
+            "message": "Authentication token verification failed. Please reconnect with a fresh OTP.",
+            "action": "REQUEST_NEW_OTP",
+            "correlation_id": cid,
+        }
+
+    # 9. GSTIN Mismatch
+    if "gstin mismatch" in raw_lower or "mismatch" in raw_lower and "gstin" in raw_lower:
+        return {
+            "code": "GSTIN_MISMATCH",
+            "message": "The GSTIN in the portal session does not match your company registration.",
+            "action": "VERIFY_GSTIN",
+            "correlation_id": cid,
+        }
+
+    # 10. Filing and statutory errors
+    if any(phrase in raw_lower for phrase in ["already filed", "return already filed", "duplicate filing"]):
+        return {
+            "code": "ALREADY_FILED",
+            "message": "This GST return has already been filed on the GST Common Portal.",
+            "action": "VIEW_FILED_RETURN",
+            "correlation_id": cid,
+        }
+
+    # 11. Internal parameter, credential, or signature issues (e.g. x-source, client credentials)
     # Mask completely from customer view
     if any(term in raw_lower for term in ["x-source", "parameter", "header", "credential", "clientid", "secret", "401", "403"]):
         return {
             "code": "CONFIGURATION_ERROR",
             "message": "GST Portal connection is temporarily unavailable. Please try again shortly or contact support if the issue persists.",
             "action": "CONTACT_SUPPORT",
+            "correlation_id": cid,
         }
 
-    # 9. Category-specific fallbacks
+    # 12. Category-specific fallbacks
     if category == "otp_request":
         return {
             "code": "OTP_DELIVERY_FAILURE",
             "message": "We couldn't send your OTP. Please verify your GST Portal username and try again.",
             "action": "RECHECK_USERNAME",
+            "correlation_id": cid,
         }
     elif category == "otp_verify":
         return {
             "code": "INCORRECT_OTP",
             "message": "The OTP entered could not be verified. Please check the code and try again.",
             "action": "REENTER_OTP",
+            "correlation_id": cid,
+        }
+    elif category == "filing":
+        return {
+            "code": "SUBMISSION_REJECTED",
+            "message": "The GST Portal rejected the return submission. Please verify the return details.",
+            "action": "REVIEW_RETURN",
+            "correlation_id": cid,
         }
 
     return {
         "code": "PROVIDER_OUTAGE",
         "message": "We couldn't connect to the GST Portal right now. Please try again.",
         "action": "RETRY_LATER",
+        "correlation_id": cid,
     }
 
 

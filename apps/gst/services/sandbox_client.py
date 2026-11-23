@@ -19,6 +19,7 @@ from apps.gst.exceptions import (
     GSTRateLimitExceededError,
 )
 from apps.gst.services.audit_service import GSTAuditService
+from apps.gst.services.gst_error_normalizer import sanitize_audit_payload
 
 logger = logging.getLogger('apps.gst.sandbox_client')
 
@@ -128,7 +129,12 @@ class SandboxGSTClient:
         # SSRF Protection: Validate base_url against explicit allowlist of HTTPS hosts
         clean_url = str(base_url).strip()
         parsed = urlparse(clean_url)
-        if parsed.scheme != 'https' or parsed.netloc not in self.ALLOWED_SANDBOX_HOSTS:
+        if parsed.scheme != 'https':
+            logger.warning(
+                f"Insecure or invalid Sandbox base URL scheme '{parsed.scheme}'. Scheme must be https."
+            )
+            clean_url = ""
+        elif parsed.netloc not in self.ALLOWED_SANDBOX_HOSTS:
             logger.warning(
                 f"Untrusted or invalid Sandbox base URL host '{parsed.netloc}'. "
                 f"Resetting to authoritative DEFAULT_BASE_URL for security."
@@ -138,8 +144,8 @@ class SandboxGSTClient:
         return api_key, api_secret, clean_url, is_sandbox
 
     def is_configured(self) -> bool:
-        api_key, api_secret, _, _ = self.get_api_credentials()
-        return bool(api_key and api_secret)
+        api_key, api_secret, base_url, _ = self.get_api_credentials()
+        return bool(api_key and api_secret and base_url)
 
     def get_access_token(self, force_refresh: bool = False) -> str:
         """
@@ -351,8 +357,10 @@ class SandboxGSTClient:
                     if data_payload.get('status_cd') == '0' or 'error' in data_payload:
                         is_success = False
 
-                # Audit log
+                # Audit log with sensitive credential redaction
                 if self.company:
+                    clean_req = sanitize_audit_payload({"path": path, "payload": payload, "params": params})
+                    clean_res = sanitize_audit_payload(response_json if isinstance(response_json, dict) else {"status": status_code})
                     GSTAuditService.log_action(
                         company=self.company,
                         gst_registration=self.registration,
@@ -362,9 +370,9 @@ class SandboxGSTClient:
                         http_method=method.upper(),
                         status_code=status_code,
                         is_success=is_success,
-                        request_summary={"path": path, "payload": payload, "params": params},
-                        response_summary=response_json if isinstance(response_json, dict) else {"status": status_code},
-                        error_message="" if is_success else str(response_json)[:1000],
+                        request_summary=clean_req,
+                        response_summary=clean_res,
+                        error_message="" if is_success else str(clean_res)[:1000],
                         user=user
                     )
 

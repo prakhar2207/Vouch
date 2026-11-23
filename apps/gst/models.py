@@ -203,6 +203,10 @@ class GSTRegistration(models.Model):
             )
         ]
 
+    def has_active_portal_session(self) -> bool:
+        from django.utils import timezone
+        return bool(self.auth_token and (not self.token_expires_at or self.token_expires_at > timezone.now()))
+
     def __str__(self):
         return f"{self.gstin} ({self.state_name}) - {self.company.name} [{self.status}]"
 
