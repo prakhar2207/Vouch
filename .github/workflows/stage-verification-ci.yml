@@ -63,6 +63,24 @@ jobs:
         run: |
           pip-audit -r requirements.txt --strict --progress-spinner off
 
+      - name: Provision Ephemeral Test GST Encryption Key
+        run: |
+          EPHEMERAL_KEY=$(python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+          echo "::add-mask::$EPHEMERAL_KEY"
+          echo "GST_ENCRYPTION_KEY=$EPHEMERAL_KEY" >> $GITHUB_ENV
+
+      - name: Verify CI Encryption Key Hygiene
+        run: |
+          python -c "
+          import os, base64
+          key = os.environ.get('GST_ENCRYPTION_KEY', '')
+          assert key, 'GST_ENCRYPTION_KEY must not be empty in CI'
+          raw = base64.urlsafe_b64decode(key)
+          assert len(raw) == 32, 'GST_ENCRYPTION_KEY must be a valid 32-byte Fernet key'
+          assert key != '1XxlyIyQuZPNNYUELXz9FQ2RICOBa3VS4tK621QXdHg=', 'Static committed key must not be used'
+          print('CI Ephemeral Fernet Key successfully provisioned, verified, and masked.')
+          "
+
       - name: Run Core Security, Auth, Deletion & Upload Tests (PG 18)
         env:
           ENVIRONMENT: staging

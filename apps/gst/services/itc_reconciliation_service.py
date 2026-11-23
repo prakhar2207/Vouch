@@ -607,7 +607,17 @@ class ITCReconciliationService:
             company=company,
             voucher_type__in=['PURCHASE', 'DEBIT_NOTE'],
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
-        ).prefetch_related('items').defer('attachment_data', 'attachment_mime')
+        ).prefetch_related('items', 'gstr2b_matches').defer('attachment_data', 'attachment_mime')
+
+        if return_period:
+            if len(return_period) == 6 and return_period.isdigit():
+                m = int(return_period[:2])
+                y = int(return_period[2:])
+                vouchers = vouchers.filter(voucher_date__year=y, voucher_date__month=m)
+            elif '-' in return_period:
+                parts = return_period.split('-')
+                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                    vouchers = vouchers.filter(voucher_date__year=int(parts[0]), voucher_date__month=int(parts[1]))
 
         matched_vouchers_count = 0
         mismatched_vouchers_count = 0
@@ -619,15 +629,20 @@ class ITCReconciliationService:
 
         for v in vouchers:
             v_tax = sum((i.cgst_amount + i.sgst_amount + i.igst_amount) for i in v.items.all())
-            itc_held_total += v.itc_held_amount
+            itc_held_total += (v.itc_held_amount or Decimal('0.00'))
 
-            if v.itc_match_status == 'MATCHED':
+            matched_rec = v.gstr2b_matches.first()
+            eff_status = v.itc_match_status or 'UNCHECKED'
+            if eff_status == 'UNCHECKED':
+                eff_status = 'MATCHED' if matched_rec else 'MISSING_IN_2B'
+
+            if eff_status == 'MATCHED':
                 matched_vouchers_count += 1
                 itc_safe += v_tax
-            elif v.itc_match_status == 'MISMATCHED':
+            elif eff_status == 'MISMATCHED':
                 mismatched_vouchers_count += 1
                 itc_at_risk += v_tax
-            elif v.itc_match_status == 'MISSING_IN_2B':
+            elif eff_status == 'MISSING_IN_2B':
                 missing_in_2b_count += 1
                 itc_at_risk += v_tax
 

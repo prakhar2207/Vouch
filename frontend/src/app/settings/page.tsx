@@ -1,10 +1,9 @@
 "use client";
-import { API_BASE_URL } from '@/utils/api';
 import React, { useEffect, useState, useMemo } from 'react';
-import axios from 'axios';
+import api, { API_BASE_URL } from '@/utils/api';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { getAccessToken, isAuthenticated, removeTokens } from '@/utils/auth';
+import { isAuthenticated, removeTokens } from '@/utils/auth';
 import { useRole } from '@/hooks/useRole';
 import { useCompany, Company } from '@/context/CompanyContext';
 import DashboardLayout from '@/components/DashboardLayout';
@@ -76,6 +75,20 @@ export default function SettingsPage() {
   // Currently Selected Company for Company Settings
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>('');
   const [company, setCompany] = useState<any>(null);
+  const [loadingCompany, setLoadingCompany] = useState<boolean>(false);
+
+  // Active / selected company fallback resolution ensuring settings pane is never blank
+  const currentCompany = useMemo(() => {
+    if (company && (!selectedCompanyId || company.id === selectedCompanyId)) {
+      return company;
+    }
+    if (selectedCompanyId) {
+      const found = availableCompanies?.find(c => c.id === selectedCompanyId);
+      if (found) return found;
+      if (activeCompany?.id === selectedCompanyId) return activeCompany;
+    }
+    return activeCompany || availableCompanies?.[0] || company || null;
+  }, [company, selectedCompanyId, availableCompanies, activeCompany]);
 
   // User Profile State (Account Settings)
   const [userFirstName, setUserFirstName] = useState('');
@@ -219,21 +232,31 @@ export default function SettingsPage() {
 
   // Synchronize company list and active selection
   useEffect(() => {
-    if (availableCompanies && availableCompanies.length > 0) {
-      const currentCid = selectedCompanyId || activeCompany?.id || availableCompanies[0].id;
-      if (!selectedCompanyId || selectedCompanyId !== currentCid) {
-        setSelectedCompanyId(currentCid);
-        loadCompanyData(currentCid);
-      }
+    const targetCid = selectedCompanyId || activeCompany?.id || (availableCompanies && availableCompanies.length > 0 ? availableCompanies[0].id : '');
+    if (!targetCid) return;
+
+    if (selectedCompanyId !== targetCid) {
+      setSelectedCompanyId(targetCid);
     }
-  }, [availableCompanies, activeCompany]);
+
+    // Immediately seed company state from activeCompany or availableCompanies cache
+    if (!company || company.id !== targetCid) {
+      const cached = (activeCompany?.id === targetCid ? activeCompany : null) ||
+                     availableCompanies?.find(c => c.id === targetCid) ||
+                     availableCompanies?.[0];
+      if (cached) {
+        setCompany(cached);
+        populateCompanyFields(cached);
+      }
+      loadCompanyData(targetCid);
+    }
+  }, [availableCompanies, activeCompany, selectedCompanyId]);
 
   const loadCompanyData = async (compId: string) => {
     if (!compId) return;
+    setLoadingCompany(true);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const compRes = await axios.get(`${API_BASE_URL}/api/v1/companies/${compId}/`, { headers });
+      const compRes = await api.get(`/api/v1/companies/${compId}/`);
       const comp = compRes.data?.data || compRes.data;
       if (comp) {
         setCompany(comp);
@@ -242,7 +265,16 @@ export default function SettingsPage() {
         fetchMembers(comp.id);
       }
     } catch (err) {
-      console.error('Failed to load company details:', err);
+      console.error('Failed to load company details from API:', err);
+      // Fallback to in-memory activeCompany or availableCompanies cache if not yet set
+      const fallback = (activeCompany?.id === compId ? activeCompany : null) ||
+                       availableCompanies?.find(c => c.id === compId);
+      if (fallback) {
+        setCompany((prev: any) => prev || fallback);
+        populateCompanyFields(fallback);
+      }
+    } finally {
+      setLoadingCompany(false);
     }
   };
 
@@ -343,13 +375,11 @@ export default function SettingsPage() {
   };
 
   const fetchMembers = async (compId?: string) => {
-    const cid = compId || company?.id || selectedCompanyId;
+    const cid = compId || currentCompany?.id || selectedCompanyId;
     if (!cid) return;
     setLoadingMembers(true);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.get(`${API_BASE_URL}/api/v1/companies/${cid}/members/`, { headers });
+      const res = await api.get(`/api/v1/companies/${cid}/members/`);
       if (res.data?.success) {
         setMembers(res.data.data || []);
       }
@@ -362,10 +392,7 @@ export default function SettingsPage() {
 
   const fetchGSTConfig = async (companyId: string) => {
     try {
-      const token = getAccessToken();
-      const res = await axios.get(`${API_BASE_URL}/api/v1/gst/config/${companyId}/`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await api.get(`/api/v1/gst/config/${companyId}/`);
       if (res.data?.success && res.data.config) {
         setPortalConnected(Boolean(res.data.config.is_portal_connected));
         setPortalUsername(res.data.config.portal_username || res.data.config.eway_username || '');
@@ -386,8 +413,6 @@ export default function SettingsPage() {
     e.preventDefault();
     setSavingUser(true);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
       const payload: any = {
         first_name: userFirstName.trim(),
         last_name: userLastName.trim()
@@ -400,7 +425,7 @@ export default function SettingsPage() {
         }
         payload.password = userPassword;
       }
-      const res = await axios.patch(`${API_BASE_URL}/api/v1/auth/me/`, payload, { headers });
+      const res = await api.patch(`/api/v1/auth/me/`, payload);
       if (res.data?.success) {
         toast.success("Profile Updated", "Your personal details have been saved.");
         setUserPassword('');
@@ -423,8 +448,6 @@ export default function SettingsPage() {
     }
     setCreatingCompany(true);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
       const payload = {
         name: newCompName.trim(),
         legal_name: newCompName.trim(),
@@ -435,7 +458,7 @@ export default function SettingsPage() {
         address: newCompAddress.trim(),
         proprietor_name: newCompProprietor.trim()
       };
-      const res = await axios.post(`${API_BASE_URL}/api/v1/companies/`, payload, { headers });
+      const res = await api.post(`/api/v1/companies/`, payload);
       const created = res.data?.data || res.data;
       if (created && created.id) {
         toast.success("Company Created Successfully!", `${created.name} is now ready with pre-configured accounts.`);
@@ -462,14 +485,12 @@ export default function SettingsPage() {
 
   // Save Company Settings & Branding
   const saveCompanySettings = async () => {
-    if (!company) return;
+    const comp = currentCompany;
+    if (!comp?.id) return;
     setSaving(true);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      
       // 1. Update Settings & Document Branding
-      await axios.patch(`${API_BASE_URL}/api/v1/companies/${company.id}/update_settings/`, {
+      await api.patch(`/api/v1/companies/${comp.id}/update_settings/`, {
         enable_ledger_mapping: enableLedgerMapping,
         enable_manual_invoice_number: enableManualInvoice,
         enable_advanced_item_creation: enableAdvancedItemCreation,
@@ -505,7 +526,7 @@ export default function SettingsPage() {
           promo_message: promoMessage,
           promo_qr_url: promoQrUrl,
         }
-      }, { headers });
+      });
 
       // 2. Update Profile & Legal Info
       const formData = new FormData();
@@ -558,17 +579,16 @@ export default function SettingsPage() {
       formData.append('bank_branch', bankBranch);
       formData.append('upi_id', upiId);
       
-      await axios.patch(`${API_BASE_URL}/api/v1/companies/${company.id}/`, formData, { 
+      await api.patch(`/api/v1/companies/${comp.id}/`, formData, { 
         headers: {
-          ...headers,
           'Content-Type': 'multipart/form-data'
         }
       });
       
-      if (company?.id) {
-        setDeviceCounterCode(deviceCounterCode, company.id);
+      if (comp?.id) {
+        setDeviceCounterCode(deviceCounterCode, comp.id);
         if (salesInvoicePrefix) {
-          localStorage.setItem(`vouch_company_prefix_${company.id}`, salesInvoicePrefix.trim());
+          localStorage.setItem(`vouch_company_prefix_${comp.id}`, salesInvoicePrefix.trim());
         }
         localStorage.setItem('vouch_show_brand_in_sales_invoice', String(showBrand));
         localStorage.setItem('vouch_show_item_desc_in_sales_invoice', String(showItemDescription));
@@ -577,9 +597,9 @@ export default function SettingsPage() {
         localStorage.setItem('vouch_print_qr_mode', defaultQrMode);
       }
 
-      toast.success('Settings Saved Successfully', `Changes saved for ${name || company.name}.`);
+      toast.success('Settings Saved Successfully', `Changes saved for ${name || comp.name}.`);
       await refreshCompanies();
-      loadCompanyData(company.id);
+      loadCompanyData(comp.id);
     } catch (err: any) {
       console.error(err);
       toast.error('Failed to update settings', err.response?.data?.error || err.message);
@@ -633,21 +653,19 @@ export default function SettingsPage() {
   // Team RBAC Handlers
   const handleInviteMember = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inviteEmail.trim() || !company?.id) return;
+    const compId = currentCompany?.id;
+    if (!inviteEmail.trim() || !compId) return;
     setInviting(true);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.post(
-        `${API_BASE_URL}/api/v1/companies/${company.id}/members/`,
-        { email: inviteEmail.trim(), role: inviteRole },
-        { headers }
+      const res = await api.post(
+        `/api/v1/companies/${compId}/members/`,
+        { email: inviteEmail.trim(), role: inviteRole }
       );
       if (res.data?.success) {
         toast.success('Team member invited', res.data.message);
         setIsInviteModalOpen(false);
         setInviteEmail('');
-        fetchMembers(company.id);
+        fetchMembers(compId);
       }
     } catch (err: any) {
       toast.error('Failed to invite member', err.response?.data?.error || err.message);
@@ -657,18 +675,16 @@ export default function SettingsPage() {
   };
 
   const handleUpdateRole = async (memberId: string, newRole: string) => {
-    if (!company?.id) return;
+    const compId = currentCompany?.id;
+    if (!compId) return;
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.patch(
-        `${API_BASE_URL}/api/v1/companies/${company.id}/members/${memberId}/`,
-        { role: newRole },
-        { headers }
+      const res = await api.patch(
+        `/api/v1/companies/${compId}/members/${memberId}/`,
+        { role: newRole }
       );
       if (res.data?.success) {
         toast.success('Role updated', `Member role changed to ${newRole}`);
-        fetchMembers(company.id);
+        fetchMembers(compId);
       }
     } catch (err: any) {
       toast.error('Failed to update role', err.response?.data?.error || err.message);
@@ -676,18 +692,16 @@ export default function SettingsPage() {
   };
 
   const handleRemoveMember = async (memberId: string, memberEmail: string) => {
-    if (!company?.id) return;
+    const compId = currentCompany?.id;
+    if (!compId) return;
     if (!confirm(`Are you sure you want to remove ${memberEmail} from this company?`)) return;
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.delete(
-        `${API_BASE_URL}/api/v1/companies/${company.id}/members/${memberId}/`,
-        { headers }
+      const res = await api.delete(
+        `/api/v1/companies/${compId}/members/${memberId}/`
       );
       if (res.data?.success) {
         toast.success('Member removed', `${memberEmail} has been removed.`);
-        fetchMembers(company.id);
+        fetchMembers(compId);
       }
     } catch (err: any) {
       toast.error('Failed to remove member', err.response?.data?.error || err.message);
@@ -696,16 +710,11 @@ export default function SettingsPage() {
 
   // Diagnostics Handlers
   const handleSyncTaxLedgers = async () => {
-    if (!company?.id) return;
+    const compId = currentCompany?.id;
+    if (!compId) return;
     setSyncingTax(true);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.post(
-        `${API_BASE_URL}/api/v1/accounting/sync-tax-ledgers/${company.id}/`,
-        {},
-        { headers }
-      );
+      const res = await api.post(`/api/v1/accounting/sync-tax-ledgers/${compId}/`, {});
       if (res.data?.success) {
         toast.success('Tax ledgers aligned', res.data.message || 'CGST, SGST, IGST ledgers verified.');
       } else {
@@ -719,16 +728,11 @@ export default function SettingsPage() {
   };
 
   const handleRebuildBalances = async () => {
-    if (!company?.id) return;
+    const compId = currentCompany?.id;
+    if (!compId) return;
     setRebuildingBalances(true);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.post(
-        `${API_BASE_URL}/api/v1/accounting/rebuild-balances/${company.id}/`,
-        {},
-        { headers }
-      );
+      const res = await api.post(`/api/v1/accounting/rebuild-balances/${compId}/`, {});
       if (res.data?.success) {
         toast.success('Ledger balances rebuilt', res.data.message || 'All balances recomputed from entries.');
       } else {
@@ -743,18 +747,16 @@ export default function SettingsPage() {
 
   // GST Portal OTP Handlers
   const handleRequestPortalOTP = async () => {
-    if (!company?.id) return;
+    const comp = currentCompany;
+    if (!comp?.id) return;
     setPortalLoading(true);
     setPortalError(null);
     setPortalSuccess(null);
     try {
-      const token = getAccessToken();
-      const res = await axios.post(`${API_BASE_URL}/api/v1/gst/portal/request-otp/`, {
-        company_id: company.id,
-        gstin: gstin,
-        username: portalUsername || gstin,
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
+      const res = await api.post(`/api/v1/gst/portal/request-otp/`, {
+        company_id: comp.id,
+        gstin: gstin || comp.gstin,
+        username: portalUsername || gstin || comp.gstin,
       });
       if (res.data?.success) {
         setPortalTxnId(res.data.txn_id || '');
@@ -772,26 +774,24 @@ export default function SettingsPage() {
   };
 
   const handleVerifyPortalOTP = async () => {
-    if (!company?.id) return;
+    const comp = currentCompany;
+    if (!comp?.id) return;
     setPortalLoading(true);
     setPortalError(null);
     try {
-      const token = getAccessToken();
-      const res = await axios.post(`${API_BASE_URL}/api/v1/gst/portal/verify-otp/`, {
-        company_id: company.id,
+      const res = await api.post(`/api/v1/gst/portal/verify-otp/`, {
+        company_id: comp.id,
         otp: portalOtp,
         txn_id: portalTxnId,
-        gstin: gstin,
-        username: portalUsername || gstin,
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
+        gstin: gstin || comp.gstin,
+        username: portalUsername || gstin || comp.gstin,
       });
       if (res.data?.success) {
         setPortalConnected(true);
         setPortalStep('connected');
         setPortalSuccess("GST Portal connected successfully! 30-day session active.");
         toast.success("GST Connected", "Your business is now directly connected to the GST Portal.");
-        fetchGSTConfig(company.id);
+        fetchGSTConfig(comp.id);
       } else {
         setPortalError(res.data?.error || "Invalid OTP entered.");
       }
@@ -804,16 +804,15 @@ export default function SettingsPage() {
 
   // Delete Company Handler
   const handleDeleteCompany = async () => {
-    if (!company?.id) return;
-    if (deleteConfirmName.trim() !== company.name.trim()) {
+    const comp = currentCompany;
+    if (!comp?.id) return;
+    if (deleteConfirmName.trim() !== comp.name.trim()) {
       toast.error('Company name does not match', 'Please type the exact company name to confirm deletion.');
       return;
     }
     setDeletingCompany(true);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.delete(`${API_BASE_URL}/api/v1/companies/${company.id}/`, { headers });
+      const res = await api.delete(`/api/v1/companies/${comp.id}/`);
       if (res.data?.success || res.status === 200 || res.status === 204) {
         toast.success('Company deleted', 'Company data has been archived/deleted.');
         await refreshCompanies();
@@ -1000,17 +999,19 @@ export default function SettingsPage() {
                 <div className="text-[10px] text-muted-foreground font-semibold flex items-center justify-between">
                   <span>Selected Firm:</span>
                   <span className="font-mono text-[9px] uppercase px-1.5 py-0.2 rounded bg-primary/10 text-primary">
-                    {company?.gstin ? 'GST Registered' : 'Active'}
+                    {currentCompany?.gstin ? 'GST Registered' : 'Active'}
                   </span>
                 </div>
                 <select
-                  value={selectedCompanyId}
+                  value={selectedCompanyId || currentCompany?.id || ''}
                   onChange={(e) => {
                     const cid = e.target.value;
                     setSelectedCompanyId(cid);
                     const found = availableCompanies.find(c => c.id === cid);
                     if (found) {
                       setActiveCompany(found);
+                      setCompany(found);
+                      populateCompanyFields(found);
                     }
                     loadCompanyData(cid);
                   }}
@@ -1069,6 +1070,21 @@ export default function SettingsPage() {
 
           {/* ================= RIGHT COLUMN: SETTINGS CONTENT PANE ================= */}
           <div className="lg:col-span-8 xl:col-span-9 space-y-6">
+
+            {/* FALLBACK WHEN NO COMPANY IS LOADED YET FOR COMPANY SETTINGS */}
+            {!currentCompany && activeTab !== 'account-profile' && activeTab !== 'account-companies' && (
+              <div className="bg-card border border-border/50 rounded-2xl p-12 text-center space-y-4 shadow-2xs animate-in fade-in duration-200">
+                <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mx-auto">
+                  <Building className="w-6 h-6 animate-pulse" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-foreground">Loading Company Profile...</h3>
+                  <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
+                    Retrieving statutory settings, multi-GSTIN registrations, and company preferences.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* TAB 1: MY PROFILE & SECURITY (ACCOUNT SETTINGS) */}
             {activeTab === 'account-profile' && (
@@ -1297,7 +1313,7 @@ export default function SettingsPage() {
             )}
 
             {/* TAB 3: FIRM PROFILE & DETAILS (COMPANY SETTINGS) */}
-            {activeTab === 'firm-profile' && company && (
+            {activeTab === 'firm-profile' && currentCompany && (
               <div className="space-y-6 animate-in fade-in duration-200">
                 <div className="bg-card border border-border/50 rounded-2xl p-6 shadow-2xs space-y-6">
                   <div className="flex items-center gap-3 border-b border-border/40 pb-4">
@@ -1521,7 +1537,7 @@ export default function SettingsPage() {
             )}
 
             {/* TAB 4: BRANDING & DOCUMENT DESIGN (COMPANY SETTINGS) */}
-            {activeTab === 'branding' && company && (
+            {activeTab === 'branding' && currentCompany && (
               <div className="space-y-6 animate-in fade-in duration-200">
                 <div className="bg-card border border-border/50 rounded-2xl p-6 shadow-2xs space-y-6">
                   <div className="flex items-center gap-3 border-b border-border/40 pb-4">
@@ -1919,7 +1935,7 @@ export default function SettingsPage() {
             )}
 
             {/* TAB 5: INVOICING & INVENTORY CONTROLS (COMPANY SETTINGS) */}
-            {activeTab === 'invoicing-inventory' && company && (
+            {activeTab === 'invoicing-inventory' && currentCompany && (
               <div className="space-y-6 animate-in fade-in duration-200">
                 <div className="bg-card border border-border/50 rounded-2xl p-6 shadow-2xs space-y-6">
                   <div className="flex items-center gap-3 border-b border-border/40 pb-4">
@@ -2169,12 +2185,12 @@ export default function SettingsPage() {
             )}
 
             {/* TAB: GST REGISTRATIONS (MULTI-GSTIN) */}
-            {activeTab === 'gst-registrations' && company && (
-              <GSTRegistrationsView companyId={company.id} companyName={company.name} />
+            {activeTab === 'gst-registrations' && currentCompany && (
+              <GSTRegistrationsView companyId={currentCompany.id} companyName={currentCompany.name} />
             )}
 
             {/* TAB 6: GOVERNMENT GST PORTAL INTEGRATION (COMPANY SETTINGS) */}
-            {activeTab === 'gst-portal' && company && (
+            {activeTab === 'gst-portal' && currentCompany && (
               <div className="space-y-6 animate-in fade-in duration-200">
                 <div className="bg-card border border-border/50 rounded-2xl p-6 shadow-2xs space-y-5">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-border/40 gap-3">
@@ -2207,7 +2223,7 @@ export default function SettingsPage() {
                     <div className="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/20 space-y-3">
                       <div className="flex items-center justify-between">
                         <div className="text-xs text-foreground font-semibold">
-                          Active API Gateway Session Connected for GSTIN: <strong className="font-mono">{gstin || company.gstin}</strong>
+                          Active API Gateway Session Connected for GSTIN: <strong className="font-mono">{gstin || currentCompany.gstin}</strong>
                         </div>
                         <button
                           onClick={() => setPortalStep('idle')}
@@ -2292,7 +2308,7 @@ export default function SettingsPage() {
             )}
 
             {/* TAB 7: TEAM & ROLES (RBAC) (COMPANY SETTINGS) */}
-            {activeTab === 'team' && company && (
+            {activeTab === 'team' && currentCompany && (
               <div className="space-y-6 animate-in fade-in duration-200">
                 <div className="bg-card border border-border/50 rounded-2xl p-6 shadow-2xs space-y-5">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-border/40 gap-3">
@@ -2387,7 +2403,7 @@ export default function SettingsPage() {
             )}
 
             {/* TAB 8: FINANCIAL YEARS & PERIOD LOCKS (COMPANY SETTINGS) */}
-            {activeTab === 'financial-years' && company && (
+            {activeTab === 'financial-years' && currentCompany && (
               <div className="space-y-6 animate-in fade-in duration-200">
                 <div className="bg-card border border-border/50 rounded-2xl p-6 shadow-2xs space-y-5">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-border/40 gap-3">
@@ -2468,7 +2484,7 @@ export default function SettingsPage() {
             )}
 
             {/* TAB 9: SYSTEM MAINTENANCE & BALANCING (COMPANY SETTINGS) */}
-            {activeTab === 'maintenance' && company && (
+            {activeTab === 'maintenance' && currentCompany && (
               <div className="space-y-6 animate-in fade-in duration-200">
                 <div className="bg-card border border-border/50 rounded-2xl p-6 shadow-2xs space-y-5">
                   <div className="flex items-center gap-3 border-b border-border/40 pb-4">
@@ -2523,14 +2539,14 @@ export default function SettingsPage() {
             )}
 
             {/* TAB: BILLING & SUBSCRIPTIONS */}
-            {activeTab === 'billing' && company && (
+            {activeTab === 'billing' && currentCompany && (
               <div className="space-y-6 animate-in fade-in duration-200">
                 <BillingSettingsView />
               </div>
             )}
 
             {/* TAB 10: DANGER ZONE (COMPANY SETTINGS) */}
-            {activeTab === 'danger-zone' && company && (
+            {activeTab === 'danger-zone' && currentCompany && (
               <div className="space-y-6 animate-in fade-in duration-200">
                 <div className="bg-rose-500/5 border border-rose-500/20 rounded-2xl p-6 shadow-2xs space-y-5">
                   <div className="flex items-center gap-3 border-b border-rose-500/20 pb-4">
@@ -2538,7 +2554,7 @@ export default function SettingsPage() {
                       <AlertTriangle className="w-5 h-5" />
                     </div>
                     <div>
-                      <h2 className="text-base font-bold text-rose-500">Danger Zone: {company.name}</h2>
+                      <h2 className="text-base font-bold text-rose-500">Danger Zone: {currentCompany.name}</h2>
                       <p className="text-xs text-muted-foreground">Irreversible actions that affect company data and accounting books</p>
                     </div>
                   </div>
@@ -2748,13 +2764,13 @@ export default function SettingsPage() {
       )}
 
       {/* MODAL: DELETE COMPANY CONFIRMATION */}
-      {isDeleteModalOpen && company && (
+      {isDeleteModalOpen && currentCompany && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
           <div className="bg-card border border-rose-500/40 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between p-5 border-b border-border bg-rose-500/10">
               <div className="flex items-center gap-2 text-rose-500">
                 <AlertTriangle className="w-5 h-5" />
-                <h3 className="text-base font-bold">Delete {company.name}?</h3>
+                <h3 className="text-base font-bold">Delete {currentCompany.name}?</h3>
               </div>
               <button onClick={() => setIsDeleteModalOpen(false)} className="text-muted-foreground hover:text-foreground p-1 rounded-lg cursor-pointer">
                 <X className="w-4 h-4" />
@@ -2762,17 +2778,17 @@ export default function SettingsPage() {
             </div>
             <div className="p-5 space-y-4">
               <p className="text-xs text-foreground leading-relaxed">
-                This will permanently delete <strong>{company.name}</strong>, all transactions, invoices, customer balances, and vouchers.
+                This will permanently delete <strong>{currentCompany.name}</strong>, all transactions, invoices, customer balances, and vouchers.
               </p>
               <div>
                 <label className="block text-xs font-semibold text-muted-foreground mb-1">
-                  Type <strong>{company.name}</strong> to confirm:
+                  Type <strong>{currentCompany.name}</strong> to confirm:
                 </label>
                 <input
                   type="text"
                   value={deleteConfirmName}
                   onChange={(e) => setDeleteConfirmName(e.target.value)}
-                  placeholder={company.name}
+                  placeholder={currentCompany.name}
                   className="w-full bg-muted/30 border border-input text-foreground text-sm p-2.5 rounded-xl outline-none"
                 />
               </div>
@@ -2787,7 +2803,7 @@ export default function SettingsPage() {
                 <button
                   type="button"
                   onClick={handleDeleteCompany}
-                  disabled={deletingCompany || deleteConfirmName.trim() !== company.name.trim()}
+                  disabled={deletingCompany || deleteConfirmName.trim() !== currentCompany.name.trim()}
                   className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
                 >
                   {deletingCompany ? 'Deleting Company...' : 'Permanently Delete'}

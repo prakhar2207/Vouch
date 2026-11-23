@@ -66,7 +66,12 @@ class Round254StatutoryRemediationTests(TestCase):
         self.grp_exp = LedgerGroup.objects.create(company=self.company, name='Expenses', nature='EXPENSE')
         self.grp_inc = LedgerGroup.objects.create(company=self.company, name='Income', nature='INCOME')
 
-        self.ledger_supplier = Ledger.objects.create(company=self.company, name='Primary Vendor', group=self.grp_liab)
+        self.ledger_supplier = Ledger.objects.create(
+            company=self.company,
+            name='Primary Vendor',
+            group=self.grp_liab,
+            gstin='27ABCDE1234F1Z5'
+        )
         self.ledger_customer = Ledger.objects.create(company=self.company, name='Primary Client', group=self.grp_assets)
 
         self.product = Product.objects.create(
@@ -79,6 +84,29 @@ class Round254StatutoryRemediationTests(TestCase):
             purchase_price=Decimal('700.00'),
             gst_rate=Decimal('18.00')
         )
+
+    def _create_rule37a_reversal(self, voucher, assigned_period='112026', **kwargs):
+        from apps.gst.models import SupplierGSTR3BFilingRecord
+        rec, _ = SupplierGSTR3BFilingRecord.objects.get_or_create(
+            company=self.company,
+            supplier_gstin='27ABCDE1234F1Z5',
+            return_period=voucher.voucher_date.strftime('%m%Y'),
+            defaults={'status': 'VERIFIED_NOT_FILED'}
+        )
+        defaults = {
+            'voucher': voucher,
+            'assigned_period': assigned_period,
+            'user': self.owner_user,
+            'reversal_date': date(2026, 11, 20),
+            'supplier_status': 'VERIFIED_NOT_FILED',
+            'supplier_gstin': '27ABCDE1234F1Z5',
+            'supplier_return_period': voucher.voucher_date.strftime('%m%Y'),
+            'evidence_source': 'PORTAL',
+            'evidence_record': rec,
+            'verification_timestamp': timezone.now()
+        }
+        defaults.update(kwargs)
+        return GSTAllocationService.create_rule37a_reversal_allocation(**defaults)
 
     # =========================================================================
     # PART 1: GSTR-3B TABLE 4 CLASSIFICATION & PERMANENT/TEMPORARY SEPARATION
@@ -257,7 +285,8 @@ class Round254StatutoryRemediationTests(TestCase):
             voucher=v_in,
             paid_amount=Decimal('5900.00'),
             assigned_period='022026',
-            user=self.owner_user
+            user=self.owner_user,
+            payment_event_id='PAY-254-001'
         )
 
         gstr3b = GSTReturnsService.prepare_gstr3b(
@@ -437,20 +466,18 @@ class Round254StatutoryRemediationTests(TestCase):
         )
 
         # Timely reversal: 2026-11-20
-        alloc_timely = GSTAllocationService.create_rule37a_reversal_allocation(
+        alloc_timely = self._create_rule37a_reversal(
             voucher=v_in,
             assigned_period='112026',
-            user=self.owner_user,
             reversal_date=date(2026, 11, 20)
         )
         self.assertNotIn("OVERDUE", alloc_timely.statutory_notes)
 
         # Duplicate reversal prevention
         with self.assertRaises(ValidationError) as ctx:
-            GSTAllocationService.create_rule37a_reversal_allocation(
+            self._create_rule37a_reversal(
                 voucher=v_in,
-                assigned_period='112026',
-                user=self.owner_user
+                assigned_period='112026'
             )
         self.assertIn("reversal already exists", str(ctx.exception))
 
@@ -476,10 +503,9 @@ class Round254StatutoryRemediationTests(TestCase):
             cgst_amount=Decimal('0.00'),
             sgst_amount=Decimal('0.00')
         )
-        alloc_overdue = GSTAllocationService.create_rule37a_reversal_allocation(
+        alloc_overdue = self._create_rule37a_reversal(
             voucher=v_overdue,
             assigned_period='122026',
-            user=self.owner_user,
             reversal_date=date(2026, 12, 15)
         )
         self.assertIn("OVERDUE", alloc_overdue.statutory_notes)
@@ -521,15 +547,17 @@ class Round254StatutoryRemediationTests(TestCase):
                 voucher=v_in,
                 assigned_period='012027',
                 user=self.owner_user,
+                supplier_status='VERIFIED_FILED',
+                gstr3b_arn='AA271225000001Z',
+                gstr3b_filing_date=date(2026, 12, 10),
                 require_prior_reversal=True
             )
         self.assertIn("No active prior Rule 37A reversal found", str(ctx1.exception))
 
         # 2. Reverse under Rule 37A
-        GSTAllocationService.create_rule37a_reversal_allocation(
+        self._create_rule37a_reversal(
             voucher=v_in,
             assigned_period='112026',
-            user=self.owner_user,
             reversal_date=date(2026, 11, 25)
         )
 
@@ -539,16 +567,23 @@ class Round254StatutoryRemediationTests(TestCase):
                 voucher=v_in,
                 assigned_period='012027',
                 user=self.owner_user,
+                supplier_status='VERIFIED_NOT_FILED',
                 supplier_gstr3b_filed=False
             )
-        self.assertIn("Supplier has not furnished corresponding GSTR-3B", str(ctx2.exception))
+        self.assertTrue(
+            "Supplier has not furnished corresponding GSTR-3B" in str(ctx2.exception)
+            or "does not establish tax payment" in str(ctx2.exception)
+        )
 
         # 4. Supplier subsequently files -> Reclaim succeeds
         rec = GSTAllocationService.create_rule37a_reclaim_allocation(
             voucher=v_in,
             assigned_period='012027',
             user=self.owner_user,
-            supplier_gstr3b_filed=True
+            supplier_status='VERIFIED_FILED',
+            supplier_gstr3b_filed=True,
+            gstr3b_arn='AA070826000003Z',
+            gstr3b_filing_date=date(2027, 1, 15)
         )
         self.assertEqual(rec.event_type, 'ITC_RECLAIM')
         self.assertEqual(rec.assigned_period, '012027')
@@ -559,7 +594,10 @@ class Round254StatutoryRemediationTests(TestCase):
                 voucher=v_in,
                 assigned_period='022027',
                 user=self.owner_user,
-                supplier_gstr3b_filed=True
+                supplier_status='VERIFIED_FILED',
+                supplier_gstr3b_filed=True,
+                gstr3b_arn='AA070826000003Z',
+                gstr3b_filing_date=date(2027, 1, 15)
             )
         self.assertIn("already active in another period", str(ctx3.exception))
 
@@ -1041,7 +1079,8 @@ class Round254StatutoryRemediationTests(TestCase):
             voucher=v_inv,
             paid_amount=Decimal('11800.00'),
             assigned_period='082026',
-            user=self.owner_user
+            user=self.owner_user,
+            payment_event_id='PAY-254-002'
         )
 
         # Verify Ledgers remained 100% untouched

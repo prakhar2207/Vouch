@@ -1,11 +1,10 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import axios from "axios";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { getAccessToken, isAuthenticated } from "@/utils/auth";
-import { API_BASE_URL } from "@/utils/api";
+import { isAuthenticated } from "@/utils/auth";
+import { api } from "@/utils/api";
 import { useCompany } from "@/context/CompanyContext";
 import DashboardLayout from "@/components/DashboardLayout";
 import {
@@ -126,10 +125,8 @@ export default function VendorITCRiskShieldPage() {
   const fetchSummaryAndRadar = useCallback(async () => {
     if (!companyId) return;
     try {
-      const token = getAccessToken();
-      const res = await axios.get(`${API_BASE_URL}/api/v1/gst/itc/summary/`, {
+      const res = await api.get('/api/v1/gst/itc/summary/', {
         headers: {
-          Authorization: `Bearer ${token}`,
           "X-Company-ID": companyId,
         },
         params: selectedPeriod ? { return_period: selectedPeriod } : {},
@@ -145,10 +142,8 @@ export default function VendorITCRiskShieldPage() {
   const fetchItems = useCallback(async () => {
     if (!companyId) return;
     try {
-      const token = getAccessToken();
-      const res = await axios.get(`${API_BASE_URL}/api/v1/gst/itc/reconciliation/`, {
+      const res = await api.get('/api/v1/gst/itc/reconciliation/', {
         headers: {
-          Authorization: `Bearer ${token}`,
           "X-Company-ID": companyId,
         },
         params: {
@@ -200,10 +195,8 @@ export default function VendorITCRiskShieldPage() {
     }
 
     try {
-      const token = getAccessToken();
-      await axios.post(`${API_BASE_URL}/api/v1/gst/itc/upload-2b/`, formData, {
+      await api.post('/api/v1/gst/itc/upload-2b/', formData, {
         headers: {
-          Authorization: `Bearer ${token}`,
           "X-Company-ID": companyId,
           "Content-Type": "multipart/form-data",
         },
@@ -233,9 +226,8 @@ export default function VendorITCRiskShieldPage() {
     if (!holdModalItem || !holdModalItem.voucher_id) return;
     setSavingHold(true);
     try {
-      const token = getAccessToken();
-      await axios.post(
-        `${API_BASE_URL}/api/v1/gst/itc/hold-gst/`,
+      await api.post(
+        '/api/v1/gst/itc/hold-gst/',
         {
           voucher_id: holdModalItem.voucher_id,
           held_amount: parseFloat(heldAmountInput) || 0,
@@ -243,7 +235,6 @@ export default function VendorITCRiskShieldPage() {
         },
         {
           headers: {
-            Authorization: `Bearer ${token}`,
             "X-Company-ID": companyId,
           },
         }
@@ -263,12 +254,10 @@ export default function VendorITCRiskShieldPage() {
     setNoticeModalItem(item);
     setLoadingNotice(true);
     try {
-      const token = getAccessToken();
-      const res = await axios.get(
-        `${API_BASE_URL}/api/v1/gst/itc/vendor-notice/${item.voucher_id}/`,
+      const res = await api.get(
+        `/api/v1/gst/itc/vendor-notice/${item.voucher_id}/`,
         {
           headers: {
-            Authorization: `Bearer ${token}`,
             "X-Company-ID": companyId,
           },
         }
@@ -439,7 +428,17 @@ export default function VendorITCRiskShieldPage() {
             {/* Status Tabs */}
             <div className="flex flex-wrap items-center gap-1.5 w-full md:w-auto">
               {[
-                { key: "ALL", label: "All Bills", count: null },
+                {
+                  key: "ALL",
+                  label: "All Bills",
+                  count: summary
+                    ? (summary.matched_count || 0) +
+                      (summary.mismatched_count || 0) +
+                      (summary.missing_in_2b_count || 0) +
+                      (summary.missing_in_books_count || 0)
+                    : null,
+                  color: "text-muted-foreground bg-muted",
+                },
                 { key: "MISSING_IN_2B", label: "Missing in 2B", count: summary?.missing_in_2b_count, color: "text-rose-500 bg-rose-500/10" },
                 { key: "MISMATCHED", label: "Mismatches", count: summary?.mismatched_count, color: "text-amber-500 bg-amber-500/10" },
                 { key: "MISSING_IN_BOOKS", label: "Missing in Books", count: summary?.missing_in_books_count, color: "text-blue-500 bg-blue-500/10" },
@@ -515,7 +514,10 @@ export default function VendorITCRiskShieldPage() {
                   items.map((item, idx) => {
                     const isMatched = item.itc_match_status === "MATCHED";
                     const isMismatched = item.itc_match_status === "MISMATCHED";
-                    const isMissing2B = item.itc_match_status === "MISSING_IN_2B";
+                    const isMissing2B =
+                      item.itc_match_status === "MISSING_IN_2B" ||
+                      item.itc_match_status === "UNCHECKED" ||
+                      !item.itc_match_status;
                     const isMissingBooks = item.itc_match_status === "MISSING_IN_BOOKS";
 
                     return (

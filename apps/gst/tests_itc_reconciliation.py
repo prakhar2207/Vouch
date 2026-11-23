@@ -288,3 +288,43 @@ class ITCReconciliationTests(TestCase):
         self.assertIn('900.00', notice['message_text'])
         self.assertIn('https://wa.me/919811122233', notice['whatsapp_url'])
         self.assertIn('Section 16(2)(aa)', notice['message_text'])
+
+    def test_unchecked_vouchers_counted_in_missing_in_2b_and_at_risk(self):
+        # Create an un-reconciled voucher with UNCHECKED status
+        new_voucher = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/26-27/099',
+            external_invoice_number='INV/2026/UNCHECKED',
+            voucher_date=date(2026, 8, 20),
+            party_ledger=self.vendor_ledger,
+            total_amount=Decimal('1180.00'),
+            created_by=self.user,
+            status='POSTED',
+            itc_match_status='UNCHECKED'
+        )
+        VoucherItem.objects.create(
+            voucher=new_voucher,
+            product=self.product,
+            quantity=Decimal('10.00'),
+            rate=Decimal('100.00'),
+            taxable_amount=Decimal('1000.00'),
+            cgst_rate=Decimal('9.00'),
+            cgst_amount=Decimal('90.00'),
+            sgst_rate=Decimal('9.00'),
+            sgst_amount=Decimal('90.00'),
+            total_amount=Decimal('1180.00')
+        )
+
+        stats = ITCReconciliationService.get_summary_stats(self.company, return_period='082026')
+        # All 3 existing vouchers + new_voucher are UNCHECKED initially
+        self.assertGreaterEqual(stats['missing_in_2b_count'], 1)
+        self.assertGreaterEqual(stats['itc_at_risk'], 180.0)
+
+        # Query reconciliation list with status=MISSING_IN_2B
+        url = reverse('itc_reconciliation_list') + '?status=MISSING_IN_2B'
+        res = self.client.get(url, HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        results = res.data.get('results', [])
+        invoice_numbers = [r['invoice_number'] for r in results]
+        self.assertIn('INV/2026/UNCHECKED', invoice_numbers)

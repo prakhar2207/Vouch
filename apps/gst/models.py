@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 from decimal import Decimal
 from django.db import models
@@ -416,6 +417,11 @@ class GSTR2BRecord(models.Model):
     
     gstr1_filing_date = models.DateField(null=True, blank=True)
     gstr3b_status = models.CharField(max_length=20, default='UNKNOWN')
+    gstr3b_filing_date = models.DateField(null=True, blank=True, help_text="Date supplier filed GSTR-3B")
+    gstr3b_filing_arn = models.CharField(max_length=50, blank=True, default="", help_text="Filing ARN for GSTR-3B")
+    gstr3b_return_period = models.CharField(max_length=7, blank=True, default="", help_text="Return period of GSTR-3B (MMYYYY)")
+    gstr3b_verification_source = models.CharField(max_length=50, blank=True, default="", help_text="Source of GSTR-3B status (API, PORTAL, MANUAL_EVIDENCE, etc.)")
+    gstr3b_verified_at = models.DateTimeField(null=True, blank=True)
     
     matched_voucher = models.ForeignKey(Voucher, on_delete=models.SET_NULL, null=True, blank=True, related_name='gstr2b_matches')
     match_status = models.CharField(max_length=30, choices=MATCH_STATUS_CHOICES, default='MISSING_IN_BOOKS')
@@ -430,6 +436,19 @@ class GSTR2BRecord(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    def is_gstr3b_stale(self, threshold_days: int = 30) -> bool:
+        """
+        Evidence Freshness Rule for GSTR-2B GSTR-3B status:
+        Returns True if GSTR-3B verification is older than threshold_days and not conclusively verified filed with ARN.
+        Stale evidence must be treated as DATA_UNAVAILABLE until re-verified.
+        """
+        if self.gstr3b_status == 'FILED' and self.gstr3b_filing_arn and self.gstr3b_filing_date:
+            return False
+        if not self.gstr3b_verified_at:
+            return True
+        age = (timezone.now() - self.gstr3b_verified_at).days
+        return age > threshold_days
+
     class Meta:
         indexes = [
             models.Index(fields=['company', 'supplier_gstin', 'normalized_invoice_number']),
@@ -438,6 +457,322 @@ class GSTR2BRecord(models.Model):
 
     def __str__(self):
         return f"{self.supplier_gstin} - {self.invoice_number} (₹{self.invoice_value}) - {self.match_status}"
+
+
+class SupplierGSTR3BFilingRecord(models.Model):
+    """
+    Statutory evidence record tracking supplier GSTR-3B return filings.
+    Under Section 16(2)(c) and Rule 37A, GSTR-1 outward reporting is NOT proof of tax payment.
+    Proof of GSTR-3B return discharge must be maintained with ARN, filing date, and verified source.
+    """
+    STATUS_CHOICES = (
+        ('VERIFIED_FILED', 'Verified Filed in GSTR-3B'),
+        ('VERIFIED_NOT_FILED', 'Verified Not Filed'),
+        ('DATA_UNAVAILABLE', 'Data Unavailable from GSTN / Provider'),
+        ('MANUALLY_CONFIRMED', 'Manually Confirmed by User / Tax Auditor'),
+        ('PENDING', 'Pending Verification from GST Portal'),
+        ('UNKNOWN', 'Unknown / Unchecked'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='supplier_gstr3b_records', db_index=True)
+    supplier_gstin = models.CharField(max_length=15, db_index=True)
+    supplier_name = models.CharField(max_length=255, blank=True, default='')
+    return_period = models.CharField(max_length=7, db_index=True)  # MMYYYY format
+    financial_year = models.CharField(max_length=9, blank=True, default='')  # e.g. 2024-25
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='DATA_UNAVAILABLE', db_index=True)
+    filing_date = models.DateField(null=True, blank=True)
+    arn = models.CharField(max_length=50, blank=True, default='')
+    verification_source = models.CharField(max_length=50, default='API')
+    evidence_document_ref = models.CharField(max_length=255, blank=True, default='')
+    notes = models.TextField(blank=True, default='')
+    verified_at = models.DateTimeField(null=True, blank=True, default=timezone.now)
+    verified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='verified_supplier_gstr3b_records'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['company', 'supplier_gstin', 'return_period']),
+            models.Index(fields=['company', 'status']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['company', 'supplier_gstin', 'return_period'],
+                name='unique_supplier_gstr3b_record'
+            )
+        ]
+
+    def is_stale(self, threshold_days: int = 30) -> bool:
+        """
+        Statutory Evidence Freshness Rule:
+        Returns True if verification is older than threshold_days and not conclusively verified filed.
+        Stale evidence must be treated as DATA_UNAVAILABLE until re-verified from GSTN.
+        """
+        if self.status == 'VERIFIED_FILED' and self.arn and self.filing_date:
+            return False  # Once filed with ARN, filing status is an immutable historical fact
+        if not self.verified_at:
+            return True
+        age = (timezone.now() - self.verified_at).days
+        return age > threshold_days
+
+    def __str__(self):
+        return f"{self.supplier_gstin} - {self.return_period}: {self.status} (ARN: {self.arn or 'None'})"
+
+
+class Rule37AManualFilingEvidence(models.Model):
+    """
+    Dedicated, authoritative persisted record for Rule 37A manual filing verification.
+    Required by Section 16(2)(c) and Rule 37A to prevent unauthenticated, unpersisted,
+    or arbitrary string-based manual reclaim authorizations.
+    """
+    DOCUMENT_TYPE_CHOICES = (
+        ('CA_CERTIFICATE', 'Chartered Accountant Certificate'),
+        ('TAX_CHALLAN_CIN', 'Tax Payment Challan (CIN)'),
+        ('VENDOR_AFFIDAVIT', 'Vendor Sworn Affidavit'),
+        ('PORTAL_SCREENSHOT', 'Direct Portal Filing Proof'),
+        ('OTHER', 'Other Statutory Proof'),
+    )
+
+    STATUS_CHOICES = (
+        ('DRAFT', 'Draft'),
+        ('SUBMITTED', 'Submitted for Approval'),
+        ('APPROVED', 'Approved by Authorized Verifier'),
+        ('REJECTED', 'Rejected'),
+        ('INVALIDATED', 'Invalidated / Superseded'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='rule37a_manual_evidences', db_index=True)
+    voucher = models.ForeignKey(Voucher, on_delete=models.CASCADE, related_name='rule37a_manual_evidences', db_index=True)
+    supplier_gstin = models.CharField(max_length=15, db_index=True)
+    return_period = models.CharField(max_length=7, db_index=True)  # Normalized MMYYYY
+    evidence_document_type = models.CharField(max_length=50, default='CA_CERTIFICATE', choices=DOCUMENT_TYPE_CHOICES)
+    evidence_document_ref = models.CharField(max_length=255)
+    verification_reason = models.TextField()
+    status = models.CharField(max_length=20, default='DRAFT', choices=STATUS_CHOICES, db_index=True)
+    verifier_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='rule37a_verified_evidences'
+    )
+    verifier_role = models.CharField(max_length=50, blank=True, default='')
+    verification_timestamp = models.DateTimeField(default=timezone.now)
+    evidence_hash = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    initial_fingerprint = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    is_self_approved = models.BooleanField(default=False)
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='rule37a_manual_evidences_created'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='rule37a_manual_evidences_approved'
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+
+    rejected_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='rule37a_manual_evidences_rejected'
+    )
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True, default='')
+
+    invalidated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='rule37a_manual_evidences_invalidated'
+    )
+    invalidated_at = models.DateTimeField(null=True, blank=True)
+    invalidation_reason = models.TextField(blank=True, default='')
+
+    superseded_by = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='superseded_by_records'
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['company', 'voucher', 'status']),
+            models.Index(fields=['company', 'supplier_gstin', 'return_period']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['voucher', 'return_period'],
+                condition=models.Q(status='APPROVED'),
+                name='unique_active_approved_manual_evidence_per_voucher_period'
+            )
+        ]
+
+    def compute_fingerprint(self) -> str:
+        raw_payload = (
+            f"{str(self.company_id)}|{str(self.voucher_id)}|{self.supplier_gstin.strip().upper()}|"
+            f"{self.return_period.strip()}|MANUAL|{self.status.strip().upper()}|"
+            f"{self.evidence_document_type.strip()}|"
+            f"{self.evidence_document_ref.strip()}|"
+            f"{self.verification_timestamp.isoformat() if self.verification_timestamp else ''}"
+        )
+        return hashlib.sha256(raw_payload.encode('utf-8')).hexdigest()
+
+    def save(self, *args, **kwargs):
+        # Preserve original evidence fingerprint permanently; do NOT overwrite on updates
+        if self.pk:
+            orig = Rule37AManualFilingEvidence.objects.filter(pk=self.pk).values('evidence_hash', 'initial_fingerprint').first()
+            if orig and orig['evidence_hash']:
+                self.evidence_hash = orig['evidence_hash']
+            if orig and orig['initial_fingerprint']:
+                self.initial_fingerprint = orig['initial_fingerprint']
+        if not self.initial_fingerprint:
+            self.initial_fingerprint = self.compute_fingerprint()
+        if not self.evidence_hash:
+            self.evidence_hash = self.initial_fingerprint
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"ManualEvidence #{self.id} [{self.status}] Voucher:{self.voucher_id} Period:{self.return_period}"
+
+
+class ImmutableAuditEventQuerySet(models.QuerySet):
+    """
+    Immutable queryset for Rule37AManualEvidenceAuditEvent.
+    Blocks bulk mutation and bulk deletion to preserve tamper-evident audit trails under Section 155.
+    """
+    def update(self, **kwargs):
+        raise ValidationError("Rule37AManualEvidenceAuditEvent records are strictly immutable and cannot be updated via queryset.")
+
+    def delete(self):
+        raise ValidationError("Rule37AManualEvidenceAuditEvent records are strictly immutable and cannot be deleted via queryset.")
+
+
+class ImmutableAuditEventManager(models.Manager):
+    def get_queryset(self):
+        return ImmutableAuditEventQuerySet(self.model, using=self._db)
+
+
+class Rule37AManualEvidenceAuditEvent(models.Model):
+    """
+    Cryptographically chained, immutable audit event record for Rule 37A manual evidence lifecycle.
+    Guarantees tamper-evident traceability under Section 155 of the CGST Act, 2017.
+    Every state transition (CREATED, SUBMITTED, APPROVED, REJECTED, INVALIDATED, SUPERSEDED)
+    generates a permanent, cryptographically linked entry.
+    """
+    ACTION_CHOICES = (
+        ('CREATED', 'Evidence Created in DRAFT'),
+        ('SUBMITTED', 'Submitted for Verification Approval'),
+        ('APPROVED', 'Statutorily Approved by Authorized Verifier'),
+        ('REJECTED', 'Rejected by Authorized Verifier'),
+        ('INVALIDATED', 'Invalidated / Withdrawn with Documented Cause'),
+        ('SUPERSEDED', 'Superseded by Corrected Evidence Record'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    evidence = models.ForeignKey(
+        Rule37AManualFilingEvidence,
+        on_delete=models.CASCADE,
+        related_name='audit_events',
+        db_index=True
+    )
+    company = models.ForeignKey(
+        Company,
+        on_delete=models.CASCADE,
+        related_name='rule37a_evidence_audit_events',
+        db_index=True
+    )
+    voucher = models.ForeignKey(
+        Voucher,
+        on_delete=models.CASCADE,
+        related_name='rule37a_evidence_audit_events',
+        db_index=True
+    )
+    supplier_gstin = models.CharField(max_length=15, db_index=True)
+    return_period = models.CharField(max_length=7, db_index=True)
+    document_ref = models.CharField(max_length=255)
+    previous_state = models.CharField(max_length=20, blank=True, default='')
+    new_state = models.CharField(max_length=20)
+    action = models.CharField(max_length=30, choices=ACTION_CHOICES)
+    actor_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='rule37a_evidence_actions'
+    )
+    actor_role = models.CharField(max_length=50)
+    event_timestamp = models.DateTimeField(default=timezone.now)
+    reason = models.TextField(blank=True, default='')
+    previous_event_hash = models.CharField(max_length=64, blank=True, default='')
+    current_event_hash = models.CharField(max_length=64, db_index=True)
+    sequence_number = models.PositiveIntegerField(default=1)
+
+    objects = ImmutableAuditEventManager()
+
+    class Meta:
+        ordering = ['evidence', 'sequence_number']
+        indexes = [
+            models.Index(fields=['evidence', 'sequence_number']),
+            models.Index(fields=['company', 'current_event_hash']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['evidence', 'sequence_number'],
+                name='unique_evidence_event_sequence'
+            ),
+            models.UniqueConstraint(
+                fields=['evidence', 'current_event_hash'],
+                name='unique_evidence_event_hash'
+            )
+        ]
+
+    def compute_event_hash(self) -> str:
+        """
+        Computes deterministic canonical SHA-256 fingerprint for this lifecycle transition.
+        Chained to previous_event_hash.
+        """
+        raw_payload = (
+            f"{self.sequence_number}|{str(self.evidence_id)}|{str(self.company_id)}|"
+            f"{str(self.voucher_id)}|{self.supplier_gstin.strip().upper()}|"
+            f"{self.return_period.strip()}|{self.document_ref.strip()}|"
+            f"{self.previous_state.strip().upper()}|{self.new_state.strip().upper()}|"
+            f"{self.action.strip().upper()}|{str(self.actor_user_id)}|{self.actor_role.strip().upper()}|"
+            f"{self.event_timestamp.isoformat() if self.event_timestamp else ''}|"
+            f"{self.previous_event_hash.strip()}"
+        )
+        return hashlib.sha256(raw_payload.encode('utf-8')).hexdigest()
+
+    def save(self, *args, **kwargs):
+        # Strict immutability check
+        if self.pk and Rule37AManualEvidenceAuditEvent.objects.filter(pk=self.pk).exists():
+            raise ValidationError("Rule37AManualEvidenceAuditEvent records are strictly immutable and cannot be updated.")
+        if not self.current_event_hash:
+            self.current_event_hash = self.compute_event_hash()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Rule37AManualEvidenceAuditEvent records are strictly immutable and cannot be deleted.")
+
+    def __str__(self):
+        return f"AuditEvent #{self.sequence_number} Evidence:{self.evidence_id} [{self.action}]"
 
 
 class GSTFilingRecord(models.Model):
@@ -796,6 +1131,23 @@ class GSTReportingAllocation(models.Model):
 
     # Auditing and History
     is_active = models.BooleanField(default=True, db_index=True)
+    source_reversal = models.ForeignKey(
+        'self',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='direct_reclaims'
+    )
+    payment_allocation = models.ForeignKey(
+        'accounting.PaymentAllocation',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='gst_reclaim_allocations'
+    )
+    payment_event_id = models.CharField(max_length=100, blank=True, default='', db_index=True)
+    payment_reference = models.CharField(max_length=100, blank=True, default='')
+    payment_fingerprint = models.CharField(max_length=64, blank=True, default='', db_index=True)
     superseded_by = models.ForeignKey(
         'self',
         on_delete=models.PROTECT,
@@ -805,6 +1157,18 @@ class GSTReportingAllocation(models.Model):
     )
     superseded_at = models.DateTimeField(null=True, blank=True)
     idempotency_key = models.CharField(max_length=128, unique=True, db_index=True)
+
+    # Rule 37A Statutory Evidence & Provenance Audit Trail
+    evidence_source = models.CharField(max_length=50, blank=True, default='')
+    evidence_status = models.CharField(max_length=30, blank=True, default='')
+    evidence_supplier_gstin = models.CharField(max_length=15, blank=True, default='', db_index=True)
+    evidence_return_period = models.CharField(max_length=7, blank=True, default='', db_index=True)
+    evidence_verified_at = models.DateTimeField(null=True, blank=True)
+    evidence_document_ref = models.CharField(max_length=255, blank=True, default='')
+    evidence_arn = models.CharField(max_length=50, blank=True, default='')
+    evidence_filing_date = models.DateField(null=True, blank=True)
+    evidence_hash = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    evidence_metadata = models.JSONField(default=dict, blank=True)
 
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -836,17 +1200,69 @@ class GSTReportingAllocation(models.Model):
             models.Index(fields=['company', 'voucher', 'is_active']),
             models.Index(fields=['company', 'event_type', 'assigned_period']),
             models.Index(fields=['company', 'is_statutorily_eligible', 'assigned_period']),
+            models.Index(fields=['company', 'payment_event_id']),
+            models.Index(fields=['company', 'payment_fingerprint']),
+            models.Index(fields=['company', 'evidence_supplier_gstin', 'evidence_return_period']),
         ]
         constraints = [
             models.UniqueConstraint(
                 fields=['voucher', 'event_type'],
-                condition=models.Q(is_active=True),
+                condition=models.Q(is_active=True) & ~models.Q(event_type__in=['ITC_RECLAIM', 'ITC_REVERSAL_RULE_37']),
                 name='unique_active_allocation_per_voucher_event'
-            )
+            ),
+            models.UniqueConstraint(
+                fields=['company', 'payment_event_id'],
+                condition=models.Q(is_active=True) & ~models.Q(payment_event_id=''),
+                name='unique_active_reclaim_per_company_payment_event'
+            ),
         ]
 
     def __str__(self):
         return f"[{self.assigned_period}] {self.voucher.voucher_number} - {self.event_type} ({self.status}) Eligible={self.is_statutorily_eligible}"
+
+
+class GSTReversalReclaimLineage(models.Model):
+    """
+    Audit-grade foreign key event linkage connecting an ITC Reclaim allocation
+    to the specific prior Reversal allocation(s) that it restores.
+    Tracks exact tax breakdown (IGST, CGST, SGST, Cess) and preserves mathematical equilibrium.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name='gst_reclaim_lineages')
+    voucher = models.ForeignKey(Voucher, on_delete=models.PROTECT, related_name='gst_reclaim_lineages')
+    reversal_allocation = models.ForeignKey(
+        GSTReportingAllocation,
+        on_delete=models.PROTECT,
+        related_name='reclaim_lineages_as_reversal'
+    )
+    reclaim_allocation = models.ForeignKey(
+        GSTReportingAllocation,
+        on_delete=models.PROTECT,
+        related_name='reclaim_lineages_as_reclaim'
+    )
+    reclaimed_tax = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    igst_reclaimed = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    cgst_reclaimed = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    sgst_reclaimed = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    cess_reclaimed = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    statutory_rule = models.CharField(max_length=20, default='RULE_37')
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_gst_lineages'
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['company', 'voucher']),
+            models.Index(fields=['reversal_allocation', 'reclaim_allocation']),
+        ]
+
+    def __str__(self):
+        return f"Lineage {self.voucher.voucher_number}: Reversal {self.reversal_allocation_id} -> Reclaim {self.reclaim_allocation_id} (₹{self.reclaimed_tax})"
 
 
 class GSTWorkspaceExportSnapshot(models.Model):

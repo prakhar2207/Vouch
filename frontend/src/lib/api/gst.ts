@@ -1,5 +1,4 @@
-import axios from 'axios';
-import { API_BASE_URL } from '@/utils/api';
+import api, { API_BASE_URL } from '@/utils/api';
 import { getAccessToken } from '@/utils/auth';
 
 function getHeaders(companyId?: string) {
@@ -314,7 +313,7 @@ export const gstApi = {
    */
   async verifyGSTIN(gstin: string, partyId?: string, companyId?: string) {
     const url = `${API_BASE_URL}/api/v1/gst/verify-gstin/`;
-    const res = await axios.post(url, { gstin, party_id: partyId, company_id: companyId }, { headers: getHeaders(companyId) });
+    const res = await api.post(url, { gstin, party_id: partyId, company_id: companyId }, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -330,7 +329,7 @@ export const gstApi = {
     verified_data?: any;
   }, companyId?: string) {
     const url = `${API_BASE_URL}/api/v1/gst/party/enrich/`;
-    const res = await axios.post(url, payload, { headers: getHeaders(companyId) });
+    const res = await api.post(url, payload, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -339,7 +338,7 @@ export const gstApi = {
    */
   async getRegistrations(companyId: string): Promise<GSTRegistration[]> {
     const url = `${API_BASE_URL}/api/v1/gst/registrations/${companyId}/`;
-    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    const res = await api.get(url, { headers: getHeaders(companyId) });
     return res.data?.registrations || res.data?.data || res.data || [];
   },
 
@@ -348,7 +347,7 @@ export const gstApi = {
    */
   async verifyRegistrationPreview(companyId: string, gstin: string) {
     const url = `${API_BASE_URL}/api/v1/gst/registrations/${companyId}/verify-preview/`;
-    const res = await axios.post(url, { gstin }, { headers: getHeaders(companyId) });
+    const res = await api.post(url, { gstin }, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -357,7 +356,7 @@ export const gstApi = {
    */
   async createRegistration(companyId: string, data: Partial<GSTRegistration> & { auto_verify?: boolean }) {
     const url = `${API_BASE_URL}/api/v1/gst/registrations/${companyId}/`;
-    const res = await axios.post(url, data, { headers: getHeaders(companyId) });
+    const res = await api.post(url, data, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -366,7 +365,7 @@ export const gstApi = {
    */
   async verifyRegistration(companyId: string, registrationId: string, forceRefresh: boolean = true) {
     const url = `${API_BASE_URL}/api/v1/gst/registrations/${companyId}/${registrationId}/verify/`;
-    const res = await axios.post(url, { force_refresh: forceRefresh }, { headers: getHeaders(companyId) });
+    const res = await api.post(url, { force_refresh: forceRefresh }, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -375,7 +374,7 @@ export const gstApi = {
    */
   async updateRegistration(companyId: string, registrationId: string, data: Partial<GSTRegistration>) {
     const url = `${API_BASE_URL}/api/v1/gst/registrations/${companyId}/${registrationId}/`;
-    const res = await axios.put(url, data, { headers: getHeaders(companyId) });
+    const res = await api.put(url, data, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -384,7 +383,7 @@ export const gstApi = {
    */
   async deactivateRegistration(companyId: string, registrationId: string) {
     const url = `${API_BASE_URL}/api/v1/gst/registrations/${companyId}/${registrationId}/deactivate/`;
-    const res = await axios.post(url, {}, { headers: getHeaders(companyId) });
+    const res = await api.post(url, {}, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -393,7 +392,7 @@ export const gstApi = {
    */
   async reactivateRegistration(companyId: string, registrationId: string) {
     const url = `${API_BASE_URL}/api/v1/gst/registrations/${companyId}/${registrationId}/reactivate/`;
-    const res = await axios.post(url, {}, { headers: getHeaders(companyId) });
+    const res = await api.post(url, {}, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -403,7 +402,7 @@ export const gstApi = {
   async getOverview(registrationId?: string, companyId?: string) {
     const params = registrationId ? `?registration_id=${registrationId}` : '';
     const url = `${API_BASE_URL}/api/v1/gst/overview/${params}`;
-    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    const res = await api.get(url, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -415,7 +414,7 @@ export const gstApi = {
     if (period) query.set('period', period);
     if (registrationId) query.set('registration_id', registrationId);
     const url = `${API_BASE_URL}/api/v1/gst/returns/gstr1/workspace/?${query.toString()}`;
-    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    const res = await api.get(url, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -428,7 +427,7 @@ export const gstApi = {
     tables: Record<string, any>;
   }, companyId?: string) {
     const url = `${API_BASE_URL}/api/v1/gst/returns/gstr1/submit/`;
-    const res = await axios.post(url, payload, { headers: getHeaders(companyId) });
+    const res = await api.post(url, payload, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -440,7 +439,7 @@ export const gstApi = {
     if (period) query.set('period', period);
     if (registrationId) query.set('registration_id', registrationId);
     const url = `${API_BASE_URL}/api/v1/gst/returns/gstr3b/workspace/?${query.toString()}`;
-    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    const res = await api.get(url, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -455,7 +454,7 @@ export const gstApi = {
   }, companyId?: string) {
     const query = new URLSearchParams(params as Record<string, string>);
     const url = `${API_BASE_URL}/api/v1/gst/reconciliation/gstr2b/?${query.toString()}`;
-    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    const res = await api.get(url, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -468,7 +467,7 @@ export const gstApi = {
     registration_id?: string;
   }, companyId?: string) {
     const url = `${API_BASE_URL}/api/v1/gst/reconciliation/gstr2b/sync/`;
-    const res = await axios.post(url, payload, { headers: getHeaders(companyId) });
+    const res = await api.post(url, payload, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -477,7 +476,7 @@ export const gstApi = {
    */
   async reviewGSTR2BRecord(recordId: string, action: string, notes?: string, companyId?: string) {
     const url = `${API_BASE_URL}/api/v1/gst/reconciliation/gstr2b/records/${recordId}/review/`;
-    const res = await axios.post(url, { action, notes }, { headers: getHeaders(companyId) });
+    const res = await api.post(url, { action, notes }, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -486,7 +485,7 @@ export const gstApi = {
    */
   async generateEInvoice(voucherId: string, registrationId?: string, companyId?: string) {
     const url = `${API_BASE_URL}/api/v1/gst/einvoice/generate/`;
-    const res = await axios.post(url, { voucher_id: voucherId, registration_id: registrationId }, { headers: getHeaders(companyId) });
+    const res = await api.post(url, { voucher_id: voucherId, registration_id: registrationId }, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -495,7 +494,7 @@ export const gstApi = {
    */
   async cancelEInvoice(irn: string, reason: string, remarks?: string, companyId?: string) {
     const url = `${API_BASE_URL}/api/v1/gst/einvoice/cancel/`;
-    const res = await axios.post(url, { irn, reason, remarks }, { headers: getHeaders(companyId) });
+    const res = await api.post(url, { irn, reason, remarks }, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -504,7 +503,7 @@ export const gstApi = {
    */
   async getEInvoiceDetail(voucherId: string, companyId?: string) {
     const url = `${API_BASE_URL}/api/v1/gst/einvoice/${voucherId}/`;
-    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    const res = await api.get(url, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -522,7 +521,7 @@ export const gstApi = {
     registration_id?: string;
   }, companyId?: string) {
     const url = `${API_BASE_URL}/api/v1/gst/ewaybill/generate/`;
-    const res = await axios.post(url, payload, { headers: getHeaders(companyId) });
+    const res = await api.post(url, payload, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -539,7 +538,7 @@ export const gstApi = {
     registration_id?: string;
   }, companyId?: string) {
     const url = `${API_BASE_URL}/api/v1/gst/ewaybill/vehicle-update/`;
-    const res = await axios.post(url, payload, { headers: getHeaders(companyId) });
+    const res = await api.post(url, payload, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -553,7 +552,7 @@ export const gstApi = {
     registration_id?: string;
   }, companyId?: string) {
     const url = `${API_BASE_URL}/api/v1/gst/ewaybill/cancel/`;
-    const res = await axios.post(url, payload, { headers: getHeaders(companyId) });
+    const res = await api.post(url, payload, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -563,7 +562,7 @@ export const gstApi = {
   async getAuditLogs(params?: { gstin?: string; action?: string }, companyId?: string) {
     const query = new URLSearchParams(params as Record<string, string>);
     const url = `${API_BASE_URL}/api/v1/gst/audit-logs/?${query.toString()}`;
-    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    const res = await api.get(url, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -573,43 +572,43 @@ export const gstApi = {
   async lookupGSTIN(gstin: string, companyId?: string): Promise<GSTTaxpayerDetails> {
     const clean = gstin.trim().toUpperCase();
     const url = `${API_BASE_URL}/api/v1/gst/lookup/${clean}/`;
-    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    const res = await api.get(url, { headers: getHeaders(companyId) });
     return res.data;
   },
 
   async getCompanyGSTConfig(companyId: string) {
     const url = `${API_BASE_URL}/api/v1/gst/config/${companyId}/`;
-    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    const res = await api.get(url, { headers: getHeaders(companyId) });
     return res.data;
   },
 
   async updateCompanyGSTConfig(companyId: string, data: any) {
     const url = `${API_BASE_URL}/api/v1/gst/config/${companyId}/`;
-    const res = await axios.post(url, data, { headers: getHeaders(companyId) });
+    const res = await api.post(url, data, { headers: getHeaders(companyId) });
     return res.data;
   },
 
   async generateEWayBill(payload: any) {
     const url = `${API_BASE_URL}/api/v1/gst/eway-bill/generate/`;
-    const res = await axios.post(url, payload, { headers: getHeaders() });
+    const res = await api.post(url, payload, { headers: getHeaders() });
     return res.data;
   },
 
   async updateVehicle(payload: any) {
     const url = `${API_BASE_URL}/api/v1/gst/eway-bill/update-vehicle/`;
-    const res = await axios.post(url, payload, { headers: getHeaders() });
+    const res = await api.post(url, payload, { headers: getHeaders() });
     return res.data;
   },
 
   async cancelEWayBill(payload: any) {
     const url = `${API_BASE_URL}/api/v1/gst/eway-bill/cancel/`;
-    const res = await axios.post(url, payload, { headers: getHeaders() });
+    const res = await api.post(url, payload, { headers: getHeaders() });
     return res.data;
   },
 
   async getVoucherEWayBills(voucherId: string): Promise<EWayBillData[]> {
     const url = `${API_BASE_URL}/api/v1/gst/eway-bill/voucher/${voucherId}/`;
-    const res = await axios.get(url, { headers: getHeaders() });
+    const res = await api.get(url, { headers: getHeaders() });
     return (res.data.eway_bills || []).map((e: any) => ({
       ...e,
       eway_bill_number: e.ewb_number || e.eway_bill_number,
@@ -620,7 +619,7 @@ export const gstApi = {
 
   async getEWayBillForVoucher(voucherId: string): Promise<{ success: boolean; data?: EWayBillData | null; eway_bills?: EWayBillData[]; error?: string }> {
     const url = `${API_BASE_URL}/api/v1/gst/eway-bill/voucher/${voucherId}/`;
-    const res = await axios.get(url, { headers: getHeaders() });
+    const res = await api.get(url, { headers: getHeaders() });
     const list = (res.data.eway_bills || []).map((e: any) => ({
       ...e,
       eway_bill_number: e.ewb_number || e.eway_bill_number,
@@ -636,13 +635,13 @@ export const gstApi = {
 
   async getGSTR1Report(companyId: string, startDate: string, endDate: string) {
     const url = `${API_BASE_URL}/api/v1/gst/reports/gstr1/${companyId}/?start_date=${startDate}&end_date=${endDate}`;
-    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    const res = await api.get(url, { headers: getHeaders(companyId) });
     return res.data;
   },
 
   async getGSTR3BSummary(companyId: string, startDate: string, endDate: string) {
     const url = `${API_BASE_URL}/api/v1/gst/reports/gstr3b/${companyId}/?start_date=${startDate}&end_date=${endDate}`;
-    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    const res = await api.get(url, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -650,31 +649,31 @@ export const gstApi = {
   async getWorkspace(companyId: string, period: string, returnType: string = 'GSTR1', regId?: string) {
     let url = `${API_BASE_URL}/api/v1/gst/workspace/${companyId}/?period=${period}&return_type=${returnType}`;
     if (regId) url += `&registration_id=${regId}`;
-    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    const res = await api.get(url, { headers: getHeaders(companyId) });
     return res.data;
   },
 
   async generateWorkspaceDraft(companyId: string, period: string, returnType: string = 'GSTR1', regId?: string) {
     const url = `${API_BASE_URL}/api/v1/gst/workspace/${companyId}/generate-draft/`;
-    const res = await axios.post(url, { period, return_type: returnType, registration_id: regId }, { headers: getHeaders(companyId) });
+    const res = await api.post(url, { period, return_type: returnType, registration_id: regId }, { headers: getHeaders(companyId) });
     return res.data;
   },
 
   async validateWorkspace(companyId: string, period: string, returnType: string = 'GSTR1', regId?: string) {
     const url = `${API_BASE_URL}/api/v1/gst/workspace/${companyId}/validate/`;
-    const res = await axios.post(url, { period, return_type: returnType, registration_id: regId }, { headers: getHeaders(companyId) });
+    const res = await api.post(url, { period, return_type: returnType, registration_id: regId }, { headers: getHeaders(companyId) });
     return res.data;
   },
 
   async signOffWorkspace(companyId: string, period: string, returnType: string = 'GSTR1', regId?: string) {
     const url = `${API_BASE_URL}/api/v1/gst/workspace/${companyId}/sign-off/`;
-    const res = await axios.post(url, { period, return_type: returnType, registration_id: regId }, { headers: getHeaders(companyId) });
+    const res = await api.post(url, { period, return_type: returnType, registration_id: regId }, { headers: getHeaders(companyId) });
     return res.data;
   },
 
   async exportWorkspace(companyId: string, period: string, returnType: string = 'GSTR1', format: string = 'JSON', regId?: string): Promise<GSTExportResult> {
     const url = `${API_BASE_URL}/api/v1/gst/workspace/${companyId}/export/`;
-    const res = await axios.post(url, { period, return_type: returnType, format, registration_id: regId }, { headers: getHeaders(companyId) });
+    const res = await api.post(url, { period, return_type: returnType, format, registration_id: regId }, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -685,7 +684,7 @@ export const gstApi = {
     if (period) formData.append('period', period);
     if (regId) formData.append('registration_id', regId);
     const headers = getHeaders(companyId);
-    const res = await axios.post(url, formData, { headers });
+    const res = await api.post(url, formData, { headers });
     return res.data;
   },
 
@@ -695,7 +694,7 @@ export const gstApi = {
     if (period) params.push(`period=${period}`);
     if (regId) params.push(`registration_id=${regId}`);
     if (params.length > 0) url += `?${params.join('&')}`;
-    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    const res = await api.get(url, { headers: getHeaders(companyId) });
     return res.data;
   },
 
@@ -705,13 +704,13 @@ export const gstApi = {
     if (period) params.push(`period=${period}`);
     if (matchStatus) params.push(`match_status=${matchStatus}`);
     if (params.length > 0) url += `?${params.join('&')}`;
-    const res = await axios.get(url, { headers: getHeaders(companyId) });
+    const res = await api.get(url, { headers: getHeaders(companyId) });
     return res.data;
   },
 
   async manualMatchRecord(companyId: string, recordId: string, voucherId: string, notes?: string) {
     const url = `${API_BASE_URL}/api/v1/gst/reconciliation/${companyId}/manual-match/`;
-    const res = await axios.post(url, { record_id: recordId, voucher_id: voucherId, notes }, { headers: getHeaders(companyId) });
+    const res = await api.post(url, { record_id: recordId, voucher_id: voucherId, notes }, { headers: getHeaders(companyId) });
     return res.data;
   }
 };

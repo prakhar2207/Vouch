@@ -1,9 +1,8 @@
 "use client";
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import axios from "axios";
 import { useRouter } from "next/navigation";
-import { getAccessToken, isAuthenticated } from "@/utils/auth";
-import { API_BASE_URL } from "@/utils/api";
+import { isAuthenticated } from "@/utils/auth";
+import { api, API_BASE_URL } from "@/utils/api";
 import { useCompany } from "@/context/CompanyContext";
 import { useFinancialYear } from "@/context/FinancialYearContext";
 import DashboardLayout from "@/components/DashboardLayout";
@@ -28,7 +27,8 @@ import {
   ExternalLink,
   ShieldAlert,
   ArrowUpRight,
-  ShoppingBag
+  ShoppingBag,
+  Info
 } from "lucide-react";
 
 export default function GSTReturnCenterPage() {
@@ -81,7 +81,7 @@ export default function GSTReturnCenterPage() {
   const [portalStep, setPortalStep] = useState<"auth" | "otp" | "confirm" | "success">("auth");
   const [taxpayerUsername, setTaxpayerUsername] = useState("srilekh_taxpayer");
   const [portalGstin, setPortalGstin] = useState(activeCompany?.gstin || "09CIFPS1329P2ZL");
-  const [portalOtp, setPortalOtp] = useState("575757");
+  const [portalOtp, setPortalOtp] = useState("");
   const [maskedMobile, setMaskedMobile] = useState("******9821");
   const [portalTxnId, setPortalTxnId] = useState("");
   const [authToken, setAuthToken] = useState<string | null>(null);
@@ -160,21 +160,20 @@ export default function GSTReturnCenterPage() {
     const { startDate, endDate } = getStartAndEndDate();
 
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
+      const headers = { "X-Company-ID": companyId };
 
       if (activeTab === "annual") {
         const [g9Res, filingsRes] = await Promise.all([
-          axios.get(`${API_BASE_URL}/api/v1/gst/reports/gstr9/${companyId}/?year_code=${selectedYear}`, { headers }),
-          axios.get(`${API_BASE_URL}/api/v1/gst/returns/mark-filed/${companyId}/`, { headers }).catch(() => ({ data: { filings: [] } })),
+          api.get(`/api/v1/gst/reports/gstr9/${companyId}/?year_code=${selectedYear}`, { headers }),
+          api.get(`/api/v1/gst/returns/mark-filed/${companyId}/`, { headers }).catch(() => ({ data: { filings: [] } })),
         ]);
         setGstr9Data(g9Res.data.data);
         setFilingRecords(filingsRes.data?.filings || []);
       } else {
         const [excRes, g3bRes, filingsRes] = await Promise.all([
-          axios.get(`${API_BASE_URL}/api/v1/gst/returns/exceptions/${companyId}/?start_date=${startDate}&end_date=${endDate}`, { headers }),
-          axios.get(`${API_BASE_URL}/api/v1/gst/reports/gstr3b/${companyId}/?start_date=${startDate}&end_date=${endDate}`, { headers }),
-          axios.get(`${API_BASE_URL}/api/v1/gst/returns/mark-filed/${companyId}/`, { headers }).catch(() => ({ data: { filings: [] } })),
+          api.get(`/api/v1/gst/returns/exceptions/${companyId}/?start_date=${startDate}&end_date=${endDate}`, { headers }),
+          api.get(`/api/v1/gst/reports/gstr3b/${companyId}/?start_date=${startDate}&end_date=${endDate}`, { headers }),
+          api.get(`/api/v1/gst/returns/mark-filed/${companyId}/`, { headers }).catch(() => ({ data: { filings: [] } })),
         ]);
         setExceptionsData(excRes.data.data);
         setGstr3bData(g3bRes.data.data);
@@ -217,8 +216,7 @@ export default function GSTReturnCenterPage() {
     const { periodLabel } = getStartAndEndDate();
     setMarkingFiling(true);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
+      const headers = { "X-Company-ID": companyId };
       const currentlyFiled = isCurrentPeriodFiled;
 
       const payload: any = {
@@ -231,9 +229,9 @@ export default function GSTReturnCenterPage() {
         payload.invoices_count = exceptionsData.clean_count || 0;
       }
 
-      await axios.post(`${API_BASE_URL}/api/v1/gst/returns/mark-filed/${companyId}/`, payload, { headers });
+      await api.post(`/api/v1/gst/returns/mark-filed/${companyId}/`, payload, { headers });
 
-      const filingsRes = await axios.get(`${API_BASE_URL}/api/v1/gst/returns/mark-filed/${companyId}/`, { headers });
+      const filingsRes = await api.get(`/api/v1/gst/returns/mark-filed/${companyId}/`, { headers });
       setFilingRecords(filingsRes.data?.filings || []);
 
       if (currentlyFiled) {
@@ -265,10 +263,9 @@ export default function GSTReturnCenterPage() {
     setPortalLoading(true);
     setPortalError(null);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.post(
-        `${API_BASE_URL}/api/v1/gst/portal/request-otp/`,
+      const headers = { "X-Company-ID": companyId };
+      const res = await api.post(
+        '/api/v1/gst/portal/request-otp/',
         {
           company_id: companyId,
           gstin: portalGstin,
@@ -279,6 +276,7 @@ export default function GSTReturnCenterPage() {
       if (res.data.success) {
         setMaskedMobile(res.data.masked_mobile || "******9821");
         setPortalTxnId(res.data.txn_id || "");
+        setPortalOtp("");
         setPortalStep("otp");
       } else {
         setPortalError(res.data.error || "Failed to request OTP from GST Portal.");
@@ -294,10 +292,9 @@ export default function GSTReturnCenterPage() {
     setPortalLoading(true);
     setPortalError(null);
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.post(
-        `${API_BASE_URL}/api/v1/gst/portal/verify-otp/`,
+      const headers = { "X-Company-ID": companyId };
+      const res = await api.post(
+        '/api/v1/gst/portal/verify-otp/',
         {
           company_id: companyId,
           otp: portalOtp,
@@ -325,10 +322,9 @@ export default function GSTReturnCenterPage() {
     setPortalError(null);
     const { startDate, endDate, periodLabel } = getStartAndEndDate();
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const res = await axios.post(
-        `${API_BASE_URL}/api/v1/gst/portal/upload-gstr1/`,
+      const headers = { "X-Company-ID": companyId };
+      const res = await api.post(
+        '/api/v1/gst/portal/upload-gstr1/',
         {
           company_id: companyId,
           start_date: startDate,
@@ -342,7 +338,7 @@ export default function GSTReturnCenterPage() {
         setPortalStep("success");
         setFilingStatus(`✓ GSTR-1 for ${periodLabel} successfully transmitted to GST Portal API. Reference ID: ${res.data.reference_id}`);
         try {
-          const filingsRes = await axios.get(`${API_BASE_URL}/api/v1/gst/returns/mark-filed/${companyId}/`, { headers });
+          const filingsRes = await api.get(`/api/v1/gst/returns/mark-filed/${companyId}/`, { headers });
           setFilingRecords(filingsRes.data?.filings || []);
         } catch (_) {}
       } else {
@@ -1304,18 +1300,16 @@ export default function GSTReturnCenterPage() {
                   onClick={async () => {
                     setSavingEdit(true);
                     try {
-                      const token = getAccessToken();
-                      const headers = { Authorization: `Bearer ${token}` };
                       // Update party gstin or voucher
-                      await axios.post(
-                        `${API_BASE_URL}/api/v1/accounting/vouchers/`,
+                      await api.post(
+                        '/api/v1/accounting/vouchers/',
                         {
                           id: editingVoucher.id,
                           buyer_gstin: editGstin,
                           correction_reason: "Clerical GSTIN fix in GST Center",
                           correction_type: "CLERICAL"
                         },
-                        { headers }
+                        { headers: { "X-Company-ID": companyId } }
                       ).catch(() => {});
                       setEditingVoucher(null);
                       loadGSTData();
@@ -1347,7 +1341,7 @@ export default function GSTReturnCenterPage() {
                   <div>
                     <h3 className="text-base font-bold">Direct GST Portal Return Upload</h3>
                     <p className="text-xs text-muted-foreground">
-                      GSTN Developer Sandbox API • Direct Return Submission
+                      GSTN Gateway API • Direct Return Submission
                     </p>
                   </div>
                 </div>
@@ -1458,7 +1452,7 @@ export default function GSTReturnCenterPage() {
                       <span>OTP Dispatched by GST Portal</span>
                     </div>
                     <p className="text-[11px]">
-                      A 6-digit OTP has been sent to the registered mobile ({maskedMobile}) for GSTIN <strong>{portalGstin}</strong>.
+                      A 6-digit OTP has been sent by GSTN to the registered mobile ({maskedMobile}) for GSTIN <strong>{portalGstin}</strong>.
                     </p>
                   </div>
 
@@ -1469,11 +1463,11 @@ export default function GSTReturnCenterPage() {
                       maxLength={6}
                       value={portalOtp}
                       onChange={(e) => setPortalOtp(e.target.value)}
-                      placeholder="e.g. 575757"
+                      placeholder="• • • • • •"
                       className="w-full p-3 bg-background border border-border rounded-xl font-mono text-center tracking-[0.5em] text-lg font-bold text-foreground outline-none focus:ring-2 focus:ring-primary"
                     />
                     <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1">
-                      <span>Sandbox Demo OTP: <strong className="text-foreground">575757</strong></span>
+                      <span>Didn&apos;t receive SMS? Check portal registered mobile</span>
                       <button onClick={handleRequestOTP} className="text-primary hover:underline cursor-pointer">Resend OTP</button>
                     </div>
                   </div>
@@ -1515,7 +1509,7 @@ export default function GSTReturnCenterPage() {
                     </div>
                     <div className="flex justify-between text-muted-foreground">
                       <span>Portal Gateway:</span>
-                      <span className="font-bold text-emerald-700 dark:text-emerald-400">GSTN Developer Sandbox</span>
+                      <span className="font-bold text-emerald-700 dark:text-emerald-400">GSTN Gateway (API)</span>
                     </div>
                   </div>
 
