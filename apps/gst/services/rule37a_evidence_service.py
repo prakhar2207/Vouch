@@ -8,7 +8,12 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 
 from apps.accounting.models import Voucher
-from apps.gst.models import GSTR2BRecord, SupplierGSTR3BFilingRecord, Rule37AManualFilingEvidence
+from apps.gst.models import (
+    GSTR2BRecord,
+    SupplierGSTR3BFilingRecord,
+    Rule37AManualFilingEvidence,
+    Rule37AManualEvidenceAuditEvent,
+)
 
 
 def compute_rule37a_evidence_hash(
@@ -177,7 +182,7 @@ class Rule37AEvidenceService:
         document_ref: str,
         document_type: str = 'CA_CERTIFICATE',
         reason: str = '',
-        status: str = 'APPROVED',
+        status: str = 'DRAFT',
         verification_timestamp: Optional[datetime] = None,
         supplier_gstin: Optional[str] = None,
         return_period: Optional[str] = None
@@ -185,8 +190,9 @@ class Rule37AEvidenceService:
         """
         Creates an authoritative persisted Rule37AManualFilingEvidence record.
         Enforces server-side verifier authorization and statutory validation.
+        Direct creation of APPROVED manual evidence is strictly prohibited under Rule 37A statutory governance (Finding B1).
         """
-        if not user:
+        if not user or not getattr(user, 'is_authenticated', True):
             raise ValidationError("Manual evidence verification requires an authenticated verifier user.")
         if hasattr(user, 'is_active') and not user.is_active:
             raise ValidationError(f"Verifier user '{getattr(user, 'email', str(user))}' is inactive.")
@@ -218,40 +224,154 @@ class Rule37AEvidenceService:
         if v_ts > timezone.now() + timedelta(minutes=5):
             raise ValidationError("Manual evidence verification timestamp cannot be in the future.")
 
-        clean_status = str(status or 'APPROVED').strip().upper()
+        clean_status = str(status or 'DRAFT').strip().upper()
+        if clean_status == 'APPROVED':
+            raise ValidationError(
+                "Direct creation of APPROVED manual evidence is prohibited under Rule 37A statutory governance. "
+                "Manual evidence must follow statutory workflow (DRAFT -> SUBMITTED -> APPROVED) via approve_manual_filing_evidence()."
+            )
+        if clean_status not in ('DRAFT', 'SUBMITTED'):
+            raise ValidationError(f"Invalid initial status '{clean_status}'. Manual evidence can only be created as 'DRAFT' or 'SUBMITTED'.")
 
-        manual_ev = Rule37AManualFilingEvidence.objects.create(
-            company=voucher.company,
-            voucher=voucher,
-            supplier_gstin=eff_gstin,
-            return_period=norm_period,
-            evidence_document_type=document_type,
-            evidence_document_ref=clean_doc_ref,
-            verification_reason=clean_reason,
-            status=clean_status,
-            verifier_user=user,
-            verifier_role=auth_detail,
-            verification_timestamp=v_ts,
-            created_by=user,
-            approved_by=user if clean_status == 'APPROVED' else None,
-            approved_at=v_ts if clean_status == 'APPROVED' else None
-        )
-        return manual_ev
+        from django.db import transaction
+        with transaction.atomic():
+            manual_ev = Rule37AManualFilingEvidence.objects.create(
+                company=voucher.company,
+                voucher=voucher,
+                supplier_gstin=eff_gstin,
+                return_period=norm_period,
+                evidence_document_type=document_type,
+                evidence_document_ref=clean_doc_ref,
+                verification_reason=clean_reason,
+                status=clean_status,
+                verifier_user=user,
+                verifier_role=auth_detail,
+                verification_timestamp=v_ts,
+                created_by=user,
+                approved_by=None,
+                approved_at=None
+            )
+
+            # Create root cryptographic audit event (Sequence #1)
+            root_event = Rule37AManualEvidenceAuditEvent.objects.create(
+                evidence=manual_ev,
+                company=voucher.company,
+                voucher=voucher,
+                supplier_gstin=eff_gstin,
+                return_period=norm_period,
+                document_ref=clean_doc_ref,
+                previous_state='',
+                new_state='DRAFT',
+                action='CREATED',
+                actor_user=user,
+                actor_role=auth_detail,
+                event_timestamp=v_ts,
+                reason=clean_reason,
+                previous_event_hash='',
+                sequence_number=1
+            )
+
+            if clean_status == 'SUBMITTED':
+                Rule37AManualEvidenceAuditEvent.objects.create(
+                    evidence=manual_ev,
+                    company=voucher.company,
+                    voucher=voucher,
+                    supplier_gstin=eff_gstin,
+                    return_period=norm_period,
+                    document_ref=clean_doc_ref,
+                    previous_state='DRAFT',
+                    new_state='SUBMITTED',
+                    action='SUBMITTED',
+                    actor_user=user,
+                    actor_role=auth_detail,
+                    event_timestamp=v_ts,
+                    reason=clean_reason,
+                    previous_event_hash=root_event.current_event_hash,
+                    sequence_number=2
+                )
+
+            return manual_ev
+
+    @classmethod
+    def submit_manual_filing_evidence(
+        cls,
+        evidence: Rule37AManualFilingEvidence,
+        user: Any,
+        reason: str = ''
+    ) -> Rule37AManualFilingEvidence:
+        """
+        Submits a DRAFT manual evidence record for statutory verification approval.
+        Requires authenticated active verifier with authorized role.
+        """
+        if not user or not getattr(user, 'is_authenticated', True):
+            raise ValidationError("Submission requires an authenticated user.")
+        if hasattr(user, 'is_active') and not user.is_active:
+            raise ValidationError("Submitting user account is inactive.")
+
+        is_auth, auth_detail = cls.is_user_authorized_for_manual_verification(user, evidence.company)
+        if not is_auth:
+            raise ValidationError(f"Submission rejected: {auth_detail}")
+
+        from django.db import transaction
+        with transaction.atomic():
+            if evidence.voucher_id:
+                from apps.accounting.models import Voucher
+                Voucher.objects.select_for_update().filter(id=evidence.voucher_id).first()
+            locked = Rule37AManualFilingEvidence.objects.select_for_update().get(id=evidence.id)
+            if locked.status != 'DRAFT':
+                raise ValidationError(f"Invalid state transition: Cannot submit manual evidence in status '{locked.status}'. Only 'DRAFT' evidence can be submitted.")
+
+            prev_event = locked.audit_events.order_by('-sequence_number').first()
+            prev_hash = prev_event.current_event_hash if prev_event else ''
+            next_seq = (prev_event.sequence_number + 1) if prev_event else 1
+
+            locked.status = 'SUBMITTED'
+            locked.save(update_fields=['status', 'updated_at'])
+
+            Rule37AManualEvidenceAuditEvent.objects.create(
+                evidence=locked,
+                company=locked.company,
+                voucher=locked.voucher,
+                supplier_gstin=locked.supplier_gstin,
+                return_period=locked.return_period,
+                document_ref=locked.evidence_document_ref,
+                previous_state='DRAFT',
+                new_state='SUBMITTED',
+                action='SUBMITTED',
+                actor_user=user,
+                actor_role=auth_detail,
+                event_timestamp=timezone.now(),
+                reason=str(reason or locked.verification_reason).strip(),
+                previous_event_hash=prev_hash,
+                sequence_number=next_seq
+            )
+            if evidence and hasattr(evidence, 'refresh_from_db'):
+                try:
+                    evidence.refresh_from_db()
+                except Exception:
+                    pass
+            return locked
 
     @classmethod
     def approve_manual_filing_evidence(
         cls,
         evidence: Rule37AManualFilingEvidence,
-        user: Any
+        user: Any,
+        reason: str = '',
+        allow_self_approval: bool = False
     ) -> Rule37AManualFilingEvidence:
         """
         Approves a submitted or draft manual evidence record.
-        Requires server-side authorization check.
+        Enforces:
+        - Server-side RBAC authorization (Finding B2)
+        - Valid state transitions (only DRAFT or SUBMITTED -> APPROVED)
+        - Creator vs Approver Dual Authorization Policy (Finding B1)
+        - Immutable cryptographic audit event generation (Phase C)
         """
-        if not user or not user.is_authenticated:
+        if not user or not getattr(user, 'is_authenticated', True):
             raise ValidationError("Approval requires an authenticated user.")
         if hasattr(user, 'is_active') and not user.is_active:
-            raise ValidationError("Approving user is inactive.")
+            raise ValidationError("Approving user account is inactive.")
 
         is_auth, auth_detail = cls.is_user_authorized_for_manual_verification(user, evidence.company)
         if not is_auth:
@@ -259,16 +379,72 @@ class Rule37AEvidenceService:
 
         from django.db import transaction
         with transaction.atomic():
+            if evidence.voucher_id:
+                from apps.accounting.models import Voucher
+                Voucher.objects.select_for_update().filter(id=evidence.voucher_id).first()
             locked = Rule37AManualFilingEvidence.objects.select_for_update().get(id=evidence.id)
+            if locked.status == 'APPROVED':
+                raise ValidationError("Manual evidence record is already approved.")
             if locked.status == 'INVALIDATED':
                 raise ValidationError("Cannot approve an invalidated evidence record.")
             if locked.status == 'REJECTED':
                 raise ValidationError("Cannot approve a rejected evidence record without amendment.")
+            if locked.status not in ('DRAFT', 'SUBMITTED'):
+                raise ValidationError(f"Invalid state transition: Cannot approve manual evidence in status '{locked.status}'.")
 
+            # Separation of Duties / Creator vs Approver Governance (Finding B1)
+            is_creator = (locked.created_by_id and str(locked.created_by_id) == str(user.id))
+            self_approved = False
+            if is_creator:
+                from apps.companies.models import UserCompany
+                other_verifiers = UserCompany.objects.filter(
+                    company=locked.company,
+                    user__is_active=True,
+                    role__in=cls.AUTHORIZED_MANUAL_VERIFIER_ROLES
+                ).exclude(user=user)
+                if other_verifiers.exists():
+                    if auth_detail != 'OWNER' and not allow_self_approval:
+                        raise ValidationError(
+                            "Dual authorization required: An evidence creator cannot approve their own evidence "
+                            f"when other authorized verifiers exist in company '{locked.company.name}'. "
+                            "Approval must be performed by a distinct authorized verifier."
+                        )
+                self_approved = True
+
+            prev_event = locked.audit_events.order_by('-sequence_number').first()
+            prev_hash = prev_event.current_event_hash if prev_event else ''
+            next_seq = (prev_event.sequence_number + 1) if prev_event else 1
+            old_state = locked.status
+
+            now_ts = timezone.now()
             locked.status = 'APPROVED'
             locked.approved_by = user
-            locked.approved_at = timezone.now()
-            locked.save(update_fields=['status', 'approved_by', 'approved_at', 'evidence_hash', 'updated_at'])
+            locked.approved_at = now_ts
+            locked.is_self_approved = self_approved
+            locked.save(update_fields=['status', 'approved_by', 'approved_at', 'is_self_approved', 'updated_at'])
+
+            Rule37AManualEvidenceAuditEvent.objects.create(
+                evidence=locked,
+                company=locked.company,
+                voucher=locked.voucher,
+                supplier_gstin=locked.supplier_gstin,
+                return_period=locked.return_period,
+                document_ref=locked.evidence_document_ref,
+                previous_state=old_state,
+                new_state='APPROVED',
+                action='APPROVED',
+                actor_user=user,
+                actor_role=auth_detail,
+                event_timestamp=now_ts,
+                reason=str(reason or locked.verification_reason).strip(),
+                previous_event_hash=prev_hash,
+                sequence_number=next_seq
+            )
+            if evidence and hasattr(evidence, 'refresh_from_db'):
+                try:
+                    evidence.refresh_from_db()
+                except Exception:
+                    pass
             return locked
 
     @classmethod
@@ -280,9 +456,16 @@ class Rule37AEvidenceService:
     ) -> Rule37AManualFilingEvidence:
         """
         Rejects a manual evidence record with mandatory documented reason.
+        Enforces service-level authorization (Finding B2) and audit event chaining (Phase C).
         """
-        if not user or not user.is_authenticated:
+        if not user or not getattr(user, 'is_authenticated', True):
             raise ValidationError("Rejection requires an authenticated user.")
+        if hasattr(user, 'is_active') and not user.is_active:
+            raise ValidationError("Rejecting user account is inactive.")
+
+        is_auth, auth_detail = cls.is_user_authorized_for_manual_verification(user, evidence.company)
+        if not is_auth:
+            raise ValidationError(f"Rejection rejected: {auth_detail}")
 
         clean_reason = str(reason or "").strip()
         if not clean_reason:
@@ -290,12 +473,53 @@ class Rule37AEvidenceService:
 
         from django.db import transaction
         with transaction.atomic():
+            if evidence.voucher_id:
+                from apps.accounting.models import Voucher
+                Voucher.objects.select_for_update().filter(id=evidence.voucher_id).first()
             locked = Rule37AManualFilingEvidence.objects.select_for_update().get(id=evidence.id)
+            if locked.status == 'REJECTED':
+                raise ValidationError("Manual evidence record is already rejected.")
+            if locked.status == 'INVALIDATED':
+                raise ValidationError("Cannot reject an already invalidated evidence record.")
+            if locked.status == 'APPROVED':
+                raise ValidationError("Cannot reject an approved evidence record. Use invalidation instead.")
+            if locked.status not in ('DRAFT', 'SUBMITTED'):
+                raise ValidationError(f"Invalid state transition: Cannot reject manual evidence in status '{locked.status}'.")
+
+            prev_event = locked.audit_events.order_by('-sequence_number').first()
+            prev_hash = prev_event.current_event_hash if prev_event else ''
+            next_seq = (prev_event.sequence_number + 1) if prev_event else 1
+            old_state = locked.status
+
+            now_ts = timezone.now()
             locked.status = 'REJECTED'
             locked.rejected_by = user
-            locked.rejected_at = timezone.now()
+            locked.rejected_at = now_ts
             locked.rejection_reason = clean_reason
-            locked.save(update_fields=['status', 'rejected_by', 'rejected_at', 'rejection_reason', 'evidence_hash', 'updated_at'])
+            locked.save(update_fields=['status', 'rejected_by', 'rejected_at', 'rejection_reason', 'updated_at'])
+
+            Rule37AManualEvidenceAuditEvent.objects.create(
+                evidence=locked,
+                company=locked.company,
+                voucher=locked.voucher,
+                supplier_gstin=locked.supplier_gstin,
+                return_period=locked.return_period,
+                document_ref=locked.evidence_document_ref,
+                previous_state=old_state,
+                new_state='REJECTED',
+                action='REJECTED',
+                actor_user=user,
+                actor_role=auth_detail,
+                event_timestamp=now_ts,
+                reason=clean_reason,
+                previous_event_hash=prev_hash,
+                sequence_number=next_seq
+            )
+            if evidence and hasattr(evidence, 'refresh_from_db'):
+                try:
+                    evidence.refresh_from_db()
+                except Exception:
+                    pass
             return locked
 
     @classmethod
@@ -308,23 +532,130 @@ class Rule37AEvidenceService:
     ) -> Rule37AManualFilingEvidence:
         """
         Invalidates a manual evidence record under transaction.atomic() with row-level lock.
-        Preserves original audit history and establishes supersession linkage.
+        Enforces service-level authorization (Finding B2) and audit event chaining (Phase C).
         """
+        if not user or not getattr(user, 'is_authenticated', True):
+            raise ValidationError("Invalidation requires an authenticated user.")
+        if hasattr(user, 'is_active') and not user.is_active:
+            raise ValidationError("Invalidating user account is inactive.")
+
+        is_auth, auth_detail = cls.is_user_authorized_for_manual_verification(user, evidence.company)
+        if not is_auth:
+            raise ValidationError(f"Invalidation rejected: {auth_detail}")
+
+        clean_reason = str(reason or "").strip()
+        if not clean_reason:
+            raise ValidationError("Invalidation reason is mandatory.")
+
         from django.db import transaction
         with transaction.atomic():
+            if evidence.voucher_id:
+                from apps.accounting.models import Voucher
+                Voucher.objects.select_for_update().filter(id=evidence.voucher_id).first()
             locked = Rule37AManualFilingEvidence.objects.select_for_update().get(id=evidence.id)
-            clean_reason = str(reason or "").strip()
-            if not clean_reason:
-                raise ValidationError("Invalidation reason is mandatory.")
+            if locked.status == 'INVALIDATED':
+                raise ValidationError("Manual evidence record is already invalidated.")
 
+            prev_event = locked.audit_events.order_by('-sequence_number').first()
+            prev_hash = prev_event.current_event_hash if prev_event else ''
+            next_seq = (prev_event.sequence_number + 1) if prev_event else 1
+            old_state = locked.status
+
+            now_ts = timezone.now()
             locked.status = 'INVALIDATED'
             locked.invalidated_by = user
-            locked.invalidated_at = timezone.now()
+            locked.invalidated_at = now_ts
             locked.invalidation_reason = clean_reason
             if superseding_evidence:
                 locked.superseded_by = superseding_evidence
-            locked.save(update_fields=['status', 'invalidated_by', 'invalidated_at', 'invalidation_reason', 'superseded_by', 'evidence_hash', 'updated_at'])
+            locked.save(update_fields=['status', 'invalidated_by', 'invalidated_at', 'invalidation_reason', 'superseded_by', 'updated_at'])
+
+            Rule37AManualEvidenceAuditEvent.objects.create(
+                evidence=locked,
+                company=locked.company,
+                voucher=locked.voucher,
+                supplier_gstin=locked.supplier_gstin,
+                return_period=locked.return_period,
+                document_ref=locked.evidence_document_ref,
+                previous_state=old_state,
+                new_state='INVALIDATED',
+                action='INVALIDATED',
+                actor_user=user,
+                actor_role=auth_detail,
+                event_timestamp=now_ts,
+                reason=clean_reason,
+                previous_event_hash=prev_hash,
+                sequence_number=next_seq
+            )
+            if evidence and hasattr(evidence, 'refresh_from_db'):
+                try:
+                    evidence.refresh_from_db()
+                except Exception:
+                    pass
             return locked
+
+    @classmethod
+    def verify_evidence_audit_chain(
+        cls,
+        evidence: Rule37AManualFilingEvidence
+    ) -> tuple[bool, str]:
+        """
+        Cryptographically verifies the audit event chain for a Rule37AManualFilingEvidence record.
+        Enforces Section 155 tamper-evidence:
+        - Every event hash matches deterministic canonical payload
+        - Every event is chained to previous event hash
+        - Sequence numbers are consecutive starting at 1
+        - Final event state matches evidence status
+        - Event business keys match evidence record
+        """
+        if hasattr(evidence, 'refresh_from_db'):
+            try:
+                evidence.refresh_from_db()
+            except Exception:
+                pass
+        events = list(evidence.audit_events.order_by('sequence_number'))
+        if not events:
+            return False, "Evidence record has zero audit events (broken provenance chain)."
+
+        prev_hash = ""
+        prev_seq = 0
+        prev_state = ""
+
+        for idx, evt in enumerate(events):
+            expected_seq = prev_seq + 1
+            if evt.sequence_number != expected_seq:
+                return False, f"Audit event sequence gap: expected sequence #{expected_seq}, found #{evt.sequence_number}."
+
+            if evt.previous_event_hash != prev_hash:
+                return False, f"Audit chain broken at event #{evt.sequence_number}: previous_event_hash mismatch."
+
+            expected_hash = evt.compute_event_hash()
+            if evt.current_event_hash != expected_hash:
+                return False, f"Tampered audit event #{evt.sequence_number}: event hash does not match canonical payload."
+
+            if idx > 0 and evt.previous_state != prev_state:
+                return False, f"Invalid state lineage at event #{evt.sequence_number}: previous_state '{evt.previous_state}' != earlier state '{prev_state}'."
+
+            if str(evt.company_id) != str(evidence.company_id):
+                return False, f"Cross-tenant event violation at #{evt.sequence_number}: company mismatch."
+
+            if str(evt.voucher_id) != str(evidence.voucher_id):
+                return False, f"Voucher linkage mismatch at event #{evt.sequence_number}."
+
+            if evt.supplier_gstin.strip().upper() != evidence.supplier_gstin.strip().upper():
+                return False, f"Supplier GSTIN mismatch at event #{evt.sequence_number}."
+
+            if evt.return_period.strip() != evidence.return_period.strip():
+                return False, f"Return period mismatch at event #{evt.sequence_number}."
+
+            prev_hash = evt.current_event_hash
+            prev_seq = evt.sequence_number
+            prev_state = evt.new_state
+
+        if events[-1].new_state != evidence.status:
+            return False, f"Evidence status '{evidence.status}' does not match final audit event state '{events[-1].new_state}'."
+
+        return True, "Audit chain valid."
 
     @classmethod
     def resolve_voucher_evidence(
@@ -1070,6 +1401,10 @@ class Rule37AEvidenceService:
                     validation_errors.append(
                         f"Cannot authorize manual reclaim: manual evidence status is '{evidence_record.status}'. Only 'APPROVED' manual evidence authorizes reclaim."
                     )
+                else:
+                    is_chain_valid, chain_err = cls.verify_evidence_audit_chain(evidence_record)
+                    if not is_chain_valid:
+                        validation_errors.append(f"Cryptographic Audit Chain Integrity Failure: {chain_err}")
 
         # 5. Auto-Lookup Evidence Record if not provided
         if evidence_record is None and target_gstin and target_period:
@@ -1190,6 +1525,10 @@ class Rule37AEvidenceService:
                     validation_errors.append(
                         f"Cannot authorize manual reclaim: manual evidence status is '{evidence_record.status}'. Only 'APPROVED' manual evidence authorizes reclaim."
                     )
+                else:
+                    is_chain_valid, chain_err = cls.verify_evidence_audit_chain(evidence_record)
+                    if not is_chain_valid:
+                        validation_errors.append(f"Cryptographic Audit Chain Integrity Failure: {chain_err}")
                 eff_user = evidence_record.verifier_user
                 if not eff_user:
                     validation_errors.append("Rule 37A manual reclaim requires verifier identity (user).")

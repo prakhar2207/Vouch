@@ -364,6 +364,10 @@ class TestPartAManualEvidenceAuthorization(TestCase, Rule37AR2513BaseMixin):
             document_ref='CA-CERT-VB-001',
             reason='Verified voucher B'
         )
+        Rule37AEvidenceService.approve_manual_filing_evidence(
+            evidence=voucher_b_evidence,
+            user=self.user_owner
+        )
 
         with self.assertRaises(ValidationError) as cm:
             GSTAllocationService.create_rule37a_reclaim_allocation(
@@ -475,6 +479,10 @@ class TestPartAManualEvidenceAuthorization(TestCase, Rule37AR2513BaseMixin):
             document_ref='CA-CERT-INV-001',
             reason='Initially approved verification'
         )
+        Rule37AEvidenceService.approve_manual_filing_evidence(
+            evidence=evidence,
+            user=self.user_owner
+        )
         Rule37AEvidenceService.invalidate_manual_filing_evidence(
             evidence=evidence,
             user=self.user_owner,
@@ -533,8 +541,11 @@ class TestPartAManualEvidenceAuthorization(TestCase, Rule37AR2513BaseMixin):
             document_ref='CA-CERT-2026-AUTH-001',
             document_type='CA_CERTIFICATE',
             reason='Verified vendor GST tax payment challan CIN 002938174628',
-            status='APPROVED',
             verification_timestamp=timezone.now()
+        )
+        evidence = Rule37AEvidenceService.approve_manual_filing_evidence(
+            evidence=evidence,
+            user=self.user_owner
         )
         self.assertEqual(evidence.status, 'APPROVED')
         self.assertTrue(len(evidence.evidence_hash) == 64)
@@ -557,6 +568,10 @@ class TestPartAManualEvidenceAuthorization(TestCase, Rule37AR2513BaseMixin):
             user=self.user_accountant,
             document_ref='CA-CERT-INITIAL-001',
             reason='Initial certification with typo in vendor CIN'
+        )
+        original_ev = Rule37AEvidenceService.approve_manual_filing_evidence(
+            evidence=original_ev,
+            user=self.user_owner
         )
         # Create superseding corrected record as DRAFT
         corrected_ev = Rule37AEvidenceService.create_manual_filing_evidence(
@@ -601,6 +616,10 @@ class TestPartBTransactionalIntegrityAndRaceConditions(TransactionTestCase, Rule
             document_ref='CA-CERT-TX-001',
             reason='Valid tax payment cert'
         )
+        Rule37AEvidenceService.approve_manual_filing_evidence(
+            evidence=evidence,
+            user=self.user_owner
+        )
         reclaim = GSTAllocationService.create_rule37a_reclaim_allocation(
             voucher=self.voucher,
             assigned_period='122026',
@@ -617,6 +636,10 @@ class TestPartBTransactionalIntegrityAndRaceConditions(TransactionTestCase, Rule
             user=self.user_accountant,
             document_ref='CA-CERT-RACE-001',
             reason='Race test certification'
+        )
+        Rule37AEvidenceService.approve_manual_filing_evidence(
+            evidence=evidence,
+            user=self.user_owner
         )
         outcomes = []
         errors = []
@@ -670,7 +693,8 @@ class TestPartBTransactionalIntegrityAndRaceConditions(TransactionTestCase, Rule
             voucher=self.voucher,
             user=self.user_accountant,
             document_ref='CA-CERT-MUT-001',
-            reason='Pre-mutation cert'
+            reason='Pre-mutation cert',
+            status='SUBMITTED'
         )
         outcomes = []
 
@@ -738,6 +762,10 @@ class TestPartBTransactionalIntegrityAndRaceConditions(TransactionTestCase, Rule
             document_ref='CA-CERT-ROLLBACK-001',
             reason='Rollback testing'
         )
+        Rule37AEvidenceService.approve_manual_filing_evidence(
+            evidence=evidence,
+            user=self.user_owner
+        )
         initial_reclaim_count = GSTReportingAllocation.objects.filter(voucher=self.voucher, event_type='ITC_RECLAIM').count()
 
         # Monkey-patch GSTReversalReclaimLineage.objects.create to trigger a simulated failure
@@ -767,6 +795,10 @@ class TestPartBTransactionalIntegrityAndRaceConditions(TransactionTestCase, Rule
             user=self.user_accountant,
             document_ref='CA-CERT-BAL-001',
             reason='Balance limit testing'
+        )
+        Rule37AEvidenceService.approve_manual_filing_evidence(
+            evidence=evidence,
+            user=self.user_owner
         )
         successes = []
         failures = []
@@ -809,6 +841,10 @@ class TestPartBTransactionalIntegrityAndRaceConditions(TransactionTestCase, Rule
             document_ref='CA-CERT-DUP-001',
             reason='Duplicate reclaim testing'
         )
+        Rule37AEvidenceService.approve_manual_filing_evidence(
+            evidence=evidence,
+            user=self.user_owner
+        )
         successes = []
         failures = []
 
@@ -845,6 +881,10 @@ class TestPartBTransactionalIntegrityAndRaceConditions(TransactionTestCase, Rule
             document_ref='CA-CERT-DIFF-001',
             reason='Two periods testing'
         )
+        Rule37AEvidenceService.approve_manual_filing_evidence(
+            evidence=evidence,
+            user=self.user_owner
+        )
         # First period reclaims full ₹1800
         rec1 = GSTAllocationService.create_rule37a_reclaim_allocation(
             voucher=self.voucher,
@@ -874,6 +914,10 @@ class TestPartBTransactionalIntegrityAndRaceConditions(TransactionTestCase, Rule
             document_ref='CA-CERT-ATOM-001',
             reason='Atomicity verification'
         )
+        Rule37AEvidenceService.approve_manual_filing_evidence(
+            evidence=evidence,
+            user=self.user_owner
+        )
         reclaim = GSTAllocationService.create_rule37a_reclaim_allocation(
             voucher=self.voucher,
             assigned_period='122026',
@@ -892,6 +936,10 @@ class TestPartBTransactionalIntegrityAndRaceConditions(TransactionTestCase, Rule
             user=self.user_accountant,
             document_ref='CA-CERT-ORDER-001',
             reason='Lock order test'
+        )
+        Rule37AEvidenceService.approve_manual_filing_evidence(
+            evidence=evidence,
+            user=self.user_owner
         )
         # Validate that execution finishes with zero deadlock
         reclaim = GSTAllocationService.create_rule37a_reclaim_allocation(

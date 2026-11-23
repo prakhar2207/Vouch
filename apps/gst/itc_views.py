@@ -143,13 +143,28 @@ class ITCReconciliationListView(APIView):
             status__in=['POSTED', 'VALIDATING']
         ).select_related('party_ledger').prefetch_related('items', 'gstr2b_matches').defer('attachment_data', 'attachment_mime')
 
+        if return_period:
+            if len(return_period) == 6 and return_period.isdigit():
+                m = int(return_period[:2])
+                y = int(return_period[2:])
+                vouchers = vouchers.filter(voucher_date__year=y, voucher_date__month=m)
+            elif '-' in return_period:
+                parts = return_period.split('-')
+                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                    vouchers = vouchers.filter(voucher_date__year=int(parts[0]), voucher_date__month=int(parts[1]))
+
         for v in vouchers:
+            matched_rec = v.gstr2b_matches.first()
+            eff_status = v.itc_match_status or 'UNCHECKED'
+            if eff_status == 'UNCHECKED':
+                eff_status = 'MATCHED' if matched_rec else 'MISSING_IN_2B'
+
             if filter_status not in ['ALL', 'MATCHED', 'MISMATCHED', 'MISSING_IN_2B']:
                 if filter_status == 'MISSING_IN_BOOKS':
                     continue
 
             # Check status match
-            if filter_status != 'ALL' and v.itc_match_status != filter_status:
+            if filter_status != 'ALL' and eff_status != filter_status:
                 continue
 
             # Calculate book values
@@ -170,7 +185,6 @@ class ITCReconciliationListView(APIView):
                     continue
 
             # Matched 2B Record details if any
-            matched_rec = v.gstr2b_matches.first()
             g2b_data = None
             if matched_rec:
                 g2b_data = {
@@ -195,7 +209,7 @@ class ITCReconciliationListView(APIView):
                 'books_taxable': float(b_taxable),
                 'books_tax': float(b_total_tax),
                 'books_total': float(v.total_amount),
-                'itc_match_status': v.itc_match_status,
+                'itc_match_status': eff_status,
                 'itc_held_amount': float(v.itc_held_amount),
                 'itc_notes': v.itc_notes,
                 'gstr2b_record': g2b_data

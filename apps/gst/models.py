@@ -564,6 +564,8 @@ class Rule37AManualFilingEvidence(models.Model):
     verifier_role = models.CharField(max_length=50, blank=True, default='')
     verification_timestamp = models.DateTimeField(default=timezone.now)
     evidence_hash = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    initial_fingerprint = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    is_self_approved = models.BooleanField(default=False)
 
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -636,12 +638,141 @@ class Rule37AManualFilingEvidence(models.Model):
         return hashlib.sha256(raw_payload.encode('utf-8')).hexdigest()
 
     def save(self, *args, **kwargs):
-        if not self.evidence_hash or self.status == 'APPROVED':
-            self.evidence_hash = self.compute_fingerprint()
+        # Preserve original evidence fingerprint permanently; do NOT overwrite on updates
+        if self.pk:
+            orig = Rule37AManualFilingEvidence.objects.filter(pk=self.pk).values('evidence_hash', 'initial_fingerprint').first()
+            if orig and orig['evidence_hash']:
+                self.evidence_hash = orig['evidence_hash']
+            if orig and orig['initial_fingerprint']:
+                self.initial_fingerprint = orig['initial_fingerprint']
+        if not self.initial_fingerprint:
+            self.initial_fingerprint = self.compute_fingerprint()
+        if not self.evidence_hash:
+            self.evidence_hash = self.initial_fingerprint
         super().save(*args, **kwargs)
 
     def __str__(self):
         return f"ManualEvidence #{self.id} [{self.status}] Voucher:{self.voucher_id} Period:{self.return_period}"
+
+
+class ImmutableAuditEventQuerySet(models.QuerySet):
+    """
+    Immutable queryset for Rule37AManualEvidenceAuditEvent.
+    Blocks bulk mutation and bulk deletion to preserve tamper-evident audit trails under Section 155.
+    """
+    def update(self, **kwargs):
+        raise ValidationError("Rule37AManualEvidenceAuditEvent records are strictly immutable and cannot be updated via queryset.")
+
+    def delete(self):
+        raise ValidationError("Rule37AManualEvidenceAuditEvent records are strictly immutable and cannot be deleted via queryset.")
+
+
+class ImmutableAuditEventManager(models.Manager):
+    def get_queryset(self):
+        return ImmutableAuditEventQuerySet(self.model, using=self._db)
+
+
+class Rule37AManualEvidenceAuditEvent(models.Model):
+    """
+    Cryptographically chained, immutable audit event record for Rule 37A manual evidence lifecycle.
+    Guarantees tamper-evident traceability under Section 155 of the CGST Act, 2017.
+    Every state transition (CREATED, SUBMITTED, APPROVED, REJECTED, INVALIDATED, SUPERSEDED)
+    generates a permanent, cryptographically linked entry.
+    """
+    ACTION_CHOICES = (
+        ('CREATED', 'Evidence Created in DRAFT'),
+        ('SUBMITTED', 'Submitted for Verification Approval'),
+        ('APPROVED', 'Statutorily Approved by Authorized Verifier'),
+        ('REJECTED', 'Rejected by Authorized Verifier'),
+        ('INVALIDATED', 'Invalidated / Withdrawn with Documented Cause'),
+        ('SUPERSEDED', 'Superseded by Corrected Evidence Record'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    evidence = models.ForeignKey(
+        Rule37AManualFilingEvidence,
+        on_delete=models.CASCADE,
+        related_name='audit_events',
+        db_index=True
+    )
+    company = models.ForeignKey(
+        Company,
+        on_delete=models.CASCADE,
+        related_name='rule37a_evidence_audit_events',
+        db_index=True
+    )
+    voucher = models.ForeignKey(
+        Voucher,
+        on_delete=models.CASCADE,
+        related_name='rule37a_evidence_audit_events',
+        db_index=True
+    )
+    supplier_gstin = models.CharField(max_length=15, db_index=True)
+    return_period = models.CharField(max_length=7, db_index=True)
+    document_ref = models.CharField(max_length=255)
+    previous_state = models.CharField(max_length=20, blank=True, default='')
+    new_state = models.CharField(max_length=20)
+    action = models.CharField(max_length=30, choices=ACTION_CHOICES)
+    actor_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='rule37a_evidence_actions'
+    )
+    actor_role = models.CharField(max_length=50)
+    event_timestamp = models.DateTimeField(default=timezone.now)
+    reason = models.TextField(blank=True, default='')
+    previous_event_hash = models.CharField(max_length=64, blank=True, default='')
+    current_event_hash = models.CharField(max_length=64, db_index=True)
+    sequence_number = models.PositiveIntegerField(default=1)
+
+    objects = ImmutableAuditEventManager()
+
+    class Meta:
+        ordering = ['evidence', 'sequence_number']
+        indexes = [
+            models.Index(fields=['evidence', 'sequence_number']),
+            models.Index(fields=['company', 'current_event_hash']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['evidence', 'sequence_number'],
+                name='unique_evidence_event_sequence'
+            ),
+            models.UniqueConstraint(
+                fields=['evidence', 'current_event_hash'],
+                name='unique_evidence_event_hash'
+            )
+        ]
+
+    def compute_event_hash(self) -> str:
+        """
+        Computes deterministic canonical SHA-256 fingerprint for this lifecycle transition.
+        Chained to previous_event_hash.
+        """
+        raw_payload = (
+            f"{self.sequence_number}|{str(self.evidence_id)}|{str(self.company_id)}|"
+            f"{str(self.voucher_id)}|{self.supplier_gstin.strip().upper()}|"
+            f"{self.return_period.strip()}|{self.document_ref.strip()}|"
+            f"{self.previous_state.strip().upper()}|{self.new_state.strip().upper()}|"
+            f"{self.action.strip().upper()}|{str(self.actor_user_id)}|{self.actor_role.strip().upper()}|"
+            f"{self.event_timestamp.isoformat() if self.event_timestamp else ''}|"
+            f"{self.previous_event_hash.strip()}"
+        )
+        return hashlib.sha256(raw_payload.encode('utf-8')).hexdigest()
+
+    def save(self, *args, **kwargs):
+        # Strict immutability check
+        if self.pk and Rule37AManualEvidenceAuditEvent.objects.filter(pk=self.pk).exists():
+            raise ValidationError("Rule37AManualEvidenceAuditEvent records are strictly immutable and cannot be updated.")
+        if not self.current_event_hash:
+            self.current_event_hash = self.compute_event_hash()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Rule37AManualEvidenceAuditEvent records are strictly immutable and cannot be deleted.")
+
+    def __str__(self):
+        return f"AuditEvent #{self.sequence_number} Evidence:{self.evidence_id} [{self.action}]"
 
 
 class GSTFilingRecord(models.Model):

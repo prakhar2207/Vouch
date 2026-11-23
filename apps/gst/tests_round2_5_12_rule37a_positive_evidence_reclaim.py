@@ -834,13 +834,16 @@ class Rule37APositiveEvidenceReclaimTestCase(TestCase, Rule37ABaseTestCase):
         """R25912-23: Documented manual confirmation by authorized user authorizes reclaim."""
         self._create_reversal_fixture()
 
-        Rule37AEvidenceService.create_manual_filing_evidence(
+        ev = Rule37AEvidenceService.create_manual_filing_evidence(
             voucher=self.voucher,
             user=self.user,
             document_ref='CA-CERT-2026-999',
             reason='Verified vendor GST tax payment challan CIN 002938174628',
-            status='APPROVED',
             verification_timestamp=timezone.now()
+        )
+        Rule37AEvidenceService.approve_manual_filing_evidence(
+            evidence=ev,
+            user=self.user
         )
 
         reclaim = GSTAllocationService.create_rule37a_reclaim_allocation(
