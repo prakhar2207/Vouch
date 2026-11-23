@@ -146,10 +146,8 @@ export default function SettingsPage() {
   const [portalError, setPortalError] = useState<string | null>(null);
   const [portalSuccess, setPortalSuccess] = useState<string | null>(null);
 
-  // GST Gateway Provider State
-  const [hasEnvCredentials, setHasEnvCredentials] = useState<boolean>(false);
-  const [testingConnection, setTestingConnection] = useState<boolean>(false);
-  const [testConnectionResult, setTestConnectionResult] = useState<{ healthy: boolean; message: string } | null>(null);
+  const [mounted, setMounted] = useState<boolean>(false);
+  const [otpCooldown, setOtpCooldown] = useState<number>(0);
 
   // Branding State
   const [accentColor, setAccentColor] = useState('#0f172a');
@@ -214,6 +212,7 @@ export default function SettingsPage() {
 
   // Read URL query params on load (supports ?tab=... and ?action=new)
   useEffect(() => {
+    setMounted(true);
     if (!isAuthenticated()) {
       router.push('/login');
       return;
@@ -229,6 +228,15 @@ export default function SettingsPage() {
       }
     }
   }, [router]);
+
+  // Live OTP Resend Cooldown Timer
+  useEffect(() => {
+    if (otpCooldown <= 0) return;
+    const interval = setInterval(() => {
+      setOtpCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [otpCooldown]);
 
   // Synchronize User state
   useEffect(() => {
@@ -406,7 +414,6 @@ export default function SettingsPage() {
         setPortalConnected(Boolean(c.is_portal_connected));
         setPortalUsername(c.portal_username || c.eway_username || '');
         setPortalExpiresAt(c.token_expires_at || null);
-        setHasEnvCredentials(Boolean(c.has_env_credentials));
         if (c.is_portal_connected) {
           setPortalStep('connected');
         } else {
@@ -766,18 +773,20 @@ export default function SettingsPage() {
       const res = await api.post(`/api/v1/gst/portal/request-otp/`, {
         company_id: comp.id,
         gstin: gstin || comp.gstin,
-        username: portalUsername || gstin || comp.gstin,
+        username: (portalUsername || gstin || comp.gstin || '').trim(),
       });
       if (res.data?.success) {
         setPortalTxnId(res.data.txn_id || '');
         setPortalStep('otp');
-        setPortalSuccess(res.data.message || `OTP sent to mobile registered with GST Portal.`);
-        toast.success("GST Portal OTP Sent", res.data.message || "Check your registered mobile number.");
+        setOtpCooldown(res.data.cooldown_seconds || 30);
+        setPortalSuccess(res.data.message || "We've requested an OTP for your registered GST Portal account. Enter the OTP to continue.");
+        toast.success("GST Portal OTP Requested", "Check your registered mobile number for the OTP.");
       } else {
-        setPortalError(res.data?.error || "Failed to request OTP from GST Portal.");
+        setPortalError(res.data?.error || "We couldn't send the OTP. Please verify your GST Portal username and try again.");
       }
     } catch (err: any) {
-      setPortalError(err.response?.data?.error || "Error contacting GST Portal gateway.");
+      const backendError = err.response?.data?.error || err.response?.data?.message;
+      setPortalError(backendError || "We couldn't connect to the GST Portal right now. Please try again.");
     } finally {
       setPortalLoading(false);
     }
@@ -791,22 +800,23 @@ export default function SettingsPage() {
     try {
       const res = await api.post(`/api/v1/gst/portal/verify-otp/`, {
         company_id: comp.id,
-        otp: portalOtp,
+        otp: portalOtp.trim(),
         txn_id: portalTxnId,
         gstin: gstin || comp.gstin,
-        username: portalUsername || gstin || comp.gstin,
+        username: (portalUsername || gstin || comp.gstin || '').trim(),
       });
       if (res.data?.success) {
         setPortalConnected(true);
         setPortalStep('connected');
-        setPortalSuccess("GST Portal connected successfully! 30-day session active.");
-        toast.success("GST Connected", "Your business is now directly connected to the GST Portal.");
+        setPortalSuccess("Your GST Portal account is connected successfully.");
+        toast.success("GST Portal Connected", "Your account is verified and securely connected.");
         fetchGSTConfig(comp.id);
       } else {
-        setPortalError(res.data?.error || "Invalid OTP entered.");
+        setPortalError(res.data?.error || "The OTP is incorrect or has expired. Please try again.");
       }
     } catch (err: any) {
-      setPortalError(err.response?.data?.error || "Failed to verify OTP.");
+      const backendError = err.response?.data?.error || err.response?.data?.message;
+      setPortalError(backendError || "We couldn't verify your GST Portal account. Please check your OTP and try again.");
     } finally {
       setPortalLoading(false);
     }
@@ -832,41 +842,9 @@ export default function SettingsPage() {
         toast.error("Failed to disconnect", res.data?.error || "Error revoking session.");
       }
     } catch (err: any) {
-      toast.error("Failed to disconnect", err.response?.data?.error || err.message);
+      toast.error("Failed to disconnect", err.response?.data?.error || "Unable to revoke session.");
     } finally {
       setPortalLoading(false);
-    }
-  };
-
-  const handleTestSandboxConnection = async () => {
-    const comp = currentCompany;
-    if (!comp?.id) return;
-    setTestingConnection(true);
-    setTestConnectionResult(null);
-    try {
-      const res = await api.post(`/api/v1/gst/config/${comp.id}/test-connection/`, {});
-      if (res.data?.healthy) {
-        setTestConnectionResult({
-          healthy: true,
-          message: res.data.message || "Successfully connected to Sandbox by Quicko gateway."
-        });
-        toast.success("Gateway Online", res.data.message || "Connection verified successfully.");
-      } else {
-        setTestConnectionResult({
-          healthy: false,
-          message: res.data?.error || res.data?.message || "Failed to authenticate with Sandbox."
-        });
-        toast.error("Gateway Check Failed", res.data?.error || res.data?.message);
-      }
-    } catch (err: any) {
-      const msg = err.response?.data?.error || err.response?.data?.message || err.message;
-      setTestConnectionResult({
-        healthy: false,
-        message: msg
-      });
-      toast.error("Connection Failed", msg);
-    } finally {
-      setTestingConnection(false);
     }
   };
 
@@ -2260,20 +2238,20 @@ export default function SettingsPage() {
             {/* TAB 6: GOVERNMENT GST PORTAL INTEGRATION (COMPANY SETTINGS) */}
             {activeTab === 'gst-portal' && currentCompany && (
               <div className="space-y-6 animate-in fade-in duration-200">
-                {/* 1. Portal Active Session & Authentication Card */}
-                <div className="bg-card border border-border/50 rounded-2xl p-6 shadow-2xs space-y-5">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-border/40 gap-3">
+                <div className="bg-card border border-border/50 rounded-2xl p-6 shadow-2xs space-y-6">
+                  {/* Header */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-border/40 gap-3">
                     <div className="flex items-center gap-3">
-                      <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-500">
+                      <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
                         <Globe className="w-5 h-5" />
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
-                          <h2 className="text-base font-bold text-foreground">Government GST Portal Integration</h2>
+                          <h2 className="text-base font-bold text-foreground">Government GST Portal</h2>
                           {portalConnected ? (
                             <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
                               <CheckCircle2 className="w-3 h-3" />
-                              <span>Live Connected</span>
+                              <span>Connected</span>
                             </span>
                           ) : (
                             <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-muted text-muted-foreground border border-border/40">
@@ -2282,140 +2260,150 @@ export default function SettingsPage() {
                           )}
                         </div>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          Authenticate via OTP with the GST Common Portal for GSTR-1, GSTR-3B, and 2B ITC verification
+                          Connect your GST Portal account securely to access supported GST services directly through SriLekh.
                         </p>
                       </div>
                     </div>
                   </div>
 
-                  {hasEnvCredentials && (
-                    <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-xs flex items-center gap-2.5 text-emerald-800 dark:text-emerald-200">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                      <div>
-                        <div className="font-bold flex items-center gap-1.5">
-                          <span>Render Platform Environment Credentials Active</span>
-                          <span className="px-1.5 py-0.2 bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 rounded text-[10px] font-mono">LIVE API READY</span>
-                        </div>
-                        <div className="text-[11px] text-emerald-700/90 dark:text-emerald-300/90 mt-0.5">
-                          Your Quicko API Key &amp; Secret from Render are loaded and active. Real-time taxpayer OTP requests and verification route directly to <strong>api.sandbox.co.in</strong>.
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
+                  {/* Connected State */}
                   {portalConnected ? (
-                    <div className="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/20 space-y-3">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                        <div className="space-y-1">
-                          <div className="text-xs text-foreground font-semibold flex items-center gap-2">
-                            <span>Active API Gateway Session Connected for GSTIN:</span>
-                            <span className="font-mono bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded text-xs font-bold">
-                              {gstin || currentCompany.gstin}
-                            </span>
+                    <div className="space-y-5">
+                      <div className="p-5 rounded-2xl bg-emerald-500/5 border border-emerald-500/20 space-y-4">
+                        <div className="flex items-center gap-2.5 text-emerald-700 dark:text-emerald-300">
+                          <CheckCircle2 className="w-5 h-5 shrink-0" />
+                          <div>
+                            <h3 className="text-sm font-bold">GST Portal Connected</h3>
+                            <p className="text-xs opacity-90">Your GST Portal account is connected successfully.</p>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-emerald-500/15">
+                          <div>
+                            <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Registered Entity</span>
+                            <div className="text-sm font-bold text-foreground mt-0.5">{currentCompany.name}</div>
+                          </div>
+                          <div>
+                            <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">GSTIN</span>
+                            <div className="text-xs font-mono font-bold text-emerald-700 dark:text-emerald-300 mt-0.5">
+                              {gstin || currentCompany.gstin || 'Not configured'}
+                            </div>
                           </div>
                           {portalExpiresAt && (
-                            <div className="text-[11px] text-muted-foreground font-mono">
-                              Session token valid until: {new Date(portalExpiresAt).toLocaleString()}
+                            <div className="sm:col-span-2">
+                              <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Session Status</span>
+                              <div className="text-xs text-muted-foreground mt-0.5" suppressHydrationWarning>
+                                Active session expires: {mounted ? new Date(portalExpiresAt).toLocaleString() : ''}
+                              </div>
                             </div>
                           )}
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-3 pt-3 border-t border-emerald-500/15">
                           <button
+                            type="button"
                             onClick={handleDisconnectPortalSession}
                             disabled={portalLoading}
-                            className="px-3.5 py-1.5 rounded-xl border border-rose-500/30 text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                            className="px-4 py-2 rounded-xl border border-rose-500/30 text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
                           >
                             <LogOut className="w-3.5 h-3.5" />
-                            <span>{portalLoading ? 'Disconnecting...' : 'Disconnect / Logout'}</span>
+                            <span>{portalLoading ? 'Disconnecting...' : 'Disconnect Account'}</span>
                           </button>
                           <button
+                            type="button"
                             onClick={async () => {
-                              await handleDisconnectPortalSession();
                               setPortalStep('idle');
+                              setPortalConnected(false);
                             }}
-                            className="px-3 py-1.5 rounded-xl border border-border/50 text-foreground hover:bg-muted/40 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer"
+                            className="px-4 py-2 rounded-xl border border-border/50 text-foreground hover:bg-muted/40 text-xs font-medium flex items-center gap-2 transition-all cursor-pointer"
                           >
                             <RefreshCw className="w-3.5 h-3.5" />
-                            <span>Reconnect / Refresh</span>
+                            <span>Reconnect / Re-authenticate</span>
                           </button>
                         </div>
                       </div>
                     </div>
                   ) : (
+                    /* Not Connected / OTP Verification State */
                     <div className="space-y-4">
                       {portalStep === 'idle' ? (
-                        <div className="p-4 rounded-xl bg-muted/20 border border-border/40 space-y-4">
-                          <div className="text-xs text-foreground">
-                            Enter your registered GST Portal username. We will request a one-time OTP directly to your registered mobile number:
+                        <div className="p-5 rounded-2xl bg-muted/20 border border-border/40 space-y-4">
+                          <div className="space-y-1">
+                            <label className="text-xs font-bold text-foreground">GST Portal Username</label>
+                            <p className="text-xs text-muted-foreground">
+                              Enter your registered GST Portal username. We will request a one-time OTP directly to your registered mobile number:
+                            </p>
                           </div>
-                          <div className="flex flex-col sm:flex-row items-center gap-3">
+
+                          <div className="flex flex-col sm:flex-row items-center gap-3 max-w-xl">
                             <input
                               type="text"
                               value={portalUsername}
                               onChange={(e) => setPortalUsername(e.target.value)}
-                              placeholder={`GST Portal Username (Default: ${gstin || 'GSTIN'})`}
-                              className="flex-1 bg-muted/30 border border-input text-foreground text-xs p-2.5 rounded-xl outline-none"
+                              placeholder={gstin || currentCompany.gstin || "Enter GST Portal Username"}
+                              className="flex-1 w-full bg-background border border-input text-foreground text-xs p-2.5 rounded-xl outline-none focus:ring-2 focus:ring-primary/20"
                             />
                             <button
+                              type="button"
                               onClick={handleRequestPortalOTP}
                               disabled={portalLoading}
-                              className="px-4 py-2.5 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1.5 shrink-0"
+                              className="w-full sm:w-auto px-5 py-2.5 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2 shrink-0 shadow-sm"
                             >
-                              <Key className="w-3.5 h-3.5" />
-                              <span>{portalLoading ? 'Requesting OTP...' : 'Request Portal OTP'}</span>
-                            </button>
-                            <button
-                              onClick={handleTestSandboxConnection}
-                              disabled={testingConnection}
-                              title="Test API Gateway Connectivity"
-                              className="px-3.5 py-2.5 border border-border/60 hover:bg-muted/40 text-foreground rounded-xl text-xs font-semibold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1.5 shrink-0"
-                            >
-                              <Activity className="w-3.5 h-3.5" />
-                              <span>{testingConnection ? 'Testing Gateway...' : 'Test Connection'}</span>
+                              <Key className={`w-3.5 h-3.5 ${portalLoading ? 'animate-spin' : ''}`} />
+                              <span>{portalLoading ? 'Connecting...' : 'Connect GST Portal'}</span>
                             </button>
                           </div>
 
-                          {testConnectionResult && (
-                            <div className={`text-xs px-3.5 py-2 rounded-xl flex items-center gap-2 ${
-                              testConnectionResult.healthy
-                                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
-                                : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20'
-                            }`}>
-                              {testConnectionResult.healthy ? (
-                                <CheckCircle2 className="w-4 h-4 shrink-0" />
-                              ) : (
-                                <AlertTriangle className="w-4 h-4 shrink-0" />
-                              )}
-                              <span>{testConnectionResult.message}</span>
-                            </div>
-                          )}
+                          <div className="text-[11px] text-muted-foreground">
+                            Note: By default, your GST Portal username is your 15-character GSTIN unless you created a customized API username on the GST Common Portal.
+                          </div>
                         </div>
                       ) : (
-                        <div className="p-4 rounded-xl bg-blue-500/5 border border-blue-500/20 space-y-4">
-                          <div className="text-xs text-foreground">
-                            {portalSuccess || 'Enter the 6-digit OTP sent to your GST portal registered phone:'}
+                        <div className="p-5 rounded-2xl bg-primary/5 border border-primary/20 space-y-4">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2 text-foreground font-bold text-sm">
+                              <ShieldCheck className="w-4 h-4 text-primary" />
+                              <span>Verify your GST Portal account</span>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              {portalSuccess || "We've requested an OTP for your registered GST Portal account. Enter the OTP to continue."}
+                            </p>
                           </div>
-                          <div className="flex flex-col sm:flex-row items-center gap-3">
+
+                          <div className="flex flex-col sm:flex-row items-center gap-3 max-w-lg">
                             <input
                               type="text"
+                              inputMode="numeric"
                               maxLength={6}
                               value={portalOtp}
-                              onChange={(e) => setPortalOtp(e.target.value)}
+                              onChange={(e) => setPortalOtp(e.target.value.replace(/\D/g, ''))}
                               placeholder="6-digit OTP"
-                              className="w-40 bg-card border border-input text-foreground text-center font-mono tracking-widest text-sm p-2.5 rounded-xl outline-none"
+                              className="w-full sm:w-44 bg-background border border-input text-foreground text-center font-mono tracking-widest text-base p-2.5 rounded-xl outline-none focus:ring-2 focus:ring-primary/20"
                             />
                             <button
+                              type="button"
                               onClick={handleVerifyPortalOTP}
                               disabled={portalLoading || portalOtp.length < 4}
-                              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                              className="w-full sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2 shadow-sm"
                             >
-                              <ShieldCheck className="w-3.5 h-3.5" />
-                              <span>{portalLoading ? 'Verifying...' : 'Verify & Connect Session'}</span>
+                              <ShieldCheck className={`w-3.5 h-3.5 ${portalLoading ? 'animate-spin' : ''}`} />
+                              <span>{portalLoading ? 'Verifying...' : 'Verify and Connect'}</span>
                             </button>
                             <button
-                              onClick={() => setPortalStep('idle')}
-                              className="px-3 py-2 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
+                              type="button"
+                              onClick={handleRequestPortalOTP}
+                              disabled={portalLoading || otpCooldown > 0}
+                              className="w-full sm:w-auto px-3.5 py-2.5 text-xs font-semibold text-primary hover:underline disabled:text-muted-foreground disabled:no-underline cursor-pointer"
+                            >
+                              {otpCooldown > 0 ? `Resend OTP in ${otpCooldown}s` : 'Resend OTP'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPortalStep('idle');
+                                setPortalError(null);
+                              }}
+                              className="w-full sm:w-auto px-3 py-2 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
                             >
                               Cancel
                             </button>
@@ -2423,8 +2411,9 @@ export default function SettingsPage() {
                         </div>
                       )}
 
+                      {/* Connection Error Message */}
                       {portalError && (
-                        <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-500 text-xs flex items-center gap-2">
+                        <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 text-xs flex items-center gap-2.5 animate-in fade-in duration-150">
                           <AlertTriangle className="w-4 h-4 shrink-0" />
                           <span>{portalError}</span>
                         </div>

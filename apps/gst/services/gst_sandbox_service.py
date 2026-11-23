@@ -6,10 +6,12 @@ import requests
 from datetime import datetime, date, timedelta
 from typing import Dict, Any, Optional
 from django.utils import timezone
+from django.core.cache import cache
 from apps.companies.models import Company
 from apps.gst.models import CompanyGSTConfig
 from apps.gst.services.gstr_report_service import GSTRReportService
 from apps.gst.services.sandbox_client import SandboxGSTClient
+from apps.gst.services.gst_error_normalizer import normalize_gst_error
 
 logger = logging.getLogger(__name__)
 
@@ -49,11 +51,41 @@ class GSTPortalService:
         GSTN delivers an SMS OTP to the taxpayer's authorized signatory mobile.
         """
         config = cls.get_or_create_config(company)
-        taxpayer_gstin = (gstin or company.gstin or '09ACHFS9225Q1Z7').strip().upper()
-        portal_username = (username or config.eway_username or company.email or 'vouch_taxpayer').strip()
+        taxpayer_gstin = (gstin or company.gstin or '').strip().upper()
+        portal_username = (username or config.eway_username or company.email or taxpayer_gstin).strip()
         txn_id = f"TXN-{uuid.uuid4().hex[:12].upper()}"
 
-        # 1. Quicko Sandbox Gateway: Live calls when credentials exist (Render env vars or DB)
+        if not taxpayer_gstin:
+            return {
+                "success": False,
+                "error": "A valid GSTIN is required to request a GST Portal OTP."
+            }
+
+        # 1. Server-enforced OTP request cooldown (30 seconds)
+        cache_key_cooldown = f"gst_otp_cooldown_{company.id}"
+        last_requested = cache.get(cache_key_cooldown)
+        if last_requested:
+            elapsed = time.time() - last_requested
+            if elapsed < 30:
+                remaining = int(30 - elapsed)
+                return {
+                    "success": False,
+                    "error": f"Please wait {remaining} seconds before requesting a new OTP.",
+                    "code": "COOLDOWN_ACTIVE",
+                    "cooldown_remaining": remaining
+                }
+
+        # 2. Server-enforced hourly rate limit (max 5 OTP requests per hour per company)
+        rate_key = f"gst_otp_hourly_count_{company.id}"
+        hourly_count = cache.get(rate_key, 0)
+        if hourly_count >= 5:
+            return {
+                "success": False,
+                "error": "Too many OTP requests. For security reasons, please try again in an hour.",
+                "code": "RATE_LIMIT_EXCEEDED"
+            }
+
+        # 3. Quicko Gateway: Live calls when credentials exist (Render env vars or DB)
         client = SandboxGSTClient(company=company)
         if client.is_configured():
             if config.provider == 'MOCK':
@@ -61,27 +93,34 @@ class GSTPortalService:
                 config.save(update_fields=['provider', 'updated_at'])
             sb_res = client.request_portal_otp(gstin=taxpayer_gstin, username=portal_username)
             if not sb_res.get('success'):
+                raw_err = sb_res.get('error') or ''
+                cid = sb_res.get('correlation_id') or txn_id
+                logger.error(
+                    f"[GSTPortalService] OTP request failed for company={company.id} "
+                    f"gstin={taxpayer_gstin} correlation_id={cid}: {raw_err}"
+                )
+                status_code = sb_res.get('status_code', 400)
+                normalized = normalize_gst_error(raw_err, status_code=status_code, category="otp_request")
                 return {
                     "success": False,
-                    "error": sb_res.get('error') or "Failed to request OTP via Quicko Sandbox gateway.",
-                    "is_sandbox": config.is_sandbox,
+                    "error": normalized,
+                    "correlation_id": cid,
                 }
-            sb_data = sb_res.get('data') or {}
-            msg = (
-                sb_data.get('message')
-                or sb_res.get('raw', {}).get('message')
-                or f"OTP successfully requested via Sandbox for GSTIN {taxpayer_gstin}. Please check your registered mobile."
-            )
+
+            # OTP dispatched successfully
+            cache.set(cache_key_cooldown, time.time(), timeout=30)
+            cache.set(rate_key, hourly_count + 1, timeout=3600)
+
             return {
                 "success": True,
                 "gstin": taxpayer_gstin,
                 "username": portal_username,
                 "txn_id": sb_res.get('correlation_id') or txn_id,
-                "is_sandbox": config.is_sandbox,
-                "message": msg
+                "cooldown_seconds": 30,
+                "message": "A verification OTP has been sent to your registered GST Portal mobile and email."
             }
 
-        # 2. Live Government NIC Direct API
+        # 4. Live Government NIC Direct API (if configured)
         if not config.is_sandbox and config.api_key and config.provider == 'NIC_DIRECT':
             try:
                 endpoint = f"{cls.PRODUCTION_BASE_URL}/authenticate"
@@ -99,45 +138,34 @@ class GSTPortalService:
                 }
                 res = requests.post(endpoint, json=payload, headers=headers, timeout=10)
                 if res.status_code == 200:
+                    cache.set(cache_key_cooldown, time.time(), timeout=30)
+                    cache.set(rate_key, hourly_count + 1, timeout=3600)
                     return {
                         "success": True,
                         "gstin": taxpayer_gstin,
                         "username": portal_username,
                         "txn_id": txn_id,
-                        "is_sandbox": False,
-                        "message": f"OTP successfully sent by GST Portal to registered mobile for {taxpayer_gstin}."
+                        "cooldown_seconds": 30,
+                        "message": "A verification OTP has been sent to your registered GST Portal mobile."
                     }
                 else:
                     logger.warning(f"GST Portal OTP request returned {res.status_code}: {res.text}")
                     return {
                         "success": False,
-                        "error": f"GST Portal returned HTTP {res.status_code}: {res.text[:300]}"
+                        "error": normalize_gst_error(res.text, status_code=res.status_code, category="otp_request")
                     }
             except Exception as e:
                 logger.exception(f"Error calling live GST Portal OTP: {e}")
                 return {
                     "success": False,
-                    "error": f"Error contacting live GST Portal: {str(e)}"
+                    "error": normalize_gst_error(str(e), status_code=500, category="otp_request")
                 }
 
-        # If provider is not MOCK and credentials are not configured, fail explicitly with actionable message
-        if config.provider != 'MOCK':
-            return {
-                "success": False,
-                "error": "Quicko Gateway credentials not found. Please ensure SANDBOX_API_KEY and SANDBOX_API_SECRET are configured in your Render environment variables or saved in Settings."
-            }
-
-        # 3. Offline Sandbox / Mock Simulation Mode (only when provider == 'MOCK' and credentials unconfigured)
-        masked_mobile = f"******{company.phone[-4:] if company.phone and len(company.phone) >= 4 else '9821'}"
+        # 5. Fallback when credentials are unconfigured
+        logger.error(f"[GSTPortalService] Gateway credentials missing for company {company.id}")
         return {
-            "success": True,
-            "gstin": taxpayer_gstin,
-            "username": portal_username,
-            "txn_id": txn_id,
-            "is_sandbox": config.is_sandbox,
-            "masked_mobile": masked_mobile,
-            "sandbox_test_otp": "575757",
-            "message": f"[Mock Mode] OTP sent to authorized signatory mobile ({masked_mobile}) and email registered with GSTN. Use test OTP: 575757"
+            "success": False,
+            "error": "GST Portal connection is temporarily unavailable. Please contact support if the problem continues."
         }
 
     @classmethod
@@ -148,16 +176,26 @@ class GSTPortalService:
         GSTN returns a 6-hour auth_token and Session Encryption Key (SEK).
         """
         config = cls.get_or_create_config(company)
-        taxpayer_gstin = (gstin or company.gstin or '09ACHFS9225Q1Z7').strip().upper()
+        taxpayer_gstin = (gstin or company.gstin or '').strip().upper()
         clean_otp = (otp or '').strip()
 
         if len(clean_otp) != 6 or not clean_otp.isdigit():
             return {
                 "success": False,
-                "error": "Invalid OTP format. Please enter the 6-digit numeric OTP sent by GSTN."
+                "error": "Please enter a valid 6-digit numeric OTP."
             }
 
-        # 1. Quicko Sandbox Gateway: Live verification when credentials exist (Render env vars or DB)
+        # 1. Brute-force protection: max 5 failed attempts per challenge
+        verify_attempts_key = f"gst_otp_verify_attempts_{company.id}"
+        attempts = cache.get(verify_attempts_key, 0)
+        if attempts >= 5:
+            return {
+                "success": False,
+                "error": "Too many incorrect OTP attempts. Please request a new OTP to continue.",
+                "code": "MAX_ATTEMPTS_EXCEEDED"
+            }
+
+        # 2. Quicko Gateway: Live verification when credentials exist (Render env vars or DB)
         client = SandboxGSTClient(company=company)
         if client.is_configured():
             if config.provider == 'MOCK':
@@ -169,18 +207,34 @@ class GSTPortalService:
                 otp=clean_otp
             )
             if not sb_res.get('success'):
+                cache.set(verify_attempts_key, attempts + 1, timeout=600)
+                raw_err = sb_res.get('error') or ''
+                cid = sb_res.get('correlation_id') or txn_id
+                logger.error(
+                    f"[GSTPortalService] OTP verify failed for company={company.id} "
+                    f"gstin={taxpayer_gstin} correlation_id={cid}: {raw_err}"
+                )
+                status_code = sb_res.get('status_code', 400)
+                normalized = normalize_gst_error(raw_err, status_code=status_code, category="otp_verify")
                 return {
                     "success": False,
-                    "error": sb_res.get('error') or "OTP verification failed via Quicko Sandbox gateway."
+                    "error": normalized,
+                    "correlation_id": cid,
                 }
+
             sb_data = sb_res.get('data') or {}
             if sb_data.get('status_cd') == '0' or 'error' in sb_data:
+                cache.set(verify_attempts_key, attempts + 1, timeout=600)
                 err_detail = sb_data.get('error')
                 err_msg = err_detail.get('message') if isinstance(err_detail, dict) else (err_detail or "OTP verification rejected by GSTN.")
+                normalized = normalize_gst_error(str(err_msg), status_code=400, category="otp_verify")
                 return {
                     "success": False,
-                    "error": str(err_msg)
+                    "error": normalized
                 }
+
+            # Clear failed attempts counter on success
+            cache.delete(verify_attempts_key)
 
             auth_token = sb_data.get('access_token') or sb_data.get('auth_token') or sb_res.get('correlation_id')
             token_expiry_ms = sb_data.get('token_expiry') or sb_data.get('session_expiry')
@@ -202,11 +256,9 @@ class GSTPortalService:
 
             return {
                 "success": True,
-                "auth_token": auth_token,
                 "expires_in_hours": 6,
                 "token_expires_at": expires_at.strftime('%Y-%m-%d %H:%M:%S'),
-                "is_sandbox": config.is_sandbox,
-                "message": "GST Portal session authenticated successfully via Sandbox by Quicko."
+                "message": "Your GST Portal account has been connected successfully."
             }
 
         # 2. Live Government NIC Direct API

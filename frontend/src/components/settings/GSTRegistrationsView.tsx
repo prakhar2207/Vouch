@@ -189,7 +189,7 @@ export default function GSTRegistrationsView({ companyId, companyName }: Props) 
     try {
       const res = await gstApi.verifyRegistration(companyId, regId, true);
       if (res.success) {
-        toast.success("Verified", "Registration status refreshed from Sandbox.");
+        toast.success("Verified", "Registration status refreshed successfully.");
         fetchRegistrations();
       } else {
         toast.error("Verification Failed", res.error || "Could not refresh status.");
@@ -268,7 +268,7 @@ export default function GSTRegistrationsView({ companyId, companyName }: Props) 
                 </span>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Manage state-level GSTINs for {companyName}. Verified via Sandbox by Quicko.
+                Manage state-level GSTINs for {companyName}. Verified via official GST records.
               </p>
             </div>
           </div>
@@ -334,7 +334,7 @@ export default function GSTRegistrationsView({ companyId, companyName }: Props) 
                   <button
                     onClick={() => handleVerifySingle(reg.id)}
                     disabled={verifyingId === reg.id}
-                    title="Verify now with Sandbox"
+                    title="Verify registration status"
                     className="px-2.5 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground text-[11px] font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-50"
                   >
                     <RefreshCw className={`w-3 h-3 ${verifyingId === reg.id ? 'animate-spin' : ''}`} />
@@ -385,7 +385,7 @@ export default function GSTRegistrationsView({ companyId, companyName }: Props) 
                   {editingReg ? "Edit GST Registration" : "Add GST Registration"}
                 </h3>
                 <p className="text-xs text-muted-foreground">
-                  Enter GSTIN and verify with Sandbox by Quicko
+                  Enter GSTIN and verify against official GST records
                 </p>
               </div>
             </div>

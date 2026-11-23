@@ -114,21 +114,11 @@ class CompanyGSTConfigAPIView(APIView):
         return Response({
             "success": True,
             "config": {
-                "provider": config.provider,
-                "is_sandbox": config.is_sandbox,
                 "is_portal_connected": is_connected,
                 "token_expires_at": config.token_expires_at.strftime('%Y-%m-%d %H:%M:%S') if config.token_expires_at else None,
                 "portal_username": config.eway_username or "",
-                "api_key": config.api_key[:4] + "****" if config.api_key else "",
-                "sandbox_api_key": api_key[:6] + "****" if api_key else "",
-                "has_sandbox_api_key": bool(api_key),
-                "has_sandbox_api_secret": bool(api_secret),
-                "has_env_credentials": has_env_credentials,
-                "sandbox_base_url": base_url or "https://api.sandbox.co.in",
-                "eway_username": config.eway_username,
-                "has_eway_password": bool(config.eway_password),
-                "einvoice_username": config.einvoice_username,
-                "has_einvoice_password": bool(config.einvoice_password),
+                "gstin": company.gstin or "",
+                "registered_name": company.name or "",
                 "updated_at": config.updated_at.strftime('%Y-%m-%d %H:%M:%S'),
             }
         })
@@ -496,6 +486,8 @@ class GSTRDirectPortalOTPRequestAPIView(APIView):
         username = request.data.get('username')
 
         result = GSTPortalService.request_portal_otp(company, gstin=gstin, username=username)
+        if not result.get('success'):
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
         return Response(result)
 
 

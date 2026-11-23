@@ -261,6 +261,7 @@ class SandboxGSTClient:
             "authorization": token,
             "x-api-key": api_key,
             "x-api-version": self.API_VERSION,
+            "x-source": "primary",
             "Content-Type": "application/json",
             "Accept": "application/json",
             "x-transaction-id": correlation_id,
