@@ -33,10 +33,10 @@ class GSTPortalService:
         config, _ = CompanyGSTConfig.objects.get_or_create(
             company=company,
             defaults={
-                'provider': 'MOCK',
-                'is_sandbox': True,
-                'api_key': 'sandbox_api_key_vouch',
-                'api_secret': 'sandbox_api_secret_vouch',
+                'provider': 'SANDBOX_CO_IN',
+                'is_sandbox': False,
+                'api_key': '',
+                'api_secret': '',
             }
         )
         return config
@@ -53,21 +53,24 @@ class GSTPortalService:
         portal_username = (username or config.eway_username or company.email or 'vouch_taxpayer').strip()
         txn_id = f"TXN-{uuid.uuid4().hex[:12].upper()}"
 
-        # 1. Quicko Sandbox Gateway: Active when provider is SANDBOX_CO_IN or credentials configured
+        # 1. Quicko Sandbox Gateway: Live calls when credentials exist (Render env vars or DB)
         client = SandboxGSTClient(company=company)
-        if config.provider == 'SANDBOX_CO_IN' or (client.is_configured() and config.provider not in ['MOCK', 'NIC_DIRECT']):
+        if client.is_configured():
+            if config.provider == 'MOCK':
+                config.provider = 'SANDBOX_CO_IN'
+                config.save(update_fields=['provider', 'updated_at'])
             sb_res = client.request_portal_otp(gstin=taxpayer_gstin, username=portal_username)
             if not sb_res.get('success'):
                 return {
                     "success": False,
-                    "error": sb_res.get('error') or "Failed to request OTP via Sandbox by Quicko.",
+                    "error": sb_res.get('error') or "Failed to request OTP via Quicko Sandbox gateway.",
                     "is_sandbox": config.is_sandbox,
                 }
             sb_data = sb_res.get('data') or {}
             msg = (
                 sb_data.get('message')
                 or sb_res.get('raw', {}).get('message')
-                or f"OTP successfully requested via Sandbox for GSTIN {taxpayer_gstin}."
+                or f"OTP successfully requested via Sandbox for GSTIN {taxpayer_gstin}. Please check your registered mobile."
             )
             return {
                 "success": True,
@@ -117,7 +120,14 @@ class GSTPortalService:
                     "error": f"Error contacting live GST Portal: {str(e)}"
                 }
 
-        # 3. Offline Sandbox / Mock Simulation Mode (only when provider == 'MOCK' or credentials absent)
+        # If provider is not MOCK and credentials are not configured, fail explicitly with actionable message
+        if config.provider != 'MOCK':
+            return {
+                "success": False,
+                "error": "Quicko Gateway credentials not found. Please ensure SANDBOX_API_KEY and SANDBOX_API_SECRET are configured in your Render environment variables or saved in Settings."
+            }
+
+        # 3. Offline Sandbox / Mock Simulation Mode (only when provider == 'MOCK' and credentials unconfigured)
         masked_mobile = f"******{company.phone[-4:] if company.phone and len(company.phone) >= 4 else '9821'}"
         return {
             "success": True,
@@ -147,9 +157,12 @@ class GSTPortalService:
                 "error": "Invalid OTP format. Please enter the 6-digit numeric OTP sent by GSTN."
             }
 
-        # 1. Quicko Sandbox Gateway: Active when provider is SANDBOX_CO_IN or credentials configured
+        # 1. Quicko Sandbox Gateway: Live verification when credentials exist (Render env vars or DB)
         client = SandboxGSTClient(company=company)
-        if config.provider == 'SANDBOX_CO_IN' or (client.is_configured() and config.provider not in ['MOCK', 'NIC_DIRECT']):
+        if client.is_configured():
+            if config.provider == 'MOCK':
+                config.provider = 'SANDBOX_CO_IN'
+                config.save(update_fields=['provider', 'updated_at'])
             sb_res = client.verify_portal_otp(
                 gstin=taxpayer_gstin,
                 username=username or config.eway_username or company.email or 'taxpayer',
@@ -158,7 +171,7 @@ class GSTPortalService:
             if not sb_res.get('success'):
                 return {
                     "success": False,
-                    "error": sb_res.get('error') or "OTP verification failed via Sandbox by Quicko."
+                    "error": sb_res.get('error') or "OTP verification failed via Quicko Sandbox gateway."
                 }
             sb_data = sb_res.get('data') or {}
             if sb_data.get('status_cd') == '0' or 'error' in sb_data:
@@ -241,6 +254,13 @@ class GSTPortalService:
                     "success": False,
                     "error": f"Error contacting live GST Portal: {str(e)}"
                 }
+
+        # If provider is not MOCK and credentials are not configured, fail explicitly
+        if config.provider != 'MOCK':
+            return {
+                "success": False,
+                "error": "Quicko Gateway credentials not found. Please ensure SANDBOX_API_KEY and SANDBOX_API_SECRET are configured in your Render environment variables or saved in Settings."
+            }
 
         # 3. Offline Sandbox / Mock Simulation Mode (only when provider == 'MOCK')
         simulated_token = f"GSTN-SANDBOX-{uuid.uuid4().hex[:16].upper()}"

@@ -153,6 +153,7 @@ export default function SettingsPage() {
   const [sandboxApiSecret, setSandboxApiSecret] = useState<string>('');
   const [hasSandboxApiKey, setHasSandboxApiKey] = useState<boolean>(false);
   const [hasSandboxApiSecret, setHasSandboxApiSecret] = useState<boolean>(false);
+  const [hasEnvCredentials, setHasEnvCredentials] = useState<boolean>(false);
   const [showSandboxSecret, setShowSandboxSecret] = useState<boolean>(false);
   const [testingConnection, setTestingConnection] = useState<boolean>(false);
   const [testConnectionResult, setTestConnectionResult] = useState<{ healthy: boolean; message: string } | null>(null);
@@ -418,6 +419,7 @@ export default function SettingsPage() {
         setSandboxApiKey(c.sandbox_api_key || '');
         setHasSandboxApiKey(Boolean(c.has_sandbox_api_key));
         setHasSandboxApiSecret(Boolean(c.has_sandbox_api_secret));
+        setHasEnvCredentials(Boolean(c.has_env_credentials));
         if (c.is_portal_connected) {
           setPortalStep('connected');
         } else {
@@ -2328,6 +2330,21 @@ export default function SettingsPage() {
                       </div>
                     </div>
                   </div>
+
+                  {hasEnvCredentials && (
+                    <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-xs flex items-center gap-2.5 text-emerald-800 dark:text-emerald-200">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      <div>
+                        <div className="font-bold flex items-center gap-1.5">
+                          <span>Render Platform Environment Credentials Active</span>
+                          <span className="px-1.5 py-0.2 bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 rounded text-[10px] font-mono">LIVE API READY</span>
+                        </div>
+                        <div className="text-[11px] text-emerald-700/90 dark:text-emerald-300/90 mt-0.5">
+                          Your Quicko API Key &amp; Secret from Render are loaded and active. Real-time taxpayer OTP requests and verification route directly to <strong>api.sandbox.co.in</strong>.
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {portalConnected ? (
                     <div className="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/20 space-y-3">

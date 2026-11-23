@@ -59,7 +59,7 @@ class SandboxGSTClient:
         """
         Resolves API Key, Secret, Base URL, and Sandbox mode.
         Enforces SSRF host allowlist checks.
-        Checks CompanyGSTConfig first, then falls back to Django settings / environment.
+        Checks CompanyGSTConfig first, then falls back to Django settings / Render environment.
         """
         api_key = ''
         api_secret = ''
@@ -70,11 +70,16 @@ class SandboxGSTClient:
             or os.environ.get('GST_SANDBOX_BASE_URL', '')
             or self.DEFAULT_BASE_URL
         )
-        is_sandbox = True
+        is_sandbox = False
 
         if self.config:
-            api_key = self.config.sandbox_api_key or self.config.api_key or ''
-            api_secret = self.config.sandbox_api_secret or self.config.api_secret or ''
+            k = (self.config.sandbox_api_key or self.config.api_key or '').strip()
+            s = (self.config.sandbox_api_secret or self.config.api_secret or '').strip()
+            # Ignore placeholder mock values
+            if k and not k.startswith('sandbox_api_key_vouch'):
+                api_key = k
+            if s and not s.startswith('sandbox_api_secret_vouch'):
+                api_secret = s
             if self.config.sandbox_base_url:
                 base_url = self.config.sandbox_base_url
             is_sandbox = self.config.is_sandbox
@@ -83,16 +88,37 @@ class SandboxGSTClient:
             api_key = (
                 getattr(settings, 'SANDBOX_API_KEY', '')
                 or getattr(settings, 'GST_SANDBOX_API_KEY', '')
+                or getattr(settings, 'QUICKO_API_KEY', '')
                 or os.environ.get('SANDBOX_API_KEY', '')
                 or os.environ.get('GST_SANDBOX_API_KEY', '')
+                or os.environ.get('QUICKO_API_KEY', '')
+                or os.environ.get('SANDBOX_KEY', '')
+                or os.environ.get('GST_API_KEY', '')
+                or os.environ.get('SANDBOX_CO_IN_API_KEY', '')
+                or os.environ.get('SANDBOX_CO_IN_KEY', '')
+                or os.environ.get('GST_CLIENT_ID', '')
+                or os.environ.get('API_KEY', '')
             )
         if not api_secret:
             api_secret = (
                 getattr(settings, 'SANDBOX_API_SECRET', '')
                 or getattr(settings, 'GST_SANDBOX_API_SECRET', '')
+                or getattr(settings, 'QUICKO_API_SECRET', '')
                 or os.environ.get('SANDBOX_API_SECRET', '')
                 or os.environ.get('GST_SANDBOX_API_SECRET', '')
+                or os.environ.get('QUICKO_API_SECRET', '')
+                or os.environ.get('SANDBOX_SECRET', '')
+                or os.environ.get('GST_API_SECRET', '')
+                or os.environ.get('SANDBOX_CO_IN_API_SECRET', '')
+                or os.environ.get('SANDBOX_CO_IN_SECRET', '')
+                or os.environ.get('GST_CLIENT_SECRET', '')
+                or os.environ.get('API_SECRET', '')
             )
+
+        if api_key:
+            api_key = str(api_key).strip().strip('"').strip("'")
+        if api_secret:
+            api_secret = str(api_secret).strip().strip('"').strip("'")
 
         # Adjust base URL for explicit sandbox environment if configured
         env_mode = getattr(settings, 'GST_SANDBOX_ENV', '') or os.environ.get('GST_SANDBOX_ENV', 'staging')
@@ -109,7 +135,7 @@ class SandboxGSTClient:
             )
             clean_url = self.DEFAULT_TEST_URL if (is_sandbox and 'test-api' in env_mode) else self.DEFAULT_BASE_URL
 
-        return api_key.strip(), api_secret.strip(), clean_url, is_sandbox
+        return api_key, api_secret, clean_url, is_sandbox
 
     def is_configured(self) -> bool:
         api_key, api_secret, _, _ = self.get_api_credentials()

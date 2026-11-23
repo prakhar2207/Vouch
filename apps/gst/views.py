@@ -79,9 +79,37 @@ class CompanyGSTConfigAPIView(APIView):
         return [IsAuthenticated(), CanManageGSTCredentials()]
 
     def get(self, request, company_id):
+        import os
+        from django.conf import settings
         from django.utils import timezone
         company = get_company_or_404(request.user, company_id)
         config, _ = CompanyGSTConfig.objects.get_or_create(company=company)
+
+        # 1. Auto-purge any stale mock/simulated tokens so user isn't stuck on fake sessions
+        if config.auth_token and (config.auth_token.startswith('GSTN-SANDBOX-') or config.auth_token.startswith('SIMULATED-')):
+            config.auth_token = ''
+            config.token_expires_at = None
+            config.save(update_fields=['auth_token', 'token_expires_at', 'updated_at'])
+
+        # 2. Check if credentials are provided in Render environment variables or DB
+        client = SandboxGSTClient(company=company)
+        api_key, api_secret, base_url, is_sb = client.get_api_credentials()
+        has_env_credentials = bool(
+            os.environ.get('SANDBOX_API_KEY')
+            or os.environ.get('GST_SANDBOX_API_KEY')
+            or os.environ.get('QUICKO_API_KEY')
+            or os.environ.get('SANDBOX_KEY')
+            or os.environ.get('GST_API_KEY')
+            or os.environ.get('SANDBOX_CO_IN_API_KEY')
+            or getattr(settings, 'SANDBOX_API_KEY', '')
+            or getattr(settings, 'GST_SANDBOX_API_KEY', '')
+        )
+
+        # If credentials exist and provider was still MOCK, auto-promote to SANDBOX_CO_IN
+        if client.is_configured() and config.provider == 'MOCK':
+            config.provider = 'SANDBOX_CO_IN'
+            config.save(update_fields=['provider', 'updated_at'])
+
         is_connected = bool(config.auth_token and (not config.token_expires_at or config.token_expires_at > timezone.now()))
         return Response({
             "success": True,
@@ -92,10 +120,11 @@ class CompanyGSTConfigAPIView(APIView):
                 "token_expires_at": config.token_expires_at.strftime('%Y-%m-%d %H:%M:%S') if config.token_expires_at else None,
                 "portal_username": config.eway_username or "",
                 "api_key": config.api_key[:4] + "****" if config.api_key else "",
-                "sandbox_api_key": config.sandbox_api_key[:6] + "****" if config.sandbox_api_key else "",
-                "has_sandbox_api_key": bool(config.sandbox_api_key),
-                "has_sandbox_api_secret": bool(config.sandbox_api_secret),
-                "sandbox_base_url": config.sandbox_base_url or "https://api.sandbox.co.in",
+                "sandbox_api_key": api_key[:6] + "****" if api_key else "",
+                "has_sandbox_api_key": bool(api_key),
+                "has_sandbox_api_secret": bool(api_secret),
+                "has_env_credentials": has_env_credentials,
+                "sandbox_base_url": base_url or "https://api.sandbox.co.in",
                 "eway_username": config.eway_username,
                 "has_eway_password": bool(config.eway_password),
                 "einvoice_username": config.einvoice_username,
