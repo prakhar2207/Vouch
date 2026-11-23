@@ -245,7 +245,7 @@ class GSTPortalSandboxIntegrationCorrectionTests(TestCase):
                     username="apex_user"
                 )
                 self.assertFalse(res["success"])
-                self.assertEqual(res["error"], "The OTP entered is incorrect or has expired. Please check and try again.")
+                self.assertEqual(res["error"], "The OTP entered has expired. Please request a new OTP to continue.")
 
     # -------------------------------------------------------------
     # 9. Successful OTP Verification

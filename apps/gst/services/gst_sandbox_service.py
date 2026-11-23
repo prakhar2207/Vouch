@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 import time
 import logging
@@ -11,7 +12,11 @@ from apps.companies.models import Company
 from apps.gst.models import CompanyGSTConfig
 from apps.gst.services.gstr_report_service import GSTRReportService
 from apps.gst.services.sandbox_client import SandboxGSTClient
-from apps.gst.services.gst_error_normalizer import normalize_gst_error
+from apps.gst.services.gst_error_normalizer import (
+    normalize_gst_error,
+    get_structured_gst_error,
+    PORTAL_HELP_GUIDE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +49,64 @@ class GSTPortalService:
         return config
 
     @classmethod
+    def get_preflight_status(cls, company: Company) -> Dict[str, Any]:
+        """
+        Phase 2: Automatic Preflight Checks
+        Evaluates company readiness for GST Portal connectivity before initiating OTP:
+        - GSTIN presence & format
+        - Provider API configuration readiness
+        - Existing active session token & expiration
+        - Taxpayer portal username readiness
+        """
+        taxpayer_gstin = (company.gstin or '').strip().upper()
+        config = cls.get_or_create_config(company)
+        portal_username = (config.eway_username or taxpayer_gstin).strip()
+
+        # 1. GSTIN Validation
+        if not taxpayer_gstin:
+            return {
+                "eligible": False,
+                "code": "GSTIN_MISSING",
+                "message": "Please configure a valid 15-character GSTIN in Firm Details before connecting to the GST Portal.",
+                "action": "CONFIGURE_GSTIN",
+                "gstin": None,
+                "is_connected": False,
+                "portal_help": PORTAL_HELP_GUIDE,
+            }
+
+        gstin_regex = r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$"
+        if not re.match(gstin_regex, taxpayer_gstin):
+            return {
+                "eligible": False,
+                "code": "GSTIN_INVALID_FORMAT",
+                "message": f"The configured GSTIN '{taxpayer_gstin}' is not a valid 15-character format.",
+                "action": "CONFIGURE_GSTIN",
+                "gstin": taxpayer_gstin,
+                "is_connected": False,
+                "portal_help": PORTAL_HELP_GUIDE,
+            }
+
+        # 2. Check Active Session Status
+        is_connected = bool(config.auth_token and (not config.token_expires_at or config.token_expires_at > timezone.now()))
+        is_expired = bool(config.auth_token and config.token_expires_at and config.token_expires_at <= timezone.now())
+
+        # 3. Gateway readiness check (safe abstraction: never leak keys, secrets or vendor names)
+        client = SandboxGSTClient(company=company)
+        is_gateway_ready = client.is_configured() or config.provider in ('SANDBOX_CO_IN', 'MOCK', 'NIC_DIRECT')
+
+        return {
+            "eligible": True,
+            "gateway_ready": is_gateway_ready,
+            "is_connected": is_connected,
+            "is_expired": is_expired,
+            "gstin": taxpayer_gstin,
+            "username": portal_username,
+            "registered_name": company.name,
+            "token_expires_at": config.token_expires_at.strftime('%Y-%m-%d %H:%M:%S') if config.token_expires_at else None,
+            "portal_help": PORTAL_HELP_GUIDE,
+        }
+
+    @classmethod
     def request_portal_otp(cls, company: Company, gstin: Optional[str] = None, username: Optional[str] = None) -> Dict[str, Any]:
         """
         Step 1 of Direct GST Portal Filing:
@@ -58,6 +121,8 @@ class GSTPortalService:
         if not taxpayer_gstin:
             return {
                 "success": False,
+                "code": "GSTIN_MISSING",
+                "action": "CONFIGURE_GSTIN",
                 "error": "A valid GSTIN is required to request a GST Portal OTP."
             }
 
@@ -82,7 +147,8 @@ class GSTPortalService:
             return {
                 "success": False,
                 "error": "Too many OTP requests. For security reasons, please try again in an hour.",
-                "code": "RATE_LIMIT_EXCEEDED"
+                "code": "RATE_LIMIT_EXCEEDED",
+                "action": "RETRY_LATER",
             }
 
         # 3. Quicko Gateway: Live calls when credentials exist (Render env vars or DB)
@@ -100,10 +166,13 @@ class GSTPortalService:
                     f"gstin={taxpayer_gstin} correlation_id={cid}: {raw_err}"
                 )
                 status_code = sb_res.get('status_code', 400)
-                normalized = normalize_gst_error(raw_err, status_code=status_code, category="otp_request")
+                structured = get_structured_gst_error(raw_err, status_code=status_code, category="otp_request")
                 return {
                     "success": False,
-                    "error": normalized,
+                    "error": structured["message"],
+                    "code": structured["code"],
+                    "action": structured["action"],
+                    "portal_help": structured.get("portal_help"),
                     "correlation_id": cid,
                 }
 
@@ -150,22 +219,31 @@ class GSTPortalService:
                     }
                 else:
                     logger.warning(f"GST Portal OTP request returned {res.status_code}: {res.text}")
+                    structured = get_structured_gst_error(res.text, status_code=res.status_code, category="otp_request")
                     return {
                         "success": False,
-                        "error": normalize_gst_error(res.text, status_code=res.status_code, category="otp_request")
+                        "error": structured["message"],
+                        "code": structured["code"],
+                        "action": structured["action"],
+                        "portal_help": structured.get("portal_help"),
                     }
             except Exception as e:
                 logger.exception(f"Error calling live GST Portal OTP: {e}")
+                structured = get_structured_gst_error(str(e), status_code=500, category="otp_request")
                 return {
                     "success": False,
-                    "error": normalize_gst_error(str(e), status_code=500, category="otp_request")
+                    "error": structured["message"],
+                    "code": structured["code"],
+                    "action": structured["action"],
                 }
 
         # 5. Fallback when credentials are unconfigured
         logger.error(f"[GSTPortalService] Gateway credentials missing for company {company.id}")
         return {
             "success": False,
-            "error": "GST Portal connection is temporarily unavailable. Please contact support if the problem continues."
+            "error": "GST Portal connection is temporarily unavailable. Please contact support if the problem continues.",
+            "code": "CONFIGURATION_ERROR",
+            "action": "CONTACT_SUPPORT",
         }
 
     @classmethod
@@ -182,6 +260,8 @@ class GSTPortalService:
         if len(clean_otp) != 6 or not clean_otp.isdigit():
             return {
                 "success": False,
+                "code": "INCORRECT_OTP",
+                "action": "REENTER_OTP",
                 "error": "Please enter a valid 6-digit numeric OTP."
             }
 
@@ -192,7 +272,8 @@ class GSTPortalService:
             return {
                 "success": False,
                 "error": "Too many incorrect OTP attempts. Please request a new OTP to continue.",
-                "code": "MAX_ATTEMPTS_EXCEEDED"
+                "code": "MAX_ATTEMPTS_EXCEEDED",
+                "action": "REQUEST_NEW_OTP",
             }
 
         # 2. Quicko Gateway: Live verification when credentials exist (Render env vars or DB)
@@ -216,10 +297,13 @@ class GSTPortalService:
                     f"gstin={taxpayer_gstin} correlation_id={cid}: {raw_err}"
                 )
                 status_code = sb_res.get('status_code', 400)
-                normalized = normalize_gst_error(raw_err, status_code=status_code, category="otp_verify")
+                structured = get_structured_gst_error(raw_err, status_code=status_code, category="otp_verify")
                 return {
                     "success": False,
-                    "error": normalized,
+                    "error": structured["message"],
+                    "code": structured["code"],
+                    "action": structured["action"],
+                    "portal_help": structured.get("portal_help"),
                     "correlation_id": cid,
                 }
 
@@ -228,10 +312,13 @@ class GSTPortalService:
                 cache.set(verify_attempts_key, attempts + 1, timeout=600)
                 err_detail = sb_data.get('error')
                 err_msg = err_detail.get('message') if isinstance(err_detail, dict) else (err_detail or "OTP verification rejected by GSTN.")
-                normalized = normalize_gst_error(str(err_msg), status_code=400, category="otp_verify")
+                structured = get_structured_gst_error(str(err_msg), status_code=400, category="otp_verify")
                 return {
                     "success": False,
-                    "error": normalized
+                    "error": structured["message"],
+                    "code": structured["code"],
+                    "action": structured["action"],
+                    "portal_help": structured.get("portal_help"),
                 }
 
             # Clear failed attempts counter on success

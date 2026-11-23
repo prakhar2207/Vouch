@@ -470,6 +470,21 @@ class GSTRMarkPeriodFiledAPIView(APIView):
         })
 
 
+class GSTRDirectPortalPreflightAPIView(APIView):
+    """
+    GET /api/v1/gst/portal/preflight/<uuid:company_id>/
+    Phase 2: Automatic Preflight Readiness Check.
+    Validates company GSTIN, provider gateway availability, and active session status
+    without exposing internal infrastructure, vendor names, or API credentials.
+    """
+    permission_classes = [IsAuthenticated, CanViewGST]
+
+    def get(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        result = GSTPortalService.get_preflight_status(company)
+        return Response({"success": True, "preflight": result})
+
+
 class GSTRDirectPortalOTPRequestAPIView(APIView):
     """
     POST /api/v1/gst/portal/request-otp/

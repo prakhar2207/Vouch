@@ -57,6 +57,7 @@ import {
   CheckCircle,
   ExternalLink,
   Shield,
+  ShieldAlert,
   Landmark,
   LogOut,
   Activity,
@@ -144,7 +145,9 @@ export default function SettingsPage() {
   const [portalStep, setPortalStep] = useState<'idle' | 'otp' | 'connected'>('idle');
   const [portalLoading, setPortalLoading] = useState(false);
   const [portalError, setPortalError] = useState<string | null>(null);
+  const [portalErrorCode, setPortalErrorCode] = useState<string | null>(null);
   const [portalSuccess, setPortalSuccess] = useState<string | null>(null);
+  const [portalPreflight, setPortalPreflight] = useState<any | null>(null);
 
   const [mounted, setMounted] = useState<boolean>(false);
   const [otpCooldown, setOtpCooldown] = useState<number>(0);
@@ -408,20 +411,34 @@ export default function SettingsPage() {
 
   const fetchGSTConfig = async (companyId: string) => {
     try {
-      const res = await api.get(`/api/v1/gst/config/${companyId}/`);
-      if (res.data?.success && res.data.config) {
-        const c = res.data.config;
+      const [configRes, preflightRes] = await Promise.allSettled([
+        api.get(`/api/v1/gst/config/${companyId}/`),
+        api.get(`/api/v1/gst/portal/preflight/${companyId}/`)
+      ]);
+
+      if (configRes.status === 'fulfilled' && configRes.value.data?.success && configRes.value.data.config) {
+        const c = configRes.value.data.config;
         setPortalConnected(Boolean(c.is_portal_connected));
         setPortalUsername(c.portal_username || c.eway_username || '');
         setPortalExpiresAt(c.token_expires_at || null);
         setPortalOtp('');
         setPortalTxnId('');
         setPortalError(null);
+        setPortalErrorCode(null);
         setPortalSuccess(null);
         if (c.is_portal_connected) {
           setPortalStep('connected');
         } else {
           setPortalStep('idle');
+        }
+      }
+
+      if (preflightRes.status === 'fulfilled' && preflightRes.value.data?.success && preflightRes.value.data.preflight) {
+        const pf = preflightRes.value.data.preflight;
+        setPortalPreflight(pf);
+        if (pf.code === 'GSTIN_MISSING' || pf.code === 'GSTIN_INVALID_FORMAT') {
+          setPortalErrorCode(pf.code);
+          setPortalError(pf.message);
         }
       }
     } catch (e) {
@@ -772,6 +789,7 @@ export default function SettingsPage() {
     if (!comp?.id) return;
     setPortalLoading(true);
     setPortalError(null);
+    setPortalErrorCode(null);
     setPortalSuccess(null);
     try {
       const res = await api.post(`/api/v1/gst/portal/request-otp/`, {
@@ -783,14 +801,17 @@ export default function SettingsPage() {
         setPortalTxnId(res.data.txn_id || '');
         setPortalStep('otp');
         setOtpCooldown(res.data.cooldown_seconds || 30);
-        setPortalSuccess(res.data.message || "We've requested an OTP for your registered GST Portal account. Enter the OTP to continue.");
+        setPortalSuccess(res.data.message || "A verification OTP has been sent to your registered GST Portal mobile and email.");
         toast.success("GST Portal OTP Requested", "Check your registered mobile number for the OTP.");
       } else {
         setPortalError(res.data?.error || "We couldn't send the OTP. Please verify your GST Portal username and try again.");
+        if (res.data?.code) setPortalErrorCode(res.data.code);
       }
     } catch (err: any) {
-      const backendError = err.response?.data?.error || err.response?.data?.message;
+      const data = err.response?.data;
+      const backendError = data?.error || data?.message;
       setPortalError(backendError || "We couldn't connect to the GST Portal right now. Please try again.");
+      if (data?.code) setPortalErrorCode(data.code);
     } finally {
       setPortalLoading(false);
     }
@@ -801,6 +822,7 @@ export default function SettingsPage() {
     if (!comp?.id) return;
     setPortalLoading(true);
     setPortalError(null);
+    setPortalErrorCode(null);
     try {
       const res = await api.post(`/api/v1/gst/portal/verify-otp/`, {
         company_id: comp.id,
@@ -816,11 +838,14 @@ export default function SettingsPage() {
         toast.success("GST Portal Connected", "Your account is verified and securely connected.");
         fetchGSTConfig(comp.id);
       } else {
-        setPortalError(res.data?.error || "The OTP is incorrect or has expired. Please try again.");
+        setPortalError(res.data?.error || "The OTP entered is incorrect or has expired. Please check and try again.");
+        if (res.data?.code) setPortalErrorCode(res.data.code);
       }
     } catch (err: any) {
-      const backendError = err.response?.data?.error || err.response?.data?.message;
-      setPortalError(backendError || "We couldn't verify your GST Portal account. Please check your OTP and try again.");
+      const data = err.response?.data;
+      const backendError = data?.error || data?.message;
+      setPortalError(backendError || "The OTP entered is incorrect or has expired. Please check and try again.");
+      if (data?.code) setPortalErrorCode(data.code);
     } finally {
       setPortalLoading(false);
     }
@@ -2362,13 +2387,78 @@ export default function SettingsPage() {
                     </div>
                   ) : (
                     /* Not Connected / OTP Verification State */
-                    <div className="space-y-4">
+                    <div className="space-y-5">
+                      {/* Step 1 Preflight: Check GSTIN Presence */}
+                      {!(gstin || currentCompany.gstin) && (
+                        <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in duration-150">
+                          <div className="flex items-center gap-2 text-amber-700 dark:text-amber-300">
+                            <AlertTriangle className="w-4 h-4 shrink-0" />
+                            <span>No GSTIN configured for this entity. A valid 15-character GSTIN is required to connect to the GST Portal.</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab('firm-profile')}
+                            className="px-3.5 py-1.5 bg-background border border-border/60 hover:bg-muted text-xs font-semibold rounded-lg shrink-0 cursor-pointer text-foreground"
+                          >
+                            Configure GSTIN in Firm Details
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Step 3 & 5 Guided Onboarding Card: When API Access is Disabled on GST Portal */}
+                      {(portalErrorCode === 'API_ACCESS_DISABLED' || portalErrorCode === 'GSP_AUTH_MISSING') && (
+                        <div className="p-5 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-4 animate-in fade-in duration-200">
+                          <div className="flex items-start gap-3">
+                            <div className="p-2 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400 shrink-0">
+                              <ShieldAlert className="w-5 h-5" />
+                            </div>
+                            <div className="space-y-1">
+                              <h3 className="text-sm font-bold text-foreground">Action Required on Government GST Portal</h3>
+                              <p className="text-xs text-muted-foreground leading-relaxed">
+                                {portalError || "GST API access is currently disabled for this GST registration. Please enable API access in your GST Portal account and try again."}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="bg-background/80 dark:bg-background/40 border border-amber-500/20 rounded-xl p-4 space-y-2.5 text-xs text-foreground">
+                            <div className="font-bold text-[11px] uppercase tracking-wider text-muted-foreground">Follow these 4 simple steps:</div>
+                            <ol className="list-decimal list-inside space-y-1.5 text-muted-foreground font-normal">
+                              <li><span className="text-foreground font-medium">Sign in to your GST Portal account</span> at services.gst.gov.in</li>
+                              <li>Go to <span className="text-foreground font-medium">My Profile</span> &gt; <span className="text-foreground font-medium">Manage API Access</span></li>
+                              <li>Select <span className="text-foreground font-medium">Yes</span> for &apos;Enable API Request&apos; and choose <span className="text-foreground font-medium">30 days</span></li>
+                              <li>If prompted for GSP, choose <span className="text-foreground font-bold text-amber-700 dark:text-amber-300">Quicko Infosoft Private Limited</span></li>
+                            </ol>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-3 pt-1">
+                            <a
+                              href="https://services.gst.gov.in"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-2 cursor-pointer"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                              <span>Open Government GST Portal ↗</span>
+                            </a>
+                            <button
+                              type="button"
+                              onClick={handleRequestPortalOTP}
+                              disabled={portalLoading}
+                              className="px-4 py-2.5 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl text-xs font-bold transition-all disabled:opacity-50 flex items-center gap-2 cursor-pointer"
+                            >
+                              <RefreshCw className={`w-3.5 h-3.5 ${portalLoading ? 'animate-spin' : ''}`} />
+                              <span>{portalLoading ? 'Connecting...' : "I've enabled API access — Try Connecting Again"}</span>
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
                       {portalStep === 'idle' ? (
                         <div className="p-5 rounded-2xl bg-muted/20 border border-border/40 space-y-4">
                           <div className="space-y-1">
                             <label className="text-xs font-bold text-foreground">GST Portal Username</label>
                             <p className="text-xs text-muted-foreground">
-                              Enter your registered GST Portal username. We will request a one-time OTP directly to your registered mobile number:
+                              Enter your registered GST Portal username. We will request a one-time OTP directly from the Government GST Portal to your registered mobile and email:
                             </p>
                           </div>
 
@@ -2383,7 +2473,7 @@ export default function SettingsPage() {
                             <button
                               type="button"
                               onClick={handleRequestPortalOTP}
-                              disabled={portalLoading}
+                              disabled={portalLoading || !(gstin || currentCompany.gstin)}
                               className="w-full sm:w-auto px-5 py-2.5 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2 shrink-0 shadow-sm"
                             >
                               <Key className={`w-3.5 h-3.5 ${portalLoading ? 'animate-spin' : ''}`} />
@@ -2391,8 +2481,14 @@ export default function SettingsPage() {
                             </button>
                           </div>
 
-                          <div className="text-[11px] text-muted-foreground">
-                            Note: By default, your GST Portal username is your 15-character GSTIN unless you created a customized API username on the GST Common Portal.
+                          <div className="flex flex-col gap-1.5 text-[11px] text-muted-foreground pt-1">
+                            <div>
+                              Note: By default, your GST Portal username is your 15-character GSTIN unless you created a customized API username on the GST Common Portal.
+                            </div>
+                            <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium">
+                              <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                              <span>Secure &amp; Encrypted: SriLekh never asks for your GST Portal password. Direct connection uses official Government OTP verification.</span>
+                            </div>
                           </div>
                         </div>
                       ) : (
@@ -2439,6 +2535,7 @@ export default function SettingsPage() {
                               onClick={() => {
                                 setPortalStep('idle');
                                 setPortalError(null);
+                                setPortalErrorCode(null);
                               }}
                               className="w-full sm:w-auto px-3 py-2 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
                             >
@@ -2448,8 +2545,8 @@ export default function SettingsPage() {
                         </div>
                       )}
 
-                      {/* Connection Error Message */}
-                      {portalError && (
+                      {/* Connection Error Message for non-API-access-disabled errors */}
+                      {portalError && portalErrorCode !== 'API_ACCESS_DISABLED' && portalErrorCode !== 'GSP_AUTH_MISSING' && portalErrorCode !== 'GSTIN_MISSING' && (
                         <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 text-xs flex items-center gap-2.5 animate-in fade-in duration-150">
                           <AlertTriangle className="w-4 h-4 shrink-0" />
                           <span>{portalError}</span>

@@ -12,6 +12,7 @@ from .views import (
     GSTRPreFilingExceptionsAPIView,
     GSTR9AnnualSummaryAPIView,
     GSTRMarkPeriodFiledAPIView,
+    GSTRDirectPortalPreflightAPIView,
     GSTRDirectPortalOTPRequestAPIView,
     GSTRDirectPortalVerifyOTPAPIView,
     GSTRDirectPortalUploadGSTR1APIView,
@@ -136,6 +137,7 @@ urlpatterns = [
     path('eway-bill/voucher/<uuid:voucher_id>/', EWayBillVoucherDetailAPIView.as_view(), name='eway_bill_voucher_detail'),
 
     # 9. Direct GST Portal OTP Endpoints
+    path('portal/preflight/<uuid:company_id>/', GSTRDirectPortalPreflightAPIView.as_view(), name='gst_portal_preflight'),
     path('portal/request-otp/', GSTRDirectPortalOTPRequestAPIView.as_view(), name='gst_portal_request_otp'),
     path('portal/verify-otp/', GSTRDirectPortalVerifyOTPAPIView.as_view(), name='gst_portal_verify_otp'),
     path('portal/disconnect/', GSTRDirectPortalDisconnectAPIView.as_view(), name='gst_portal_disconnect'),
