@@ -569,16 +569,27 @@ class GSTRDirectPortalDisconnectAPIView(APIView):
             return Response({"success": False, "error": "company_id is required."}, status=status.HTTP_400_BAD_REQUEST)
         company = get_company_or_404(request.user, company_id)
 
-        config = CompanyGSTConfig.objects.filter(company=company).first()
-        if config:
-            config.auth_token = ''
-            config.token_expires_at = None
-            config.save(update_fields=['auth_token', 'token_expires_at', 'updated_at'])
+        result = GSTPortalService.disconnect_portal_session(company)
+        return Response(result)
 
-        return Response({
-            "success": True,
-            "message": "GST Portal session disconnected successfully."
-        })
+
+class GSTRDirectPortalRefreshSessionAPIView(APIView):
+    """
+    POST /api/v1/gst/portal/refresh/
+    Refreshes the active GST Portal session token.
+    """
+    permission_classes = [IsAuthenticated, CanFileGST]
+
+    def post(self, request):
+        company_id = request.data.get('company_id')
+        if not company_id:
+            return Response({"success": False, "error": "company_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+        company = get_company_or_404(request.user, company_id)
+
+        result = GSTPortalService.refresh_portal_session(company)
+        if not result.get('success'):
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        return Response(result)
 
 
 

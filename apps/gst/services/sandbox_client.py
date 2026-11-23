@@ -178,6 +178,7 @@ class SandboxGSTClient:
             "x-api-secret": api_secret,
             "x-api-version": self.API_VERSION,
             "Content-Type": "application/json",
+            "Accept": "application/json",
             "x-transaction-id": correlation_id,
         }
 
@@ -249,7 +250,12 @@ class SandboxGSTClient:
         except requests.exceptions.RequestException as e:
             raise GSTIntegrationError("Network error communicating with Sandbox /authenticate.", status_code=502)
 
-    def _get_authorized_headers(self, custom_session_token: Optional[str] = None) -> tuple[Dict[str, str], str]:
+    def _get_authorized_headers(
+        self,
+        custom_session_token: Optional[str] = None,
+        source: str = "primary",
+        omit_source: bool = False
+    ) -> tuple[Dict[str, str], str]:
         """
         Builds standard authorized headers for Sandbox GST endpoints.
         """
@@ -261,11 +267,12 @@ class SandboxGSTClient:
             "authorization": token,
             "x-api-key": api_key,
             "x-api-version": self.API_VERSION,
-            "x-source": "primary",
             "Content-Type": "application/json",
             "Accept": "application/json",
             "x-transaction-id": correlation_id,
         }
+        if not omit_source:
+            headers["x-source"] = source or "primary"
         return headers, correlation_id
 
     def execute_request(
@@ -275,6 +282,9 @@ class SandboxGSTClient:
         payload: Optional[Dict[str, Any]] = None,
         params: Optional[Dict[str, Any]] = None,
         custom_session_token: Optional[str] = None,
+        source: str = "primary",
+        omit_source: bool = False,
+        headers_override: Optional[Dict[str, str]] = None,
         action: str = 'GST_API_CALL',
         user: Any = None,
         allow_retries: bool = False
@@ -289,7 +299,13 @@ class SandboxGSTClient:
         """
         _, _, base_url, _ = self.get_api_credentials()
         endpoint = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
-        headers, correlation_id = self._get_authorized_headers(custom_session_token)
+        headers, correlation_id = self._get_authorized_headers(
+            custom_session_token=custom_session_token,
+            source=source,
+            omit_source=omit_source
+        )
+        if headers_override:
+            headers.update(headers_override)
 
         max_attempts = 3 if allow_retries else 1
         last_exception = None
@@ -475,37 +491,97 @@ class SandboxGSTClient:
     # ==========================================
     # 2. TAXPAYER PORTAL OTP COMPLIANCE
     # ==========================================
-    def request_portal_otp(self, gstin: str, username: str, user: Any = None) -> Dict[str, Any]:
+    def request_portal_otp(
+        self,
+        gstin: str,
+        username: str,
+        source: str = "primary",
+        user: Any = None,
+        omit_source: bool = False
+    ) -> Dict[str, Any]:
         """
         Requests OTP for taxpayer filing session:
         POST /gst/compliance/tax-payer/otp
+        Payload: {"username": username, "gstin": gstin}
         """
-        payload = {"gstin": gstin.strip().upper(), "username": username.strip()}
+        payload = {"username": username.strip(), "gstin": gstin.strip().upper()}
         return self.execute_request(
             method='POST',
             path='/gst/compliance/tax-payer/otp',
             payload=payload,
+            source=source,
+            omit_source=omit_source,
             action='PORTAL_OTP_REQUEST',
             user=user,
             allow_retries=False
         )
 
-    def verify_portal_otp(self, gstin: str, username: str, otp: str, user: Any = None) -> Dict[str, Any]:
+    def verify_portal_otp(
+        self,
+        gstin: str,
+        username: str,
+        otp: str,
+        source: str = "primary",
+        user: Any = None,
+        omit_source: bool = False
+    ) -> Dict[str, Any]:
         """
         Verifies OTP and establishes taxpayer compliance session token:
-        POST /gst/compliance/tax-payer/otp/verify
+        POST /gst/compliance/tax-payer/otp/verify?otp=<otp>
+        Payload: {"username": username, "gstin": gstin}
         """
         payload = {
-            "gstin": gstin.strip().upper(),
             "username": username.strip(),
-            "otp": str(otp).strip()
+            "gstin": gstin.strip().upper()
         }
         return self.execute_request(
             method='POST',
             path='/gst/compliance/tax-payer/otp/verify',
             payload=payload,
             params={"otp": str(otp).strip()},
+            source=source,
+            omit_source=omit_source,
             action='PORTAL_OTP_VERIFY',
+            user=user,
+            allow_retries=False
+        )
+
+    def refresh_portal_session(
+        self,
+        session_token: str,
+        source: str = "primary",
+        user: Any = None
+    ) -> Dict[str, Any]:
+        """
+        Refreshes active taxpayer compliance session token:
+        POST /gst/compliance/tax-payer/session/refresh
+        """
+        return self.execute_request(
+            method='POST',
+            path='/gst/compliance/tax-payer/session/refresh',
+            custom_session_token=session_token,
+            source=source,
+            action='PORTAL_SESSION_REFRESH',
+            user=user,
+            allow_retries=False
+        )
+
+    def logout_portal_session(
+        self,
+        session_token: str,
+        source: str = "primary",
+        user: Any = None
+    ) -> Dict[str, Any]:
+        """
+        Terminates active taxpayer compliance session token on Sandbox:
+        POST /gst/compliance/tax-payer/logout
+        """
+        return self.execute_request(
+            method='POST',
+            path='/gst/compliance/tax-payer/logout',
+            custom_session_token=session_token,
+            source=source,
+            action='PORTAL_SESSION_LOGOUT',
             user=user,
             allow_retries=False
         )

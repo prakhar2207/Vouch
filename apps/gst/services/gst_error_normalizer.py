@@ -52,7 +52,7 @@ def normalize_gst_error(raw_error: Optional[str], status_code: int = 400, catego
     if "otp" in raw_lower and any(
         term in raw_lower for term in ["invalid", "expired", "incorrect", "mismatch", "failed", "wrong"]
     ):
-        return "The OTP entered is incorrect or has expired. Please request a new OTP."
+        return "The OTP entered is incorrect or has expired. Please check and try again."
 
     # 4. Taxpayer / Username not found
     if any(term in raw_lower for term in ["taxpayer not found", "invalid taxpayer", "user not found", "user does not exist"]):
@@ -61,11 +61,12 @@ def normalize_gst_error(raw_error: Optional[str], status_code: int = 400, catego
         return "Please check your GST Portal username and try again."
 
     # 5. API Access disabled on government portal
-    if any(phrase in raw_lower for phrase in ["api access", "enable api", "manage api access", "duration"]):
-        return (
-            "API access is not enabled on your GST Portal. "
-            "Please log in to services.gst.gov.in, navigate to View Profile > Manage API Access, and enable access."
-        )
+    if any(phrase in raw_lower for phrase in [
+        "api access", "enable api", "manage api access", "duration",
+        "api_access_disabled", "access is disabled", "access not enabled", "gsp access",
+        "api access is disabled", "api access is not enabled", "api access disabled"
+    ]):
+        return "GST API access is currently disabled for this GST registration. Please enable API access in your GST Portal account and try again."
 
     # 6. Session Expired or Token Invalid
     if any(phrase in raw_lower for phrase in ["session expired", "token expired", "unauthorized session", "auth token"]):

@@ -201,9 +201,10 @@ class GSTPortalService:
             if config.provider == 'MOCK':
                 config.provider = 'SANDBOX_CO_IN'
                 config.save(update_fields=['provider', 'updated_at'])
+            portal_user = (username or config.eway_username or company.email or taxpayer_gstin).strip()
             sb_res = client.verify_portal_otp(
                 gstin=taxpayer_gstin,
-                username=username or config.eway_username or company.email or 'taxpayer',
+                username=portal_user,
                 otp=clean_otp
             )
             if not sb_res.get('success'):
@@ -236,8 +237,8 @@ class GSTPortalService:
             # Clear failed attempts counter on success
             cache.delete(verify_attempts_key)
 
-            auth_token = sb_data.get('access_token') or sb_data.get('auth_token') or sb_res.get('correlation_id')
-            token_expiry_ms = sb_data.get('token_expiry') or sb_data.get('session_expiry')
+            auth_token = sb_data.get('auth_token') or sb_data.get('access_token') or sb_res.get('correlation_id')
+            token_expiry_ms = sb_data.get('session_expiry') or sb_data.get('token_expiry')
             if token_expiry_ms:
                 try:
                     expires_at = datetime.fromtimestamp(int(token_expiry_ms) / 1000.0, tz=timezone.utc)
@@ -249,8 +250,8 @@ class GSTPortalService:
             config.auth_token = auth_token
             config.token_expires_at = expires_at
             update_fields = ['auth_token', 'token_expires_at', 'updated_at']
-            if username and username.strip():
-                config.eway_username = username.strip()
+            if portal_user:
+                config.eway_username = portal_user
                 update_fields.append('eway_username')
             config.save(update_fields=update_fields)
 
@@ -311,7 +312,7 @@ class GSTPortalService:
         if config.provider != 'MOCK':
             return {
                 "success": False,
-                "error": "Quicko Gateway credentials not found. Please ensure SANDBOX_API_KEY and SANDBOX_API_SECRET are configured in your Render environment variables or saved in Settings."
+                "error": "GST Portal connection is temporarily unavailable. Please contact support if the problem continues."
             }
 
         # 3. Offline Sandbox / Mock Simulation Mode (only when provider == 'MOCK')
@@ -331,6 +332,83 @@ class GSTPortalService:
             "token_expires_at": config.token_expires_at.strftime('%Y-%m-%d %H:%M:%S'),
             "is_sandbox": True,
             "message": "Simulated GST Portal session created (Test Mode)."
+        }
+
+    @classmethod
+    def refresh_portal_session(cls, company: Company) -> Dict[str, Any]:
+        """
+        Extends/refreshes an active GST Portal taxpayer session:
+        POST /gst/compliance/tax-payer/session/refresh
+        """
+        config = cls.get_or_create_config(company)
+        if not config.auth_token:
+            return {
+                "success": False,
+                "error": "No active GST Portal session found to refresh. Please connect using OTP."
+            }
+
+        client = SandboxGSTClient(company=company)
+        if client.is_configured():
+            sb_res = client.refresh_portal_session(session_token=config.auth_token)
+            if not sb_res.get('success'):
+                raw_err = sb_res.get('error') or ''
+                status_code = sb_res.get('status_code', 400)
+                normalized = normalize_gst_error(raw_err, status_code=status_code, category="otp_verify")
+                return {
+                    "success": False,
+                    "error": normalized
+                }
+
+            sb_data = sb_res.get('data') or {}
+            new_token = sb_data.get('access_token') or sb_data.get('auth_token') or config.auth_token
+            expiry_ms = sb_data.get('session_expiry') or sb_data.get('token_expiry')
+            if expiry_ms:
+                try:
+                    expires_at = datetime.fromtimestamp(int(expiry_ms) / 1000.0, tz=timezone.utc)
+                except Exception:
+                    expires_at = timezone.now() + timedelta(hours=6)
+            else:
+                expires_at = timezone.now() + timedelta(hours=6)
+
+            config.auth_token = new_token
+            config.token_expires_at = expires_at
+            config.save(update_fields=['auth_token', 'token_expires_at', 'updated_at'])
+
+            return {
+                "success": True,
+                "token_expires_at": expires_at.strftime('%Y-%m-%d %H:%M:%S'),
+                "message": "GST Portal session refreshed successfully."
+            }
+
+        return {
+            "success": False,
+            "error": "GST Portal connection is temporarily unavailable. Please contact support if the problem continues."
+        }
+
+    @classmethod
+    def disconnect_portal_session(cls, company: Company) -> Dict[str, Any]:
+        """
+        Invalidates active session token with Sandbox and clears database session credentials:
+        POST /gst/compliance/tax-payer/logout
+        """
+        config = cls.get_or_create_config(company)
+        old_token = config.auth_token
+
+        if old_token:
+            client = SandboxGSTClient(company=company)
+            if client.is_configured():
+                try:
+                    client.logout_portal_session(session_token=old_token)
+                except Exception as e:
+                    logger.warning(f"[GSTPortalService] Remote session logout exception: {e}")
+
+        config.auth_token = ''
+        config.token_expires_at = None
+        config.save(update_fields=['auth_token', 'token_expires_at', 'updated_at'])
+
+        return {
+            "success": True,
+            "message": "GST Portal session disconnected successfully."
         }
 
     @classmethod

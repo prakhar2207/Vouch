@@ -414,6 +414,10 @@ export default function SettingsPage() {
         setPortalConnected(Boolean(c.is_portal_connected));
         setPortalUsername(c.portal_username || c.eway_username || '');
         setPortalExpiresAt(c.token_expires_at || null);
+        setPortalOtp('');
+        setPortalTxnId('');
+        setPortalError(null);
+        setPortalSuccess(null);
         if (c.is_portal_connected) {
           setPortalStep('connected');
         } else {
@@ -843,6 +847,30 @@ export default function SettingsPage() {
       }
     } catch (err: any) {
       toast.error("Failed to disconnect", err.response?.data?.error || "Unable to revoke session.");
+    } finally {
+      setPortalLoading(false);
+    }
+  };
+
+  const handleRefreshPortalSession = async () => {
+    const comp = currentCompany;
+    if (!comp?.id) return;
+    setPortalLoading(true);
+    setPortalError(null);
+    try {
+      const res = await api.post(`/api/v1/gst/portal/refresh/`, {
+        company_id: comp.id
+      });
+      if (res.data?.success) {
+        setPortalConnected(true);
+        setPortalExpiresAt(res.data.token_expires_at || null);
+        toast.success("GST Session Refreshed", res.data.message || "Active portal session extended successfully.");
+        fetchGSTConfig(comp.id);
+      } else {
+        toast.error("Refresh Failed", res.data?.error || "Could not refresh session.");
+      }
+    } catch (err: any) {
+      toast.error("Refresh Failed", err.response?.data?.error || "Unable to refresh session.");
     } finally {
       setPortalLoading(false);
     }
@@ -2299,7 +2327,7 @@ export default function SettingsPage() {
                           )}
                         </div>
 
-                        <div className="flex items-center gap-3 pt-3 border-t border-emerald-500/15">
+                        <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-emerald-500/15">
                           <button
                             type="button"
                             onClick={handleDisconnectPortalSession}
@@ -2311,6 +2339,15 @@ export default function SettingsPage() {
                           </button>
                           <button
                             type="button"
+                            onClick={handleRefreshPortalSession}
+                            disabled={portalLoading}
+                            className="px-4 py-2 rounded-xl border border-border/50 text-foreground hover:bg-muted/40 text-xs font-medium flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${portalLoading ? 'animate-spin' : ''}`} />
+                            <span>{portalLoading ? 'Refreshing...' : 'Extend Session'}</span>
+                          </button>
+                          <button
+                            type="button"
                             onClick={async () => {
                               setPortalStep('idle');
                               setPortalConnected(false);
@@ -2318,7 +2355,7 @@ export default function SettingsPage() {
                             className="px-4 py-2 rounded-xl border border-border/50 text-foreground hover:bg-muted/40 text-xs font-medium flex items-center gap-2 transition-all cursor-pointer"
                           >
                             <RefreshCw className="w-3.5 h-3.5" />
-                            <span>Reconnect / Re-authenticate</span>
+                            <span>Reconnect with New OTP</span>
                           </button>
                         </div>
                       </div>

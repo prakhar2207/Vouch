@@ -17,6 +17,7 @@ from .views import (
     GSTRDirectPortalUploadGSTR1APIView,
     GSTRDirectPortalStatusAPIView,
     GSTRDirectPortalDisconnectAPIView,
+    GSTRDirectPortalRefreshSessionAPIView,
     # Phase 2 & 3 Sandbox by Quicko Integration Views
     GSTRegistrationListCreateAPIView,
     GSTRegistrationDetailAPIView,
@@ -138,6 +139,7 @@ urlpatterns = [
     path('portal/request-otp/', GSTRDirectPortalOTPRequestAPIView.as_view(), name='gst_portal_request_otp'),
     path('portal/verify-otp/', GSTRDirectPortalVerifyOTPAPIView.as_view(), name='gst_portal_verify_otp'),
     path('portal/disconnect/', GSTRDirectPortalDisconnectAPIView.as_view(), name='gst_portal_disconnect'),
+    path('portal/refresh/', GSTRDirectPortalRefreshSessionAPIView.as_view(), name='gst_portal_refresh'),
     path('portal/upload-gstr1/', GSTRDirectPortalUploadGSTR1APIView.as_view(), name='gst_portal_upload_gstr1'),
     path('portal/status/<uuid:company_id>/<str:ref_id>/', GSTRDirectPortalStatusAPIView.as_view(), name='gst_portal_status'),
 
