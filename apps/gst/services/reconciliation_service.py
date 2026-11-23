@@ -67,7 +67,8 @@ class GSTReconciliationService:
             year = str(now.year)
 
         client = SandboxGSTClient(company=company, registration=registration)
-        session_token = registration.auth_token if registration else None
+        config = CompanyGSTConfig.objects.filter(company=company).first()
+        session_token = (registration.auth_token if registration and registration.auth_token else None) or (config.auth_token if config and config.auth_token else None)
 
         if not client.is_configured():
             return {

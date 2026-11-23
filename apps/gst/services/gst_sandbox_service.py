@@ -9,6 +9,7 @@ from django.utils import timezone
 from apps.companies.models import Company
 from apps.gst.models import CompanyGSTConfig
 from apps.gst.services.gstr_report_service import GSTRReportService
+from apps.gst.services.sandbox_client import SandboxGSTClient
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,33 @@ class GSTPortalService:
         portal_username = (username or config.eway_username or company.email or 'vouch_taxpayer').strip()
         txn_id = f"TXN-{uuid.uuid4().hex[:12].upper()}"
 
-        if not config.is_sandbox and config.api_key and config.provider != 'MOCK':
+        # 1. Quicko Sandbox Gateway: Active when provider is SANDBOX_CO_IN or credentials configured
+        client = SandboxGSTClient(company=company)
+        if config.provider == 'SANDBOX_CO_IN' or (client.is_configured() and config.provider not in ['MOCK', 'NIC_DIRECT']):
+            sb_res = client.request_portal_otp(gstin=taxpayer_gstin, username=portal_username)
+            if not sb_res.get('success'):
+                return {
+                    "success": False,
+                    "error": sb_res.get('error') or "Failed to request OTP via Sandbox by Quicko.",
+                    "is_sandbox": config.is_sandbox,
+                }
+            sb_data = sb_res.get('data') or {}
+            msg = (
+                sb_data.get('message')
+                or sb_res.get('raw', {}).get('message')
+                or f"OTP successfully requested via Sandbox for GSTIN {taxpayer_gstin}."
+            )
+            return {
+                "success": True,
+                "gstin": taxpayer_gstin,
+                "username": portal_username,
+                "txn_id": sb_res.get('correlation_id') or txn_id,
+                "is_sandbox": config.is_sandbox,
+                "message": msg
+            }
+
+        # 2. Live Government NIC Direct API
+        if not config.is_sandbox and config.api_key and config.provider == 'NIC_DIRECT':
             try:
                 endpoint = f"{cls.PRODUCTION_BASE_URL}/authenticate"
                 headers = {
@@ -79,10 +106,18 @@ class GSTPortalService:
                     }
                 else:
                     logger.warning(f"GST Portal OTP request returned {res.status_code}: {res.text}")
+                    return {
+                        "success": False,
+                        "error": f"GST Portal returned HTTP {res.status_code}: {res.text[:300]}"
+                    }
             except Exception as e:
                 logger.exception(f"Error calling live GST Portal OTP: {e}")
+                return {
+                    "success": False,
+                    "error": f"Error contacting live GST Portal: {str(e)}"
+                }
 
-        # Sandbox Mode: Instant simulated OTP generation
+        # 3. Offline Sandbox / Mock Simulation Mode (only when provider == 'MOCK' or credentials absent)
         masked_mobile = f"******{company.phone[-4:] if company.phone and len(company.phone) >= 4 else '9821'}"
         return {
             "success": True,
@@ -92,7 +127,7 @@ class GSTPortalService:
             "is_sandbox": config.is_sandbox,
             "masked_mobile": masked_mobile,
             "sandbox_test_otp": "575757",
-            "message": f"OTP sent to authorized signatory mobile ({masked_mobile}) and email registered with GSTN."
+            "message": f"[Mock Mode] OTP sent to authorized signatory mobile ({masked_mobile}) and email registered with GSTN. Use test OTP: 575757"
         }
 
     @classmethod
@@ -112,7 +147,57 @@ class GSTPortalService:
                 "error": "Invalid OTP format. Please enter the 6-digit numeric OTP sent by GSTN."
             }
 
-        if not config.is_sandbox and config.api_key and config.provider != 'MOCK':
+        # 1. Quicko Sandbox Gateway: Active when provider is SANDBOX_CO_IN or credentials configured
+        client = SandboxGSTClient(company=company)
+        if config.provider == 'SANDBOX_CO_IN' or (client.is_configured() and config.provider not in ['MOCK', 'NIC_DIRECT']):
+            sb_res = client.verify_portal_otp(
+                gstin=taxpayer_gstin,
+                username=username or config.eway_username or company.email or 'taxpayer',
+                otp=clean_otp
+            )
+            if not sb_res.get('success'):
+                return {
+                    "success": False,
+                    "error": sb_res.get('error') or "OTP verification failed via Sandbox by Quicko."
+                }
+            sb_data = sb_res.get('data') or {}
+            if sb_data.get('status_cd') == '0' or 'error' in sb_data:
+                err_detail = sb_data.get('error')
+                err_msg = err_detail.get('message') if isinstance(err_detail, dict) else (err_detail or "OTP verification rejected by GSTN.")
+                return {
+                    "success": False,
+                    "error": str(err_msg)
+                }
+
+            auth_token = sb_data.get('access_token') or sb_data.get('auth_token') or sb_res.get('correlation_id')
+            token_expiry_ms = sb_data.get('token_expiry') or sb_data.get('session_expiry')
+            if token_expiry_ms:
+                try:
+                    expires_at = datetime.fromtimestamp(int(token_expiry_ms) / 1000.0, tz=timezone.utc)
+                except Exception:
+                    expires_at = timezone.now() + timedelta(hours=6)
+            else:
+                expires_at = timezone.now() + timedelta(hours=6)
+
+            config.auth_token = auth_token
+            config.token_expires_at = expires_at
+            update_fields = ['auth_token', 'token_expires_at', 'updated_at']
+            if username and username.strip():
+                config.eway_username = username.strip()
+                update_fields.append('eway_username')
+            config.save(update_fields=update_fields)
+
+            return {
+                "success": True,
+                "auth_token": auth_token,
+                "expires_in_hours": 6,
+                "token_expires_at": expires_at.strftime('%Y-%m-%d %H:%M:%S'),
+                "is_sandbox": config.is_sandbox,
+                "message": "GST Portal session authenticated successfully via Sandbox by Quicko."
+            }
+
+        # 2. Live Government NIC Direct API
+        if not config.is_sandbox and config.api_key and config.provider == 'NIC_DIRECT':
             try:
                 endpoint = f"{cls.PRODUCTION_BASE_URL}/authenticate"
                 headers = {
@@ -133,7 +218,11 @@ class GSTPortalService:
                     auth_token = data.get("auth_token", f"GSTN-AUTH-{uuid.uuid4().hex}")
                     config.auth_token = auth_token
                     config.token_expires_at = timezone.now() + timedelta(hours=6)
-                    config.save(update_fields=['auth_token', 'token_expires_at', 'updated_at'])
+                    update_fields = ['auth_token', 'token_expires_at', 'updated_at']
+                    if username and username.strip():
+                        config.eway_username = username.strip()
+                        update_fields.append('eway_username')
+                    config.save(update_fields=update_fields)
                     return {
                         "success": True,
                         "auth_token": auth_token,
@@ -141,10 +230,19 @@ class GSTPortalService:
                         "is_sandbox": False,
                         "message": "GST Portal session authenticated successfully."
                     }
+                else:
+                    return {
+                        "success": False,
+                        "error": f"GST Portal rejected OTP (HTTP {res.status_code}): {res.text[:300]}"
+                    }
             except Exception as e:
                 logger.exception(f"Error validating live GST OTP: {e}")
+                return {
+                    "success": False,
+                    "error": f"Error contacting live GST Portal: {str(e)}"
+                }
 
-        # Sandbox Mode: Accept standard GST sandbox OTP (575757) or any valid 6-digit input
+        # 3. Offline Sandbox / Mock Simulation Mode (only when provider == 'MOCK')
         simulated_token = f"GSTN-SANDBOX-{uuid.uuid4().hex[:16].upper()}"
         config.auth_token = simulated_token
         config.token_expires_at = timezone.now() + timedelta(hours=6)
@@ -158,8 +256,9 @@ class GSTPortalService:
             "success": True,
             "auth_token": simulated_token,
             "expires_in_hours": 6,
-            "is_sandbox": config.is_sandbox,
-            "message": "GST Sandbox Portal session active. You can now push returns directly."
+            "token_expires_at": config.token_expires_at.strftime('%Y-%m-%d %H:%M:%S'),
+            "is_sandbox": True,
+            "message": "Simulated GST Portal session created (Test Mode)."
         }
 
     @classmethod

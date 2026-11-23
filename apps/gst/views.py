@@ -92,6 +92,10 @@ class CompanyGSTConfigAPIView(APIView):
                 "token_expires_at": config.token_expires_at.strftime('%Y-%m-%d %H:%M:%S') if config.token_expires_at else None,
                 "portal_username": config.eway_username or "",
                 "api_key": config.api_key[:4] + "****" if config.api_key else "",
+                "sandbox_api_key": config.sandbox_api_key[:6] + "****" if config.sandbox_api_key else "",
+                "has_sandbox_api_key": bool(config.sandbox_api_key),
+                "has_sandbox_api_secret": bool(config.sandbox_api_secret),
+                "sandbox_base_url": config.sandbox_base_url or "https://api.sandbox.co.in",
                 "eway_username": config.eway_username,
                 "has_eway_password": bool(config.eway_password),
                 "einvoice_username": config.einvoice_username,
@@ -112,6 +116,12 @@ class CompanyGSTConfigAPIView(APIView):
             config.provider = data['provider']
         if 'is_sandbox' in data:
             config.is_sandbox = bool(data['is_sandbox'])
+        if 'sandbox_api_key' in data and data['sandbox_api_key'] and not data['sandbox_api_key'].endswith('****'):
+            config.sandbox_api_key = data['sandbox_api_key'].strip()
+        if 'sandbox_api_secret' in data and data['sandbox_api_secret']:
+            config.sandbox_api_secret = data['sandbox_api_secret'].strip()
+        if 'sandbox_base_url' in data and data['sandbox_base_url']:
+            config.sandbox_base_url = data['sandbox_base_url'].strip()
         if 'api_key' in data and data['api_key'] and not data['api_key'].endswith('****'):
             config.api_key = data['api_key'].strip()
         if 'api_secret' in data and data['api_secret']:
@@ -127,6 +137,21 @@ class CompanyGSTConfigAPIView(APIView):
 
         config.save()
         return Response({"success": True, "message": "GST configuration updated successfully."})
+
+
+class CompanyGSTConfigTestConnectionAPIView(APIView):
+    """
+    POST /api/v1/gst/config/<uuid:company_id>/test-connection/
+    Tests connectivity and authentication with the configured GST gateway (Sandbox by Quicko).
+    """
+    permission_classes = [IsAuthenticated, CanViewGST]
+
+    def post(self, request, company_id):
+        company = get_company_or_404(request.user, company_id)
+        from apps.gst.services.authentication_service import SandboxAuthenticationService
+        result = SandboxAuthenticationService.test_connection(company=company)
+        status_code = status.HTTP_200_OK if result.get('healthy') else status.HTTP_400_BAD_REQUEST
+        return Response(result, status=status_code)
 
 
 class EWayBillGenerateAPIView(APIView):
@@ -508,6 +533,31 @@ class GSTRDirectPortalStatusAPIView(APIView):
         company = get_company_or_404(request.user, company_id)
         result = GSTPortalService.get_portal_status(company, ref_id)
         return Response(result)
+
+
+class GSTRDirectPortalDisconnectAPIView(APIView):
+    """
+    POST /api/v1/gst/portal/disconnect/
+    Revokes the active GST Portal session token and marks the taxpayer portal as disconnected.
+    """
+    permission_classes = [IsAuthenticated, CanFileGST]
+
+    def post(self, request):
+        company_id = request.data.get('company_id')
+        if not company_id:
+            return Response({"success": False, "error": "company_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+        company = get_company_or_404(request.user, company_id)
+
+        config = CompanyGSTConfig.objects.filter(company=company).first()
+        if config:
+            config.auth_token = ''
+            config.token_expires_at = None
+            config.save(update_fields=['auth_token', 'token_expires_at', 'updated_at'])
+
+        return Response({
+            "success": True,
+            "message": "GST Portal session disconnected successfully."
+        })
 
 
 

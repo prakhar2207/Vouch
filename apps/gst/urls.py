@@ -2,6 +2,7 @@ from django.urls import path
 from .views import (
     GSTINLookupAPIView,
     CompanyGSTConfigAPIView,
+    CompanyGSTConfigTestConnectionAPIView,
     EWayBillGenerateAPIView,
     EWayBillUpdateVehicleAPIView,
     EWayBillCancelAPIView,
@@ -15,6 +16,7 @@ from .views import (
     GSTRDirectPortalVerifyOTPAPIView,
     GSTRDirectPortalUploadGSTR1APIView,
     GSTRDirectPortalStatusAPIView,
+    GSTRDirectPortalDisconnectAPIView,
     # Phase 2 & 3 Sandbox by Quicko Integration Views
     GSTRegistrationListCreateAPIView,
     GSTRegistrationDetailAPIView,
@@ -77,6 +79,7 @@ urlpatterns = [
     # 3. GST Overview Dashboard
     path('overview/<uuid:company_id>/', GSTOverviewAPIView.as_view(), name='gst_overview'),
     path('config/<uuid:company_id>/', CompanyGSTConfigAPIView.as_view(), name='gst_config'),
+    path('config/<uuid:company_id>/test-connection/', CompanyGSTConfigTestConnectionAPIView.as_view(), name='gst_config_test_connection'),
 
     # 4. GSTR-1 Outward Supplies Workspace
     path('returns/gstr1/<uuid:company_id>/', GSTR1WorkspaceAPIView.as_view(), name='gst_returns_gstr1_workspace'),
@@ -134,6 +137,7 @@ urlpatterns = [
     # 9. Direct GST Portal OTP Endpoints
     path('portal/request-otp/', GSTRDirectPortalOTPRequestAPIView.as_view(), name='gst_portal_request_otp'),
     path('portal/verify-otp/', GSTRDirectPortalVerifyOTPAPIView.as_view(), name='gst_portal_verify_otp'),
+    path('portal/disconnect/', GSTRDirectPortalDisconnectAPIView.as_view(), name='gst_portal_disconnect'),
     path('portal/upload-gstr1/', GSTRDirectPortalUploadGSTR1APIView.as_view(), name='gst_portal_upload_gstr1'),
     path('portal/status/<uuid:company_id>/<str:ref_id>/', GSTRDirectPortalStatusAPIView.as_view(), name='gst_portal_status'),
 

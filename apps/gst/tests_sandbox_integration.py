@@ -797,3 +797,130 @@ class SandboxGSTIntegrationTests(TestCase):
 
         self.assertEqual(initial_vouchers, current_vouchers, "Vouchers must remain completely unchanged!")
         self.assertEqual(initial_ledgers, current_ledgers, "Ledgers must remain completely unchanged!")
+
+    # =========================================================================
+    # SECTION 12: GST PORTAL DISCONNECT & SANDBOX GATEWAY CREDENTIALS
+    # =========================================================================
+    def test_gst_portal_disconnect_session(self):
+        """
+        Verifies that /api/v1/gst/portal/disconnect/ securely revokes
+        the active GST portal session token and resets expiration.
+        """
+        uc = UserCompany.objects.get(user=self.user, company=self.company)
+        uc.role = 'ADMIN'
+        uc.save()
+
+        self.config.auth_token = "GSTN-AUTH-SESSION-TOKEN-ABC123"
+        self.config.token_expires_at = timezone.now() + timedelta(hours=6)
+        self.config.save()
+
+        from rest_framework.test import APIClient
+        client = APIClient()
+        client.force_authenticate(user=self.user)
+
+        res = client.post('/api/v1/gst/portal/disconnect/', {'company_id': str(self.company.id)}, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.data.get('success'))
+
+        self.config.refresh_from_db()
+        self.assertEqual(self.config.auth_token, "")
+        self.assertIsNone(self.config.token_expires_at)
+
+    def test_gst_config_sandbox_credentials_lifecycle(self):
+        """
+        Verifies that CompanyGSTConfig API correctly exposes and updates
+        dedicated Sandbox.co.in credentials and provider settings.
+        """
+        uc = UserCompany.objects.get(user=self.user, company=self.company)
+        uc.role = 'ADMIN'
+        uc.save()
+
+        from rest_framework.test import APIClient
+        client = APIClient()
+        client.force_authenticate(user=self.user)
+
+        # 1. Update config with new Sandbox credentials
+        payload = {
+            "provider": "SANDBOX_CO_IN",
+            "is_sandbox": True,
+            "sandbox_api_key": "key_live_test_api_key_456",
+            "sandbox_api_secret": "secret_live_test_secret_789",
+        }
+        res = client.post(f'/api/v1/gst/config/{self.company.id}/', payload, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.data.get('success'))
+
+        # 2. Query config
+        get_res = client.get(f'/api/v1/gst/config/{self.company.id}/')
+        self.assertEqual(get_res.status_code, 200)
+        cfg = get_res.data.get('config', {})
+        self.assertEqual(cfg.get('provider'), 'SANDBOX_CO_IN')
+        self.assertTrue(cfg.get('is_sandbox'))
+        self.assertTrue(cfg.get('has_sandbox_api_key'))
+        self.assertTrue(cfg.get('has_sandbox_api_secret'))
+        self.assertTrue(cfg.get('sandbox_api_key').endswith('****'))
+
+    def test_gst_portal_service_routes_to_sandbox_client(self):
+        """
+        Verifies that GSTPortalService.request_portal_otp and verify_portal_otp
+        route to SandboxGSTClient when provider is SANDBOX_CO_IN.
+        """
+        from apps.gst.services.gst_sandbox_service import GSTPortalService
+
+        mock_req_res = {
+            "success": True,
+            "correlation_id": "CORR-SB-999",
+            "data": {"message": "OTP delivered via Sandbox"}
+        }
+        with patch.object(SandboxGSTClient, 'request_portal_otp', return_value=mock_req_res):
+            res = GSTPortalService.request_portal_otp(
+                company=self.company,
+                gstin="27AAACA1234A1Z5",
+                username="test_user"
+            )
+            self.assertTrue(res.get("success"))
+            self.assertEqual(res.get("txn_id"), "CORR-SB-999")
+
+        mock_verify_res = {
+            "success": True,
+            "correlation_id": "CORR-SB-VERIFY-111",
+            "data": {
+                "access_token": "SANDBOX-SESSION-JWT-TOKEN-XYZ",
+                "token_expiry": int((timezone.now() + timedelta(hours=6)).timestamp() * 1000)
+            }
+        }
+        with patch.object(SandboxGSTClient, 'verify_portal_otp', return_value=mock_verify_res):
+            res_v = GSTPortalService.verify_portal_otp(
+                company=self.company,
+                otp="123456",
+                gstin="27AAACA1234A1Z5",
+                username="test_user"
+            )
+            self.assertTrue(res_v.get("success"))
+            self.assertEqual(res_v.get("auth_token"), "SANDBOX-SESSION-JWT-TOKEN-XYZ")
+
+        self.config.refresh_from_db()
+        self.assertEqual(self.config.auth_token, "SANDBOX-SESSION-JWT-TOKEN-XYZ")
+        self.assertIsNotNone(self.config.token_expires_at)
+
+    def test_gst_gateway_test_connection_endpoint(self):
+        """
+        Verifies /api/v1/gst/config/<company_id>/test-connection/ endpoint.
+        """
+        uc = UserCompany.objects.get(user=self.user, company=self.company)
+        uc.role = 'ADMIN'
+        uc.save()
+
+        from rest_framework.test import APIClient
+        from apps.gst.services.authentication_service import SandboxAuthenticationService
+        client = APIClient()
+        client.force_authenticate(user=self.user)
+
+        with patch.object(SandboxAuthenticationService, 'test_connection', return_value={
+            "healthy": True,
+            "configured": True,
+            "message": "Connected to Quicko Sandbox"
+        }):
+            res = client.post(f'/api/v1/gst/config/{self.company.id}/test-connection/')
+            self.assertEqual(res.status_code, 200)
+            self.assertTrue(res.data.get('healthy'))

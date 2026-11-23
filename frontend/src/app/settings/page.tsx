@@ -57,7 +57,10 @@ import {
   CheckCircle,
   ExternalLink,
   Shield,
-  Landmark
+  Landmark,
+  LogOut,
+  Activity,
+  Info
 } from 'lucide-react';
 
 export default function SettingsPage() {
@@ -142,6 +145,18 @@ export default function SettingsPage() {
   const [portalLoading, setPortalLoading] = useState(false);
   const [portalError, setPortalError] = useState<string | null>(null);
   const [portalSuccess, setPortalSuccess] = useState<string | null>(null);
+
+  // GST Gateway Provider & Sandbox Credentials State
+  const [gstProvider, setGstProvider] = useState<'SANDBOX_CO_IN' | 'NIC_DIRECT' | 'MOCK'>('SANDBOX_CO_IN');
+  const [isGstSandbox, setIsGstSandbox] = useState<boolean>(true);
+  const [sandboxApiKey, setSandboxApiKey] = useState<string>('');
+  const [sandboxApiSecret, setSandboxApiSecret] = useState<string>('');
+  const [hasSandboxApiKey, setHasSandboxApiKey] = useState<boolean>(false);
+  const [hasSandboxApiSecret, setHasSandboxApiSecret] = useState<boolean>(false);
+  const [showSandboxSecret, setShowSandboxSecret] = useState<boolean>(false);
+  const [testingConnection, setTestingConnection] = useState<boolean>(false);
+  const [testConnectionResult, setTestConnectionResult] = useState<{ healthy: boolean; message: string } | null>(null);
+  const [savingGstConfig, setSavingGstConfig] = useState<boolean>(false);
 
   // Branding State
   const [accentColor, setAccentColor] = useState('#0f172a');
@@ -394,10 +409,16 @@ export default function SettingsPage() {
     try {
       const res = await api.get(`/api/v1/gst/config/${companyId}/`);
       if (res.data?.success && res.data.config) {
-        setPortalConnected(Boolean(res.data.config.is_portal_connected));
-        setPortalUsername(res.data.config.portal_username || res.data.config.eway_username || '');
-        setPortalExpiresAt(res.data.config.token_expires_at || null);
-        if (res.data.config.is_portal_connected) {
+        const c = res.data.config;
+        setPortalConnected(Boolean(c.is_portal_connected));
+        setPortalUsername(c.portal_username || c.eway_username || '');
+        setPortalExpiresAt(c.token_expires_at || null);
+        setGstProvider(c.provider || 'SANDBOX_CO_IN');
+        setIsGstSandbox(c.is_sandbox !== false);
+        setSandboxApiKey(c.sandbox_api_key || '');
+        setHasSandboxApiKey(Boolean(c.has_sandbox_api_key));
+        setHasSandboxApiSecret(Boolean(c.has_sandbox_api_secret));
+        if (c.is_portal_connected) {
           setPortalStep('connected');
         } else {
           setPortalStep('idle');
@@ -799,6 +820,94 @@ export default function SettingsPage() {
       setPortalError(err.response?.data?.error || "Failed to verify OTP.");
     } finally {
       setPortalLoading(false);
+    }
+  };
+
+  const handleDisconnectPortalSession = async () => {
+    const comp = currentCompany;
+    if (!comp?.id) return;
+    setPortalLoading(true);
+    setPortalError(null);
+    try {
+      const res = await api.post(`/api/v1/gst/portal/disconnect/`, {
+        company_id: comp.id
+      });
+      if (res.data?.success) {
+        setPortalConnected(false);
+        setPortalExpiresAt(null);
+        setPortalStep('idle');
+        setPortalSuccess(null);
+        setPortalOtp('');
+        toast.success("GST Session Disconnected", "Active portal session has been logged out.");
+      } else {
+        toast.error("Failed to disconnect", res.data?.error || "Error revoking session.");
+      }
+    } catch (err: any) {
+      toast.error("Failed to disconnect", err.response?.data?.error || err.message);
+    } finally {
+      setPortalLoading(false);
+    }
+  };
+
+  const handleSaveGSTConfig = async () => {
+    const comp = currentCompany;
+    if (!comp?.id) return;
+    setSavingGstConfig(true);
+    setTestConnectionResult(null);
+    try {
+      const payload: any = {
+        provider: gstProvider,
+        is_sandbox: isGstSandbox,
+      };
+      if (sandboxApiKey && !sandboxApiKey.endsWith('****')) {
+        payload.sandbox_api_key = sandboxApiKey.trim();
+      }
+      if (sandboxApiSecret) {
+        payload.sandbox_api_secret = sandboxApiSecret.trim();
+      }
+      const res = await api.post(`/api/v1/gst/config/${comp.id}/`, payload);
+      if (res.data?.success) {
+        toast.success("Gateway Settings Saved", "Credentials and provider configuration updated.");
+        await fetchGSTConfig(comp.id);
+      } else {
+        toast.error("Failed to save settings", res.data?.error);
+      }
+    } catch (err: any) {
+      toast.error("Failed to save settings", err.response?.data?.error || err.message);
+    } finally {
+      setSavingGstConfig(false);
+    }
+  };
+
+  const handleTestSandboxConnection = async () => {
+    const comp = currentCompany;
+    if (!comp?.id) return;
+    setTestingConnection(true);
+    setTestConnectionResult(null);
+    try {
+      const res = await api.post(`/api/v1/gst/config/${comp.id}/test-connection/`, {});
+      if (res.data?.healthy) {
+        setTestConnectionResult({
+          healthy: true,
+          message: res.data.message || "Successfully connected to Sandbox by Quicko gateway."
+        });
+        toast.success("Gateway Online", res.data.message || "Connection verified successfully.");
+      } else {
+        setTestConnectionResult({
+          healthy: false,
+          message: res.data?.error || res.data?.message || "Failed to authenticate with Sandbox."
+        });
+        toast.error("Gateway Check Failed", res.data?.error || res.data?.message);
+      }
+    } catch (err: any) {
+      const msg = err.response?.data?.error || err.response?.data?.message || err.message;
+      setTestConnectionResult({
+        healthy: false,
+        message: msg
+      });
+      toast.error("Connection Failed", msg);
+    } finally {
+      setTestingConnection(false);
     }
   };
 
@@ -2192,6 +2301,7 @@ export default function SettingsPage() {
             {/* TAB 6: GOVERNMENT GST PORTAL INTEGRATION (COMPANY SETTINGS) */}
             {activeTab === 'gst-portal' && currentCompany && (
               <div className="space-y-6 animate-in fade-in duration-200">
+                {/* 1. Portal Active Session & Authentication Card */}
                 <div className="bg-card border border-border/50 rounded-2xl p-6 shadow-2xs space-y-5">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-border/40 gap-3">
                     <div className="flex items-center gap-3">
@@ -2221,22 +2331,42 @@ export default function SettingsPage() {
 
                   {portalConnected ? (
                     <div className="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/20 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="text-xs text-foreground font-semibold">
-                          Active API Gateway Session Connected for GSTIN: <strong className="font-mono">{gstin || currentCompany.gstin}</strong>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="text-xs text-foreground font-semibold flex items-center gap-2">
+                            <span>Active API Gateway Session Connected for GSTIN:</span>
+                            <span className="font-mono bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded text-xs font-bold">
+                              {gstin || currentCompany.gstin}
+                            </span>
+                          </div>
+                          {portalExpiresAt && (
+                            <div className="text-[11px] text-muted-foreground font-mono">
+                              Session token valid until: {new Date(portalExpiresAt).toLocaleString()}
+                            </div>
+                          )}
                         </div>
-                        <button
-                          onClick={() => setPortalStep('idle')}
-                          className="text-xs text-muted-foreground hover:text-foreground underline cursor-pointer"
-                        >
-                          Reconnect / Refresh Session
-                        </button>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={handleDisconnectPortalSession}
+                            disabled={portalLoading}
+                            className="px-3.5 py-1.5 rounded-xl border border-rose-500/30 text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                          >
+                            <LogOut className="w-3.5 h-3.5" />
+                            <span>{portalLoading ? 'Disconnecting...' : 'Disconnect / Logout'}</span>
+                          </button>
+                          <button
+                            onClick={async () => {
+                              await handleDisconnectPortalSession();
+                              setPortalStep('idle');
+                            }}
+                            className="px-3 py-1.5 rounded-xl border border-border/50 text-foreground hover:bg-muted/40 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                            <span>Reconnect / Refresh</span>
+                          </button>
+                        </div>
                       </div>
-                      {portalExpiresAt && (
-                        <div className="text-[11px] text-muted-foreground font-mono">
-                          Session token valid until: {new Date(portalExpiresAt).toLocaleString()}
-                        </div>
-                      )}
                     </div>
                   ) : (
                     <div className="space-y-4">
@@ -2303,6 +2433,165 @@ export default function SettingsPage() {
                       )}
                     </div>
                   )}
+                </div>
+
+                {/* 2. GST Gateway Provider & Sandbox Credentials Card */}
+                <div className="bg-card border border-border/50 rounded-2xl p-6 shadow-2xs space-y-5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-border/40 gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-500">
+                        <Key className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-bold text-foreground">GST API Gateway & Sandbox Credentials</h3>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Configure Sandbox.co.in (Quicko) or Government Direct Gateway for real-time OTP, filing, and GSTR-2B syncing
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Provider Selection */}
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-foreground">API Gateway Provider</label>
+                      <select
+                        value={gstProvider}
+                        onChange={(e) => setGstProvider(e.target.value as any)}
+                        className="w-full bg-muted/20 border border-input text-foreground text-xs p-2.5 rounded-xl outline-none"
+                      >
+                        <option value="SANDBOX_CO_IN">Sandbox by Quicko (api.sandbox.co.in - Recommended)</option>
+                        <option value="NIC_DIRECT">Direct NIC / Government Portal API</option>
+                        <option value="MOCK">Offline Simulation (Local Demo Mode)</option>
+                      </select>
+                      <p className="text-[11px] text-muted-foreground">
+                        Select Sandbox by Quicko to enable live API communication with console.sandbox.co.in.
+                      </p>
+                    </div>
+
+                    {/* Environment Mode */}
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-foreground">Gateway Environment</label>
+                      <div className="flex items-center gap-4 pt-2">
+                        <label className="flex items-center gap-2 cursor-pointer text-xs">
+                          <input
+                            type="radio"
+                            name="gstEnv"
+                            checked={isGstSandbox}
+                            onChange={() => setIsGstSandbox(true)}
+                            className="text-primary focus:ring-primary"
+                          />
+                          <span>Sandbox / Test Mode</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer text-xs">
+                          <input
+                            type="radio"
+                            name="gstEnv"
+                            checked={!isGstSandbox}
+                            onChange={() => setIsGstSandbox(false)}
+                            className="text-primary focus:ring-primary"
+                          />
+                          <span>Live Production Mode</span>
+                        </label>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        Use Sandbox mode to test against sandbox.co.in endpoints before going live.
+                      </p>
+                    </div>
+
+                    {/* Sandbox API Key */}
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-foreground flex items-center justify-between">
+                        <span>Sandbox API Key</span>
+                        {hasSandboxApiKey && (
+                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono font-bold">Key Saved</span>
+                        )}
+                      </label>
+                      <input
+                        type="text"
+                        value={sandboxApiKey}
+                        onChange={(e) => setSandboxApiKey(e.target.value)}
+                        placeholder={hasSandboxApiKey ? "Leave blank to keep existing key (or enter key_live_...)" : "Enter Sandbox API Key (key_live_... / key_test_...)"}
+                        className="w-full bg-muted/20 border border-input text-foreground text-xs p-2.5 rounded-xl font-mono outline-none"
+                      />
+                    </div>
+
+                    {/* Sandbox API Secret */}
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-foreground flex items-center justify-between">
+                        <span>Sandbox API Secret</span>
+                        {hasSandboxApiSecret && (
+                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono font-bold">Secret Saved</span>
+                        )}
+                      </label>
+                      <div className="relative">
+                        <input
+                          type={showSandboxSecret ? "text" : "password"}
+                          value={sandboxApiSecret}
+                          onChange={(e) => setSandboxApiSecret(e.target.value)}
+                          placeholder={hasSandboxApiSecret ? "•••••••••••••••• (Leave blank to keep existing)" : "Enter Sandbox API Secret"}
+                          className="w-full bg-muted/20 border border-input text-foreground text-xs p-2.5 pr-12 rounded-xl font-mono outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowSandboxSecret(!showSandboxSecret)}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs font-medium cursor-pointer"
+                        >
+                          {showSandboxSecret ? "Hide" : "Show"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Actions & Connection Test */}
+                  <div className="flex flex-col sm:flex-row items-center justify-between pt-2 border-t border-border/30 gap-3">
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleSaveGSTConfig}
+                        disabled={savingGstConfig}
+                        className="px-4 py-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        <span>{savingGstConfig ? 'Saving...' : 'Save Gateway Credentials'}</span>
+                      </button>
+                      <button
+                        onClick={handleTestSandboxConnection}
+                        disabled={testingConnection}
+                        className="px-4 py-2 border border-border/60 hover:bg-muted/40 text-foreground rounded-xl text-xs font-semibold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                      >
+                        <Activity className="w-3.5 h-3.5" />
+                        <span>{testingConnection ? 'Testing Gateway...' : 'Test Connection'}</span>
+                      </button>
+                    </div>
+
+                    {testConnectionResult && (
+                      <div className={`text-xs px-3 py-1.5 rounded-lg flex items-center gap-2 ${
+                        testConnectionResult.healthy
+                          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+                          : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20'
+                      }`}>
+                        {testConnectionResult.healthy ? (
+                          <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                        ) : (
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                        )}
+                        <span>{testConnectionResult.message}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-muted/30 border border-border/40 text-xs text-muted-foreground space-y-1.5">
+                    <div className="font-semibold text-foreground flex items-center gap-1.5">
+                      <Info className="w-3.5 h-3.5 text-blue-500" />
+                      <span>How to obtain Sandbox credentials &amp; connect your GSTIN:</span>
+                    </div>
+                    <ol className="list-decimal list-inside space-y-1 text-[11px] leading-relaxed">
+                      <li>Log in to <strong className="text-foreground">console.sandbox.co.in</strong> and copy your <strong>API Key</strong> and <strong>API Secret</strong> under Settings &gt; API Keys.</li>
+                      <li>Log in to the government GST Portal (<strong className="text-foreground">services.gst.gov.in</strong>) with your taxpayer username.</li>
+                      <li>Go to <strong>View Profile &gt; Manage API Access</strong>, toggle <strong>Enable API Access</strong> to <em>Yes</em>, and set duration to <em>30 Days</em>.</li>
+                      <li>Save your keys above, then click <strong>Request Portal OTP</strong> above to link your GSTIN.</li>
+                    </ol>
+                  </div>
                 </div>
               </div>
             )}

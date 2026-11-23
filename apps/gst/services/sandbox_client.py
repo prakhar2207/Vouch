@@ -303,6 +303,10 @@ class SandboxGSTClient:
                     response_json = {"raw_text": res.text[:2000]}
 
                 is_success = 200 <= status_code < 300
+                data_payload = response_json.get('data') if isinstance(response_json, dict) else {}
+                if is_success and isinstance(data_payload, dict):
+                    if data_payload.get('status_cd') == '0' or 'error' in data_payload:
+                        is_success = False
 
                 # Audit log
                 if self.company:
@@ -330,11 +334,17 @@ class SandboxGSTClient:
                         "correlation_id": correlation_id,
                     }
                 else:
-                    err_msg = (
-                        response_json.get('message')
-                        or response_json.get('error')
-                        or f"Sandbox responded with HTTP {status_code}"
-                    )
+                    err_detail = data_payload.get('error') if isinstance(data_payload, dict) else None
+                    if err_detail and isinstance(err_detail, dict):
+                        err_msg = err_detail.get('message') or str(err_detail)
+                    elif err_detail:
+                        err_msg = str(err_detail)
+                    else:
+                        err_msg = (
+                            response_json.get('message')
+                            or response_json.get('error')
+                            or f"Sandbox responded with HTTP {status_code}"
+                        )
                     return {
                         "success": False,
                         "status_code": status_code,
@@ -467,6 +477,7 @@ class SandboxGSTClient:
             method='POST',
             path='/gst/compliance/tax-payer/otp/verify',
             payload=payload,
+            params={"otp": str(otp).strip()},
             action='PORTAL_OTP_VERIFY',
             user=user,
             allow_retries=False
