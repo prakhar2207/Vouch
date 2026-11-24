@@ -397,6 +397,8 @@ class GSTR2BRecord(models.Model):
         ('AMENDED', 'Amended in Later Period'),
         ('CDNR_LATER_PERIOD', 'Credit/Debit Note in Later Period'),
         ('NOT_YET_REFLECTED', 'Not Yet Reflected in 2B'),
+        ('DATA_UNAVAILABLE', 'Statement Data Unavailable'),
+        ('UNMAPPED_GSTIN', 'Unmapped GSTIN'),
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -470,6 +472,29 @@ class GSTR2BRecord(models.Model):
             return True
         age = (timezone.now() - self.gstr3b_verified_at).days
         return age > threshold_days
+
+    @property
+    def is_credit_note(self) -> bool:
+        return (self.note_type or '').upper() == 'C' or 'CDNR' in (self.document_type or '').upper()
+
+    @property
+    def is_debit_note(self) -> bool:
+        return (self.note_type or '').upper() == 'D'
+
+    @property
+    def signed_taxable_value(self) -> Decimal:
+        val = Decimal(str(self.taxable_value or 0))
+        return -val if self.is_credit_note else val
+
+    @property
+    def signed_total_tax(self) -> Decimal:
+        tax = (
+            Decimal(str(self.igst_amount or 0)) +
+            Decimal(str(self.cgst_amount or 0)) +
+            Decimal(str(self.sgst_amount or 0)) +
+            Decimal(str(self.cess_amount or 0))
+        )
+        return -tax if self.is_credit_note else tax
 
     class Meta:
         indexes = [

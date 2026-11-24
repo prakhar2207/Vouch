@@ -214,6 +214,8 @@ class Voucher(models.Model):
     # Vendor ITC Risk Shield Fields
     ITC_MATCH_CHOICES = (
         ('UNCHECKED', 'Unchecked'),
+        ('DATA_UNAVAILABLE', 'Statement Data Unavailable'),
+        ('UNMAPPED_GSTIN', 'Unmapped GSTIN'),
         ('MATCHED', 'Matched in 2B'),
         ('MISMATCHED', 'Mismatch with 2B'),
         ('MISSING_IN_2B', 'Missing in 2B'),

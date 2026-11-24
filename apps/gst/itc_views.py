@@ -308,7 +308,28 @@ class ITCAvailablePeriodsView(APIView):
 
         registration = None
         if reg_id:
-            registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
+            try:
+                registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
+            except (ValueError, ValidationError):
+                return Response({
+                    "success": False,
+                    "error": f"Invalid registration ID format: '{reg_id}'.",
+                    "error_code": "INVALID_REGISTRATION"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            if not registration:
+                return Response({
+                    "success": False,
+                    "error": f"GST registration '{reg_id}' was not found for this company.",
+                    "error_code": "INVALID_REGISTRATION"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            if registration.status != 'ACTIVE':
+                return Response({
+                    "success": False,
+                    "error": f"GST registration '{registration.gstin}' is inactive.",
+                    "error_code": "INACTIVE_REGISTRATION"
+                }, status=status.HTTP_400_BAD_REQUEST)
 
         # Ingested periods from 2B
         batch_qs = GSTR2BImport.objects.filter(company=company, status='PROCESSED')
@@ -323,10 +344,14 @@ class ITCAvailablePeriodsView(APIView):
             status__in=EffectiveVoucherService.ACTIVE_STATUSES,
             voucher_date__isnull=False
         )
+        is_multi_reg = GSTRegistration.objects.filter(company=company, status='ACTIVE').count() > 1
         if registration and registration.gstin:
-            voucher_qs = voucher_qs.filter(
-                Q(buyer_gstin=registration.gstin) | Q(buyer_gstin__isnull=True) | Q(buyer_gstin='')
-            )
+            if is_multi_reg:
+                voucher_qs = voucher_qs.filter(buyer_gstin=registration.gstin)
+            else:
+                voucher_qs = voucher_qs.filter(
+                    Q(buyer_gstin=registration.gstin) | Q(buyer_gstin__isnull=True) | Q(buyer_gstin='')
+                )
 
         book_periods = set()
         for v_date in voucher_qs.values_list('voucher_date', flat=True).distinct():

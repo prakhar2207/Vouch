@@ -42,9 +42,15 @@ interface SummaryStats {
   missing_in_2b_count: number;
   missing_in_books_count: number;
   missing_in_books_itc: number;
+  missing_in_books_gross_itc?: number;
+  missing_in_books_credit_itc?: number;
   review_required_count?: number;
   later_period_count?: number;
+  amended_count?: number;
   not_yet_reflected_count?: number;
+  data_unavailable_count?: number;
+  unmapped_gstin_count?: number;
+  unchecked_count?: number;
   gross_invoices_count?: number;
   credit_notes_count?: number;
   debit_notes_count?: number;
@@ -87,7 +93,7 @@ interface ReconciliationItem {
   books_taxable: number;
   books_tax: number;
   books_total: number;
-  itc_match_status: "MATCHED" | "MISMATCHED" | "MISSING_IN_2B" | "MISSING_IN_BOOKS" | "UNCHECKED" | "LATER_PERIOD_MATCH" | "AMENDED" | "REVIEW_REQUIRED" | "NOT_YET_REFLECTED" | string;
+  itc_match_status: "MATCHED" | "MISMATCHED" | "MISSING_IN_2B" | "MISSING_IN_BOOKS" | "UNCHECKED" | "DATA_UNAVAILABLE" | "UNMAPPED_GSTIN" | "LATER_PERIOD_MATCH" | "AMENDED" | "REVIEW_REQUIRED" | "NOT_YET_REFLECTED" | string;
   itc_held_amount: number;
   itc_notes: string;
   gstr2b_record?: {
@@ -689,7 +695,11 @@ export default function VendorITCRiskShieldPage() {
                     ? (summary.matched_count || 0) +
                       (summary.mismatched_count || 0) +
                       (summary.missing_in_2b_count || 0) +
-                      (summary.missing_in_books_count || 0)
+                      (summary.missing_in_books_count || 0) +
+                      (summary.data_unavailable_count || 0) +
+                      (summary.unmapped_gstin_count || 0) +
+                      (summary.unchecked_count || 0) +
+                      (summary.review_required_count || 0)
                     : null,
                   color: "text-muted-foreground bg-muted",
                 },
@@ -707,7 +717,11 @@ export default function VendorITCRiskShieldPage() {
                 { key: "MISMATCHED", label: "Mismatches", count: summary?.mismatched_count, color: "text-amber-500 bg-amber-500/10" },
                 { key: "MISSING_IN_BOOKS", label: "Missing in Books", count: summary?.missing_in_books_count, color: "text-blue-500 bg-blue-500/10" },
                 { key: "MATCHED", label: "Reconciled (Safe)", count: summary?.matched_count, color: "text-emerald-500 bg-emerald-500/10" },
+                ...(summary?.data_unavailable_count ? [{ key: "DATA_UNAVAILABLE", label: "Statement Pending", count: summary.data_unavailable_count, color: "text-slate-500 bg-slate-500/10" }] : []),
+                ...(summary?.unmapped_gstin_count ? [{ key: "UNMAPPED_GSTIN", label: "Unmapped GSTIN", count: summary.unmapped_gstin_count, color: "text-purple-500 bg-purple-500/10" }] : []),
+                ...(summary?.unchecked_count ? [{ key: "UNCHECKED", label: "Unchecked", count: summary.unchecked_count, color: "text-zinc-500 bg-zinc-500/10" }] : []),
                 ...(summary?.later_period_count ? [{ key: "LATER_PERIOD_MATCH", label: "Later 2B Period", count: summary.later_period_count, color: "text-cyan-500 bg-cyan-500/10" }] : []),
+                ...(summary?.amended_count ? [{ key: "AMENDED", label: "Amended", count: summary.amended_count, color: "text-indigo-500 bg-indigo-500/10" }] : []),
                 ...(summary?.review_required_count ? [{ key: "REVIEW_REQUIRED", label: "Review Required", count: summary.review_required_count, color: "text-orange-500 bg-orange-500/10" }] : []),
               ].map((tab) => (
                 <button
@@ -784,10 +798,10 @@ export default function VendorITCRiskShieldPage() {
                     const isMismatched = item.itc_match_status === "MISMATCHED";
                     const isReviewRequired = item.itc_match_status === "REVIEW_REQUIRED";
                     const isNotYetReflected = item.itc_match_status === "NOT_YET_REFLECTED";
-                    const isMissing2B =
-                      item.itc_match_status === "MISSING_IN_2B" ||
-                      item.itc_match_status === "UNCHECKED" ||
-                      !item.itc_match_status;
+                    const isDataUnavailable = item.itc_match_status === "DATA_UNAVAILABLE";
+                    const isUnmappedGSTIN = item.itc_match_status === "UNMAPPED_GSTIN";
+                    const isUnchecked = item.itc_match_status === "UNCHECKED";
+                    const isMissing2B = item.itc_match_status === "MISSING_IN_2B";
                     const isMissingBooks = item.itc_match_status === "MISSING_IN_BOOKS";
 
                     return (
@@ -825,12 +839,30 @@ export default function VendorITCRiskShieldPage() {
                             </span>
                           )}
                           {isNotYetReflected && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20" title="Within current GSTR-1 vendor filing window">
                               <Clock className="w-3 h-3" />
                               Pending 2B
                             </span>
                           )}
-                          {isMissing2B && !isReviewRequired && !isNotYetReflected && (
+                          {isDataUnavailable && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20" title="GSTR-2B statement not yet imported for this return period">
+                              <Clock className="w-3 h-3" />
+                              Statement Pending
+                            </span>
+                          )}
+                          {isUnmappedGSTIN && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20" title="Buyer GSTIN not registered in company profile">
+                              <AlertTriangle className="w-3 h-3" />
+                              Unmapped GSTIN
+                            </span>
+                          )}
+                          {isUnchecked && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-zinc-500/10 text-zinc-500 border border-zinc-500/20" title="Unreconciled against GSTR-2B">
+                              <Clock className="w-3 h-3" />
+                              Unchecked
+                            </span>
+                          )}
+                          {isMissing2B && (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/10 text-rose-500 border border-rose-500/20">
                               <XCircle className="w-3 h-3" />
                               Missing in 2B
@@ -879,6 +911,12 @@ export default function VendorITCRiskShieldPage() {
                                 Tax: ₹{item.gstr2b_record.total_tax.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                               </div>
                             </>
+                          ) : isDataUnavailable ? (
+                            <span className="text-[11px] text-slate-400 italic">Statement Pending</span>
+                          ) : isUnmappedGSTIN ? (
+                            <span className="text-[11px] text-purple-400 italic">Unmapped GSTIN</span>
+                          ) : isUnchecked ? (
+                            <span className="text-[11px] text-zinc-400 italic">Unchecked</span>
                           ) : (
                             <span className="text-[11px] text-rose-400 italic">Not in GSTR-2B</span>
                           )}

@@ -4,7 +4,7 @@ import logging
 from decimal import Decimal
 from datetime import datetime, date, timedelta
 from typing import Dict, Any, List, Optional, Set, Tuple
-from django.db import transaction
+from django.db import transaction, IntegrityError
 from django.utils import timezone
 from django.db.models import Q
 from rest_framework.exceptions import ValidationError
@@ -99,6 +99,32 @@ class ITCReconciliationService:
         return None
 
     @classmethod
+    def _acquire_ingestion_lock(
+        cls,
+        company: Company,
+        registration: Optional[Any],
+        return_period: str
+    ) -> GSTR2BIngestionLock:
+        """
+        Concurrency-safe lock acquisition for GSTR-2B ingestion in PostgreSQL.
+        Guarantees no IntegrityError race on first lock creation across parallel workers.
+        Uses a savepoint sub-transaction to create if absent, then acquires an exclusive row lock.
+        """
+        filter_kwargs = {
+            'company': company,
+            'gst_registration': registration,
+            'return_period': return_period,
+        }
+        try:
+            with transaction.atomic():
+                GSTR2BIngestionLock.objects.create(**filter_kwargs)
+        except IntegrityError:
+            # Row already exists or was concurrently created
+            pass
+
+        return GSTR2BIngestionLock.objects.select_for_update().get(**filter_kwargs)
+
+    @classmethod
     @transaction.atomic
     def ingest_gstr2b_json(
         cls,
@@ -155,9 +181,9 @@ class ITCReconciliationService:
                 )
 
         # 3. Concurrency Lock: Synchronize concurrent ingestion for this company, registration, and return period
-        lock_obj, _ = GSTR2BIngestionLock.objects.select_for_update().get_or_create(
+        lock_obj = cls._acquire_ingestion_lock(
             company=company,
-            gst_registration=registration,
+            registration=registration,
             return_period=fp
         )
 
@@ -181,6 +207,8 @@ class ITCReconciliationService:
         else:
             rec_filter['gst_registration__isnull'] = True
 
+        initial_rec_count = GSTR2BRecord.objects.filter(**rec_filter).count()
+
         existing_by_key = {
             (
                 r.supplier_gstin.upper(),
@@ -201,12 +229,13 @@ class ITCReconciliationService:
         total_taxable = Decimal('0.00')
         total_itc = Decimal('0.00')
 
-        # 6. Extract tables: B2B, B2BA, CDNR, CDNRA
+        # 6. Extract tables: B2B, B2BA, CDNR, CDNRA (supporting both direct and nested docdata payload structures)
         data_root = json_data.get('data', json_data)
-        b2b_list = data_root.get('b2b', [])
-        b2ba_list = data_root.get('b2ba', [])
-        cdnr_list = data_root.get('cdnr', [])
-        cdnra_list = data_root.get('cdnra', [])
+        doc_root = data_root.get('docdata', data_root) if isinstance(data_root, dict) else json_data
+        b2b_list = doc_root.get('b2b') or (data_root.get('b2b') if isinstance(data_root, dict) else []) or []
+        b2ba_list = doc_root.get('b2ba') or (data_root.get('b2ba') if isinstance(data_root, dict) else []) or []
+        cdnr_list = doc_root.get('cdnr') or (data_root.get('cdnr') if isinstance(data_root, dict) else []) or []
+        cdnra_list = doc_root.get('cdnra') or (data_root.get('cdnra') if isinstance(data_root, dict) else []) or []
 
         # Process B2B and B2BA
         for doc_type, supplier_entry in [('B2B', s) for s in b2b_list] + [('B2BA', s) for s in b2ba_list]:
@@ -455,12 +484,17 @@ class ITCReconciliationService:
                 batch_size=500
             )
 
-        # 8. Update batch statistics
+        # 8. Update batch statistics directly derived from DB row results
+        final_rec_count = GSTR2BRecord.objects.filter(**rec_filter).count()
+        actual_created_count = max(0, final_rec_count - initial_rec_count)
+        actual_updated_count = len(records_to_update)
+        actual_unchanged_count = records_unchanged_count
+
         import_batch.provider_records_count = provider_records_count
-        import_batch.total_invoices_count = records_created_count + records_updated_count + records_unchanged_count
-        import_batch.records_created = records_created_count
-        import_batch.records_updated = records_updated_count
-        import_batch.records_unchanged = records_unchanged_count
+        import_batch.total_invoices_count = final_rec_count
+        import_batch.records_created = actual_created_count
+        import_batch.records_updated = actual_updated_count
+        import_batch.records_unchanged = actual_unchanged_count
         import_batch.total_taxable_amount = total_taxable
         import_batch.total_itc_available = total_itc
         import_batch.status = 'PROCESSED'
@@ -535,10 +569,10 @@ class ITCReconciliationService:
                     or GSTRegistration.objects.filter(company=company, status='ACTIVE').first()
                 )
 
-            # 3. Concurrency Lock
-            lock_obj, _ = GSTR2BIngestionLock.objects.select_for_update().get_or_create(
+            # 3. Concurrency Lock: Synchronize concurrent ingestion for this company, registration, and return period
+            lock_obj = cls._acquire_ingestion_lock(
                 company=company,
-                gst_registration=registration,
+                registration=registration,
                 return_period=fp
             )
 
@@ -559,6 +593,8 @@ class ITCReconciliationService:
                 rec_filter['gst_registration'] = registration
             else:
                 rec_filter['gst_registration__isnull'] = True
+
+            initial_rec_count = GSTR2BRecord.objects.filter(**rec_filter).count()
 
             existing_by_key = {
                 (
@@ -772,11 +808,17 @@ class ITCReconciliationService:
                     batch_size=500
                 )
 
+            # 8. Update batch statistics directly derived from DB row results
+            final_rec_count = GSTR2BRecord.objects.filter(**rec_filter).count()
+            actual_created_count = max(0, final_rec_count - initial_rec_count)
+            actual_updated_count = len(records_to_update)
+            actual_unchanged_count = records_unchanged_count
+
             import_batch.provider_records_count = provider_records_count
-            import_batch.total_invoices_count = records_created_count + records_updated_count + records_unchanged_count
-            import_batch.records_created = records_created_count
-            import_batch.records_updated = records_updated_count
-            import_batch.records_unchanged = records_unchanged_count
+            import_batch.total_invoices_count = final_rec_count
+            import_batch.records_created = actual_created_count
+            import_batch.records_updated = actual_updated_count
+            import_batch.records_unchanged = actual_unchanged_count
             import_batch.total_taxable_amount = total_taxable
             import_batch.total_itc_available = total_itc
             import_batch.status = 'PROCESSED'
@@ -860,16 +902,28 @@ class ITCReconciliationService:
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
         ).select_related('party_ledger').prefetch_related('items').defer('attachment_data', 'attachment_mime')
 
-        # Multi-GSTIN isolation on vouchers
+        # Multi-GSTIN strict isolation on vouchers:
+        # When a company has multiple registrations, strictly match buyer_gstin to prevent leakage.
+        # In a single-registration company, unassigned vouchers naturally belong to that primary registration.
+        is_multi_reg = GSTRegistration.objects.filter(company=company, status='ACTIVE').count() > 1
         if registration and registration.gstin:
-            voucher_qs = voucher_qs.filter(
-                Q(buyer_gstin=registration.gstin) | Q(buyer_gstin__isnull=True) | Q(buyer_gstin='')
-            )
+            if is_multi_reg:
+                voucher_qs = voucher_qs.filter(buyer_gstin=registration.gstin)
+            else:
+                voucher_qs = voucher_qs.filter(
+                    Q(buyer_gstin=registration.gstin) | Q(buyer_gstin__isnull=True) | Q(buyer_gstin='')
+                )
 
         if period_end_date:
             voucher_qs = voucher_qs.filter(voucher_date__lte=period_end_date)
 
         vouchers = list(voucher_qs.order_by('voucher_date', 'voucher_number'))
+
+        # Track return periods that actually have processed GSTR-2B statement data
+        stmt_qs = GSTR2BImport.objects.filter(company=company, status='PROCESSED')
+        if registration:
+            stmt_qs = stmt_qs.filter(gst_registration=registration)
+        processed_periods = set(stmt_qs.values_list('return_period', flat=True).distinct())
 
         matched_record_ids: Set[Any] = set()
         matched_voucher_ids: Set[Any] = set()
@@ -956,6 +1010,13 @@ class ITCReconciliationService:
                     }
                     v.itc_match_status = 'MISMATCHED'
                     v.itc_notes = " | ".join(mismatches)
+                elif target_rec.is_amendment:
+                    target_rec.match_status = 'AMENDED'
+                    target_rec.mismatch_details = {}
+                    v.itc_match_status = 'AMENDED'
+                    v.itc_notes = f"Matched against amended GSTR-2B record ({target_rec.document_type} in {target_rec.return_period})."
+                    if v.itc_held_amount > Decimal('0.00') and not (v.itc_notes or '').startswith('MANUAL_HOLD'):
+                        v.itc_held_amount = Decimal('0.00')
                 elif is_later_period:
                     target_rec.match_status = 'LATER_PERIOD_MATCH'
                     target_rec.mismatch_details = {}
@@ -963,11 +1024,6 @@ class ITCReconciliationService:
                     v.itc_notes = f"Reconciled in later GSTR-2B statement ({target_rec.return_period}). Supplier filed GSTR-1 after invoice period."
                     if v.itc_held_amount > Decimal('0.00') and not (v.itc_notes or '').startswith('MANUAL_HOLD'):
                         v.itc_held_amount = Decimal('0.00')
-                elif target_rec.is_amendment:
-                    target_rec.match_status = 'AMENDED'
-                    target_rec.mismatch_details = {}
-                    v.itc_match_status = 'AMENDED'
-                    v.itc_notes = f"Matched against amended GSTR-2B record ({target_rec.document_type} in {target_rec.return_period})."
                 else:
                     target_rec.match_status = 'MATCHED'
                     target_rec.mismatch_details = {}
@@ -989,7 +1045,10 @@ class ITCReconciliationService:
                 if period_end_date and v.voucher_date and v.voucher_date > period_end_date:
                     in_period_window = False
 
-                if in_period_window and v.itc_match_status not in ['MATCHED', 'LATER_PERIOD_MATCH']:
+                if in_period_window and v.itc_match_status not in ['MATCHED', 'LATER_PERIOD_MATCH', 'AMENDED']:
+                    v_p = f"{str(v.voucher_date.month).zfill(2)}{v.voucher_date.year}" if v.voucher_date else ""
+                    stmt_available = (v_p in processed_periods) if v_p else False
+
                     # Check active filing window: supplier has until the 14th of the succeeding month to file GSTR-1
                     today = timezone.now().date()
                     is_within_filing_window = False
@@ -1001,7 +1060,11 @@ class ITCReconciliationService:
                         if today <= filing_cutoff:
                             is_within_filing_window = True
 
-                    if is_within_filing_window:
+                    if not stmt_available:
+                        # Never infer missing invoice without an imported, processed statement for that period
+                        v.itc_match_status = 'DATA_UNAVAILABLE'
+                        v.itc_notes = f"GSTR-2B statement for return period {v_p} has not been imported. Data unavailable."
+                    elif is_within_filing_window:
                         v.itc_match_status = 'NOT_YET_REFLECTED'
                         v.itc_notes = f"Invoice dated {v.voucher_date} is within supplier GSTR-1 filing window. Pending auto-draft in next GSTR-2B."
                     else:
@@ -1068,13 +1131,30 @@ class ITCReconciliationService:
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
         ).select_related('party_ledger').prefetch_related('items', 'gstr2b_matches').defer('attachment_data', 'attachment_mime')
 
+        # Strict Multi-GSTIN isolation:
+        # When a company has multiple registrations, strictly match buyer_gstin to prevent leakage.
+        # In a single-registration company, unassigned vouchers naturally belong to that primary registration.
+        is_multi_reg = GSTRegistration.objects.filter(company=company, status='ACTIVE').count() > 1
         if registration and registration.gstin:
-            voucher_qs = voucher_qs.filter(
-                Q(buyer_gstin=registration.gstin) | Q(buyer_gstin__isnull=True) | Q(buyer_gstin='')
-            )
+            if is_multi_reg:
+                voucher_qs = voucher_qs.filter(buyer_gstin=registration.gstin)
+            else:
+                voucher_qs = voucher_qs.filter(
+                    Q(buyer_gstin=registration.gstin) | Q(buyer_gstin__isnull=True) | Q(buyer_gstin='')
+                )
 
         if norm_period:
             voucher_qs = voucher_qs.filter(voucher_date__year=p_info.year_int, voucher_date__month=p_info.month_int)
+
+        # Track return periods that actually have processed GSTR-2B statement data
+        stmt_qs = GSTR2BImport.objects.filter(company=company, status='PROCESSED')
+        if registration:
+            stmt_qs = stmt_qs.filter(gst_registration=registration)
+        processed_periods = set(stmt_qs.values_list('return_period', flat=True).distinct())
+
+        company_gstins = set(
+            GSTRegistration.objects.filter(company=company, status='ACTIVE').values_list('gstin', flat=True)
+        )
 
         today = timezone.now().date()
         current_fy_start_year = today.year if today.month >= 4 else today.year - 1
@@ -1084,9 +1164,26 @@ class ITCReconciliationService:
         voucher_items = []
         for v in voucher_qs:
             matched_rec = v.gstr2b_matches.first()
-            eff_status = v.itc_match_status or 'UNCHECKED'
-            if eff_status == 'UNCHECKED':
-                eff_status = 'MATCHED' if matched_rec else 'MISSING_IN_2B'
+            raw_status = v.itc_match_status or 'UNCHECKED'
+            v_p = f"{str(v.voucher_date.month).zfill(2)}{v.voucher_date.year}" if v.voucher_date else ""
+            stmt_imported = v_p in processed_periods if v_p else False
+
+            # Check for unmapped GSTIN in company-wide view when company has multiple registrations
+            is_unmapped_gstin = False
+            if not registration and is_multi_reg:
+                v_buyer = (v.buyer_gstin or '').strip().upper()
+                if not v_buyer or v_buyer not in company_gstins:
+                    is_unmapped_gstin = True
+
+            if matched_rec:
+                eff_status = v.itc_match_status if v.itc_match_status in ['MATCHED', 'MISMATCHED', 'LATER_PERIOD_MATCH', 'AMENDED', 'REVIEW_REQUIRED'] else 'MATCHED'
+            elif is_unmapped_gstin:
+                eff_status = 'UNMAPPED_GSTIN'
+            elif not stmt_imported:
+                # Never infer missing invoice without an imported, processed statement for that return period
+                eff_status = 'DATA_UNAVAILABLE' if raw_status in ['UNCHECKED', 'DATA_UNAVAILABLE'] else raw_status
+            else:
+                eff_status = raw_status if raw_status != 'UNCHECKED' else 'MISSING_IN_2B'
 
             b_taxable = sum(quantize_amount(i.taxable_amount) for i in v.items.all())
             b_cgst = sum(quantize_amount(i.cgst_amount) for i in v.items.all())
@@ -1190,7 +1287,11 @@ class ITCReconciliationService:
         missing_in_2b_count = 0
         review_required_count = 0
         later_period_count = 0
+        amended_count = 0
         not_yet_reflected_count = 0
+        data_unavailable_count = 0
+        unmapped_gstin_count = 0
+        unchecked_count = 0
 
         for vi in voucher_items:
             st = vi['itc_match_status']
@@ -1202,6 +1303,8 @@ class ITCReconciliationService:
                 itc_safe += t
                 if st == 'LATER_PERIOD_MATCH':
                     later_period_count += 1
+                elif st == 'AMENDED':
+                    amended_count += 1
             elif st == 'MISMATCHED':
                 mismatched_count += 1
                 itc_at_risk += t
@@ -1213,9 +1316,26 @@ class ITCReconciliationService:
                 itc_at_risk += t
             elif st == 'NOT_YET_REFLECTED':
                 not_yet_reflected_count += 1
+            elif st == 'DATA_UNAVAILABLE':
+                data_unavailable_count += 1
+            elif st == 'UNMAPPED_GSTIN':
+                unmapped_gstin_count += 1
+            elif st == 'UNCHECKED':
+                unchecked_count += 1
 
         missing_in_books_count = sum(1 for ri in record_items if ri['itc_match_status'] == 'MISSING_IN_BOOKS')
-        missing_in_books_itc = sum(ri['rec_tax_dec'] for ri in record_items if ri['itc_match_status'] == 'MISSING_IN_BOOKS')
+        # Signed CDNR Accounting: Credit Notes decrease net missing ITC
+        missing_in_books_gross = sum(
+            ri['rec_tax_dec'] for ri in record_items
+            if ri['itc_match_status'] == 'MISSING_IN_BOOKS'
+            and not (ri['note_type'] == 'C' or ri['document_type'] in ['CDNR', 'CDNRA'] and ri['note_type'] != 'D')
+        )
+        missing_in_books_credit = sum(
+            ri['rec_tax_dec'] for ri in record_items
+            if ri['itc_match_status'] == 'MISSING_IN_BOOKS'
+            and (ri['note_type'] == 'C' or ri['document_type'] in ['CDNR', 'CDNRA'] and ri['note_type'] != 'D')
+        )
+        missing_in_books_itc = missing_in_books_gross - missing_in_books_credit
 
         # CDNR breakdown on GSTR-2B side
         gross_invoices_count = sum(1 for ri in record_items if ri['document_type'] in ['B2B', 'B2BA'])
@@ -1231,9 +1351,15 @@ class ITCReconciliationService:
             'missing_in_2b_count': missing_in_2b_count,
             'missing_in_books_count': missing_in_books_count,
             'missing_in_books_itc': float(missing_in_books_itc),
+            'missing_in_books_gross_itc': float(missing_in_books_gross),
+            'missing_in_books_credit_itc': float(missing_in_books_credit),
             'review_required_count': review_required_count,
             'later_period_count': later_period_count,
+            'amended_count': amended_count,
             'not_yet_reflected_count': not_yet_reflected_count,
+            'data_unavailable_count': data_unavailable_count,
+            'unmapped_gstin_count': unmapped_gstin_count,
+            'unchecked_count': unchecked_count,
             'gross_invoices_count': gross_invoices_count,
             'credit_notes_count': credit_notes_count,
             'debit_notes_count': debit_notes_count,
@@ -1248,7 +1374,7 @@ class ITCReconciliationService:
         for vi in voucher_items:
             st = vi['itc_match_status']
             if filter_status == 'EXPIRING_SEC16_4':
-                if not (vi['is_prev_fy'] and st in ['MISSING_IN_2B', 'MISMATCHED']):
+                if not (vi['is_prev_fy'] and st in ['MISSING_IN_2B', 'MISMATCHED', 'DATA_UNAVAILABLE']):
                     continue
             elif filter_status == 'MISSING_IN_BOOKS':
                 continue
@@ -1328,14 +1454,19 @@ class ITCReconciliationService:
             voucher_date__gte=prev_fy_start,
             voucher_date__lte=prev_fy_end,
             voucher_date__isnull=False,
-            itc_match_status__in=['MISSING_IN_2B', 'MISMATCHED', 'UNCHECKED', 'REVIEW_REQUIRED'],
+            itc_match_status__in=['MISSING_IN_2B', 'MISMATCHED', 'UNCHECKED', 'REVIEW_REQUIRED', 'DATA_UNAVAILABLE'],
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
         ).select_related('party_ledger').prefetch_related('items').defer('attachment_data', 'attachment_mime')
 
+        # Multi-GSTIN strict isolation:
+        is_multi_reg = GSTRegistration.objects.filter(company=company, status='ACTIVE').count() > 1
         if registration and registration.gstin:
-            voucher_qs = voucher_qs.filter(
-                Q(buyer_gstin=registration.gstin) | Q(buyer_gstin__isnull=True) | Q(buyer_gstin='')
-            )
+            if is_multi_reg:
+                voucher_qs = voucher_qs.filter(buyer_gstin=registration.gstin)
+            else:
+                voucher_qs = voucher_qs.filter(
+                    Q(buyer_gstin=registration.gstin) | Q(buyer_gstin__isnull=True) | Q(buyer_gstin='')
+                )
 
         expiring_list = []
         total_expiring_itc = Decimal('0.00')
