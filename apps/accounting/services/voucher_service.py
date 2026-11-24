@@ -464,11 +464,17 @@ class VoucherService:
                 pass
         Voucher.objects.filter(reversal_voucher=voucher).update(reversal_voucher=None)
 
-        # 7. Delete items and ledger entries
+        # 7. Mark voucher as DRAFT before deleting entries to satisfy ProtectedLedgerEntryQuerySet guard
+        Voucher.objects.filter(id=voucher.id).update(status='DRAFT')
+        voucher.status = 'DRAFT'
+        if rev_id:
+            Voucher.objects.filter(id=rev_id).update(status='DRAFT')
+
+        # 8. Delete items and ledger entries
         voucher.items.all().delete()
         voucher.ledger_entries.all().delete()
 
-        # 8. Delete the voucher
+        # 9. Delete the voucher
         voucher.delete()
 
         # 9. Clean up empty ad-hoc products

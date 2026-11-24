@@ -39,20 +39,20 @@ interface HealthCheckSummary {
   description: string;
 }
 
-interface AccountingFindingItem {
-  id: string;
-  code: string;
-  category: string;
-  severity: "CRITICAL" | "WARNING" | "INFO";
-  title: string;
-  description: string;
-  suggested_fix?: string;
-  evidence: Record<string, any>;
-  is_actionable: boolean;
-  fix_type?: string;
-  status: "UNRESOLVED" | "RESOLVED" | "IGNORED";
-  created_at: string;
-}
+import {
+  AccountingFindingItem,
+  HealthTab,
+  isBankFinding,
+  isInventoryFinding,
+  isGstFinding,
+  isDuplicateFinding,
+  isCriticalFinding,
+  isActionableFinding,
+  filterFindings,
+  getFindingsCounts,
+} from "./health-filters";
+
+export type { AccountingFindingItem, HealthTab };
 
 interface HealthReport {
   timestamp: string;
@@ -98,7 +98,7 @@ interface FixPreviewData {
   }>;
 }
 
-export type HealthTab = "ALL" | "BANK" | "INVENTORY" | "GST" | "DUPLICATES" | "CRITICAL" | "ACTIONABLE";
+
 
 export default function HealthPage() {
   const router = useRouter();
@@ -333,148 +333,20 @@ export default function HealthPage() {
     return { label: category.replace(/_/g, " "), bg: "bg-muted text-muted-foreground border-border/40" };
   };
 
-  // Dedicated predicate helpers with strict mutual exclusivity
-  const isBankFinding = (f: AccountingFindingItem): boolean => {
-    const cat = (f.category || "").toUpperCase();
-    const fix = (f.fix_type || "").toUpperCase();
-    const actionUrl = f.evidence?.action_url || "";
-    const title = (f.title || "").toLowerCase();
-
-    // Absolute exclusion: Never classify inventory stock, negative stock, or product merge as bank
-    if (
-      cat.includes("INVENTORY") ||
-      fix === "MERGE_INVENTORY_ITEMS" ||
-      actionUrl === "/inventory" ||
-      title.startsWith("negative stock") ||
-      title.includes("in-stock item")
-    ) {
-      return false;
-    }
-
-    return (
-      cat.includes("BANK") ||
-      cat === "LIQUIDITY" ||
-      cat === "BANK_RECONCILIATION" ||
-      cat.startsWith("DUPLICATE_BANK") ||
-      fix === "EXCLUDE_DUPLICATE_BANK" ||
-      fix === "REVIEW_BANK_BALANCE" ||
-      fix === "NAVIGATE_BANK_RECON" ||
-      actionUrl === "/banking" ||
-      title.includes("bank") ||
-      title.includes("cash in hand") ||
-      title.includes("overdraft") ||
-      title.includes("od limit")
-    );
-  };
-
-  const isInventoryFinding = (f: AccountingFindingItem): boolean => {
-    const cat = (f.category || "").toUpperCase();
-    const fix = (f.fix_type || "").toUpperCase();
-    const actionUrl = f.evidence?.action_url || "";
-    const title = (f.title || "").toLowerCase();
-
-    // Absolute exclusion: Never classify bank or liquidity issues as inventory
-    if (
-      cat.includes("BANK") ||
-      cat === "LIQUIDITY" ||
-      cat === "BANK_RECONCILIATION" ||
-      actionUrl === "/banking" ||
-      fix === "EXCLUDE_DUPLICATE_BANK" ||
-      fix === "REVIEW_BANK_BALANCE" ||
-      fix === "NAVIGATE_BANK_RECON"
-    ) {
-      return false;
-    }
-
-    return (
-      cat.includes("INVENTORY") ||
-      fix === "MERGE_INVENTORY_ITEMS" ||
-      actionUrl === "/inventory" ||
-      title.startsWith("negative stock") ||
-      title.includes("in-stock item") ||
-      title.includes("inventory")
-    );
-  };
-
-  const isGstFinding = (f: AccountingFindingItem): boolean => {
-    const cat = (f.category || "").toUpperCase();
-    const title = (f.title || "").toLowerCase();
-    return cat.includes("GST") || title.includes("gst");
-  };
-
-  const isDuplicateFinding = (f: AccountingFindingItem): boolean => {
-    const cat = (f.category || "").toUpperCase();
-    const fix = (f.fix_type || "").toUpperCase();
-    const title = (f.title || "").toLowerCase();
-    return (
-      cat.startsWith("DUPLICATE") ||
-      fix.includes("DUPLICATE") ||
-      fix === "VOID_DUPLICATE_VOUCHER" ||
-      fix === "MERGE_INVENTORY_ITEMS" ||
-      fix === "EXCLUDE_DUPLICATE_BANK" ||
-      title.startsWith("duplicate")
-    );
-  };
-
-  const isCriticalFinding = (f: AccountingFindingItem): boolean => {
-    return f.severity === "CRITICAL";
-  };
-
-  const isActionableFinding = (f: AccountingFindingItem): boolean => {
-    return Boolean(f.is_actionable || f.fix_type);
-  };
-
-  const duplicateFindingsCount = useMemo(() => {
-    return report?.findings?.filter(isDuplicateFinding)?.length || 0;
+  const counts = useMemo(() => {
+    return getFindingsCounts(report?.findings);
   }, [report]);
 
-  const bankFindingsCount = useMemo(() => {
-    return report?.findings?.filter(isBankFinding)?.length || 0;
-  }, [report]);
-
-  const inventoryFindingsCount = useMemo(() => {
-    return report?.findings?.filter(isInventoryFinding)?.length || 0;
-  }, [report]);
-
-  const gstFindingsCount = useMemo(() => {
-    return report?.findings?.filter(isGstFinding)?.length || 0;
-  }, [report]);
-
-  const criticalCount = report?.metrics?.critical_findings_count || 0;
+  const duplicateFindingsCount = counts.duplicateCount;
+  const bankFindingsCount = counts.bankCount;
+  const inventoryFindingsCount = counts.inventoryCount;
+  const gstFindingsCount = counts.gstCount;
+  const criticalCount = counts.criticalCount;
   const warningCount = (report?.metrics?.warning_findings_count || 0) + (report?.metrics?.info_findings_count || 0);
-  const actionableCount = report?.findings?.filter(isActionableFinding).length || 0;
+  const actionableCount = counts.actionableCount;
 
   const filteredFindings = useMemo(() => {
-    if (!report?.findings) return [];
-    let list = report.findings;
-
-    if (activeTab === "DUPLICATES") {
-      list = list.filter(isDuplicateFinding);
-    } else if (activeTab === "BANK") {
-      list = list.filter(isBankFinding);
-    } else if (activeTab === "INVENTORY") {
-      list = list.filter(isInventoryFinding);
-    } else if (activeTab === "GST") {
-      list = list.filter(isGstFinding);
-    } else if (activeTab === "CRITICAL") {
-      list = list.filter(isCriticalFinding);
-    } else if (activeTab === "ACTIONABLE") {
-      list = list.filter(isActionableFinding);
-    }
-
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      list = list.filter(
-        (f) =>
-          (f.title || "").toLowerCase().includes(q) ||
-          (f.description || "").toLowerCase().includes(q) ||
-          (f.category || "").toLowerCase().includes(q) ||
-          (f.evidence?.party_name && String(f.evidence.party_name).toLowerCase().includes(q)) ||
-          (f.evidence?.primary_voucher_number && String(f.evidence.primary_voucher_number).toLowerCase().includes(q))
-      );
-    }
-
-    return list;
+    return filterFindings(report?.findings, activeTab, searchQuery);
   }, [report, activeTab, searchQuery]);
 
   return (
