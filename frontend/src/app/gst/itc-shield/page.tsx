@@ -110,9 +110,18 @@ interface ReconciliationItem {
 
 interface PeriodSyncResult {
   period: string;
-  status: "SUCCESS" | "FAILED" | "PENDING";
+  period_label?: string;
+  status: "SUCCESS" | "FAILED" | "PENDING" | "NOT_APPLICABLE" | string;
+  fetch_status?: string;
+  ingestion_status?: string;
+  reconciliation_status?: string;
+  invoice_count?: number;
   invoices_ingested?: number;
   invoices_reconciled?: number;
+  records_created?: number;
+  records_updated?: number;
+  records_unchanged?: number;
+  error_category?: string;
   error_code?: string;
   error_message?: string;
   is_form_not_applicable?: boolean;
@@ -338,9 +347,13 @@ export default function VendorITCRiskShieldPage() {
         to_period: syncToPeriod,
       };
     } else {
-      const cleanPeriod = syncPeriod.replace(/[-/]/g, '').trim();
-      if (!cleanPeriod) {
-        setSyncError("Please enter a return period (MMYYYY, e.g. 102026 for October 2026).");
+      let cleanPeriod = syncPeriod.replace(/[-/]/g, '').trim();
+      if (cleanPeriod.length === 8 && /^\d{8}$/.test(cleanPeriod)) {
+        // Automatically normalize DDMMYYYY to MMYYYY
+        cleanPeriod = cleanPeriod.slice(2);
+      }
+      if (!cleanPeriod || cleanPeriod.length !== 6 || !/^\d{6}$/.test(cleanPeriod)) {
+        setSyncError("Please enter a valid 6-digit return period (MMYYYY, e.g. 102025 for October 2025).");
         setSyncing(false);
         return;
       }
@@ -368,15 +381,21 @@ export default function VendorITCRiskShieldPage() {
       if (status === "SUCCESS") {
         const count = data.total_invoices_ingested ?? data.invoices_ingested ?? 0;
         const syncedCount = data.periods_synced?.length || (data.period ? 1 : 0);
-        const msg = `Synced ${syncedCount} period(s) successfully! Ingested ${count} GSTR-2B invoices.`;
+        const notAppCount = data.not_applicable_periods_count || data.periods_not_applicable?.length || 0;
+        const msg = notAppCount > 0
+          ? `Synced ${syncedCount} statement(s) successfully (${notAppCount} interim months auto-covered under QRMP quarterly filing). Ingested ${count} GSTR-2B invoices.`
+          : `Synced ${syncedCount} period(s) successfully! Ingested ${count} GSTR-2B invoices.`;
         setSyncSuccess(msg);
         await handleRefresh();
       } else if (status === "PARTIAL_SUCCESS") {
         const syncedCount = data.periods_synced?.length || 0;
         const count = data.total_invoices_ingested ?? 0;
-        const msg = `Partially synced: ${syncedCount} period(s) succeeded (${count} invoices ingested). ${failed.length} period(s) could not be synced.`;
+        const notAppCount = data.not_applicable_periods_count || data.periods_not_applicable?.length || 0;
+        const msg = `Partially synced: ${syncedCount} period(s) succeeded (${count} invoices ingested). ${failed.length} period(s) failed${notAppCount > 0 ? `, ${notAppCount} not applicable under QRMP` : ''}.`;
         setSyncSuccess(msg);
         await handleRefresh();
+      } else if (status === "NOT_APPLICABLE") {
+        setSyncError(data.error || "GSTR-2B form is not applicable for this period under the QRMP scheme. Under QRMP, official GSTR-2B is generated on quarter-ends (June, September, December, March).");
       } else {
         setSyncError(data.error || "Failed to fetch GSTR-2B from GST Portal.");
       }
@@ -1258,11 +1277,16 @@ export default function VendorITCRiskShieldPage() {
                         </thead>
                         <tbody className="divide-y divide-border/20">
                           {periodResults.map((pr) => {
-                            const isSuccess = pr.status === "SUCCESS";
+                            const isSuccess = pr.status === "SUCCESS" || pr.fetch_status === "SUCCESS";
                             const isNotApplicable =
+                              pr.status === "NOT_APPLICABLE" ||
+                              pr.fetch_status === "NOT_APPLICABLE" ||
                               pr.error_code === "FORM_NOT_APPLICABLE" ||
                               pr.is_form_not_applicable ||
                               (pr.error_message && pr.error_message.toLowerCase().includes("not applicable"));
+
+                            const invCount = pr.invoice_count ?? pr.invoices_ingested ?? 0;
+                            const recCount = pr.records_created ?? pr.invoices_reconciled ?? 0;
 
                             return (
                               <tr key={pr.period} className="hover:bg-muted/30">
@@ -1271,14 +1295,18 @@ export default function VendorITCRiskShieldPage() {
                                 </td>
                                 <td className="p-2.5">
                                   {isSuccess ? (
-                                    <span className="text-foreground">{pr.invoices_ingested ?? 0} invoices</span>
+                                    <span className="text-foreground">{invCount} invoices</span>
+                                  ) : isNotApplicable ? (
+                                    <span className="text-muted-foreground text-[11px]">QRMP Interim</span>
                                   ) : (
                                     <span className="text-muted-foreground">-</span>
                                   )}
                                 </td>
                                 <td className="p-2.5">
                                   {isSuccess ? (
-                                    <span className="text-foreground">{pr.invoices_reconciled ?? 0} bills</span>
+                                    <span className="text-foreground">{recCount} bills</span>
+                                  ) : isNotApplicable ? (
+                                    <span className="text-muted-foreground text-[11px]">Quarterly</span>
                                   ) : (
                                     <span className="text-muted-foreground">-</span>
                                   )}

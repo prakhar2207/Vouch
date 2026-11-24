@@ -62,6 +62,7 @@ from .itc_views import (
     ITCSummaryView,
     ITCRunReconciliationView,
     ITCAvailablePeriodsView,
+    ITCVoucherAttributionAPIView,
 )
 
 
@@ -123,6 +124,7 @@ urlpatterns = [
     path('itc/vendor-notice/<uuid:voucher_id>/', ITCVendorNoticeView.as_view(), name='itc_vendor_notice'),
     path('itc/summary/', ITCSummaryView.as_view(), name='itc_summary'),
     path('itc/periods/', ITCAvailablePeriodsView.as_view(), name='itc_available_periods'),
+    path('itc/attribute-voucher/', ITCVoucherAttributionAPIView.as_view(), name='itc_attribute_voucher'),
 
     # 7. E-Invoice (IRN) Lifecycle
     path('einvoice/generate/<uuid:voucher_id>/', EInvoiceGenerateAPIView.as_view(), name='gst_einvoice_generate'),

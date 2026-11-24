@@ -129,25 +129,34 @@ class GSTReconciliationService:
             err_msg = raw_err
             auth_st = "AUTHENTICATED"
 
+            is_qrmp_interim = period_info.month_int in [4, 5, 7, 8, 10, 11, 1, 2]
             if "not applicable" in raw_err.lower():
                 err_cat = "FORM_NOT_APPLICABLE"
+                _, end_m, q_lbl = GSTPeriodService.get_quarter_info(period_info.month_int, period_info.year_int)
+                qe_period = f"{str(end_m).zfill(2)}{period_info.year}"
                 err_msg = (
                     f"GSTR-2B form is not applicable for {period_info.period_label}. "
-                    "This occurs if your business is registered under QRMP (Quarterly scheme, where GSTR-2B is generated "
-                    "only for quarter-end months: June, September, December, March) or if preceding returns are pending on the GST Portal."
+                    f"Under the QRMP (Quarterly Return Monthly Payment) scheme, official GSTR-2B statements are generated "
+                    f"on quarter-end months ({qe_period} for {q_lbl}). All invoices for this quarter are verified against the {qe_period} statement."
                 )
+                if registration and registration.filing_frequency != 'QRMP' and is_qrmp_interim:
+                    registration.filing_frequency = 'QRMP'
+                    registration.save(update_fields=['filing_frequency', 'updated_at'])
             elif "session" in raw_err.lower() or "token" in raw_err.lower() or "auth" in raw_err.lower() or "otp" in raw_err.lower():
                 err_cat = "AUTHENTICATION_REQUIRED"
                 auth_st = "AUTHENTICATION_REQUIRED"
 
+            is_not_app = (err_cat == "FORM_NOT_APPLICABLE")
             return {
                 "success": False,
-                "status": "PROVIDER_ERROR" if err_cat != "AUTHENTICATION_REQUIRED" else "AUTHENTICATION_REQUIRED",
-                "fetch_status": "FETCH_FAILED",
+                "status": "NOT_APPLICABLE" if (is_not_app and is_qrmp_interim) else ("PROVIDER_ERROR" if err_cat != "AUTHENTICATION_REQUIRED" else "AUTHENTICATION_REQUIRED"),
+                "fetch_status": "NOT_APPLICABLE" if (is_not_app and is_qrmp_interim) else "FETCH_FAILED",
                 "auth_status": auth_st,
                 "ingestion_status": "SKIPPED",
                 "reconciliation_status": "NOT_RECONCILED",
                 "error_category": err_cat,
+                "is_form_not_applicable": is_not_app,
+                "is_qrmp_not_applicable": (is_not_app and is_qrmp_interim),
                 "error": err_msg,
                 "return_period": norm_period,
                 "period_label": period_info.period_label,
@@ -272,6 +281,7 @@ class GSTReconciliationService:
         requested_period_strings = [p.normalized_period for p in period_infos]
         period_results = []
         success_periods = []
+        not_applicable_periods = []
         failed_periods = []
 
         total_provider_records = 0
@@ -312,6 +322,28 @@ class GSTReconciliationService:
                     "error_category": None,
                     "error_message": None
                 })
+            elif single_res.get("is_form_not_applicable") or single_res.get("status") == "NOT_APPLICABLE":
+                err_msg = single_res.get("error") or "GSTR-2B form is not applicable for this period under QRMP."
+                err_cat = single_res.get("error_category") or "FORM_NOT_APPLICABLE"
+                not_applicable_periods.append({
+                    "period": p_str,
+                    "period_label": p_info.period_label,
+                    "error": err_msg,
+                    "error_category": err_cat
+                })
+                period_results.append({
+                    "period": p_str,
+                    "period_label": p_info.period_label,
+                    "fetch_status": "NOT_APPLICABLE",
+                    "ingestion_status": "SKIPPED",
+                    "reconciliation_status": "SKIPPED",
+                    "invoice_count": 0,
+                    "records_created": 0,
+                    "records_updated": 0,
+                    "records_unchanged": 0,
+                    "error_category": err_cat,
+                    "error_message": err_msg
+                })
             else:
                 err_msg = single_res.get("error") or "Failed to sync return period."
                 err_cat = single_res.get("error_category") or "PROVIDER_ERROR"
@@ -348,19 +380,29 @@ class GSTReconciliationService:
         total_p = len(period_infos)
         success_p = len(success_periods)
         failed_p = len(failed_periods)
+        not_app_p = len(not_applicable_periods)
 
         if success_p == total_p:
             overall_status = "SUCCESS"
             overall_success = True
             msg = f"All {total_p} return periods synchronized and reconciled successfully ({total_unique_invoices} invoices)."
+        elif failed_p == 0 and success_p > 0:
+            # Under QRMP, applicable quarters succeeded and interim months are not applicable
+            overall_status = "SUCCESS"
+            overall_success = True
+            msg = f"Synced {success_p} statement periods successfully ({total_unique_invoices} invoices). {not_app_p} interim months auto-covered under QRMP quarterly filing."
         elif success_p > 0:
             overall_status = "PARTIAL_SUCCESS"
-            overall_success = False  # Critical: never return overall SUCCESS when periods failed
-            msg = f"Synced {success_p} of {total_p} return periods ({failed_p} failed or not applicable). Reconciled {total_unique_invoices} invoices."
+            overall_success = False  # Never return overall SUCCESS when actual failures occurred
+            msg = f"Synced {success_p} of {total_p} return periods ({failed_p + not_app_p} failed or not applicable). Reconciled {total_unique_invoices} invoices."
+        elif success_p == 0 and failed_p == 0 and not_app_p > 0:
+            overall_status = "NOT_APPLICABLE"
+            overall_success = False
+            msg = f"GSTR-2B is not applicable for the selected periods under QRMP scheme. Please select quarter-end return periods (June, September, December, March)."
         else:
             overall_status = "FAILED"
             overall_success = False
-            msg = f"Failed to synchronize all {total_p} return periods from GST Portal."
+            msg = f"Failed to synchronize return periods from GST Portal ({failed_p} failed)."
 
         sync_attempt.status = overall_status
         sync_attempt.total_invoices_ingested = total_unique_invoices
@@ -380,9 +422,11 @@ class GSTReconciliationService:
             "error": msg if not overall_success else None,
             "periods_requested": requested_period_strings,
             "periods_synced": success_periods,
+            "periods_not_applicable": [f["period"] for f in not_applicable_periods],
             "periods_failed": [f["period"] for f in failed_periods],
             "total_periods": total_p,
             "successful_periods_count": success_p,
+            "not_applicable_periods_count": not_app_p,
             "failed_periods_count": failed_p,
             "total_provider_records": total_provider_records,
             "total_unique_invoices": total_unique_invoices,
@@ -391,6 +435,7 @@ class GSTReconciliationService:
             "records_unchanged": records_unchanged_total,
             "period_results": period_results,
             "failed_periods_details": failed_periods,
+            "not_applicable_periods_details": not_applicable_periods,
             "reconciliation_summary": rec_summary
         }
 

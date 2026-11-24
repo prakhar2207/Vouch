@@ -344,14 +344,8 @@ class ITCAvailablePeriodsView(APIView):
             status__in=EffectiveVoucherService.ACTIVE_STATUSES,
             voucher_date__isnull=False
         )
-        is_multi_reg = GSTRegistration.objects.filter(company=company, status='ACTIVE').count() > 1
         if registration and registration.gstin:
-            if is_multi_reg:
-                voucher_qs = voucher_qs.filter(buyer_gstin=registration.gstin)
-            else:
-                voucher_qs = voucher_qs.filter(
-                    Q(buyer_gstin=registration.gstin) | Q(buyer_gstin__isnull=True) | Q(buyer_gstin='')
-                )
+            voucher_qs = voucher_qs.filter(buyer_gstin=registration.gstin)
 
         book_periods = set()
         for v_date in voucher_qs.values_list('voucher_date', flat=True).distinct():
@@ -415,3 +409,72 @@ class ITCRunReconciliationView(APIView):
             'message': 'Reconciliation refreshed successfully.',
             'stats': stats
         })
+
+
+class ITCVoucherAttributionAPIView(APIView):
+    """
+    POST /api/v1/gst/itc/attribute-voucher/
+    Explicit GSTIN Attribution Workflow for UNMAPPED_GSTIN purchase vouchers (DEF-04).
+    Safely assigns vouchers lacking a buyer_gstin to a verified active GSTRegistration,
+    recording an immutable audit trail of who performed the attribution and when.
+    """
+    permission_classes = [IsAuthenticated, CanReconcileGST]
+
+    def post(self, request, *args, **kwargs):
+        company = get_authorized_company(request)
+
+        if not user_has_company_roles(request.user, company, ['ADMIN', 'OWNER', 'CA', 'ACCOUNTANT']):
+            return Response({'error': 'Permission denied: Insufficient role to attribute vouchers to GSTIN.'}, status=status.HTTP_403_FORBIDDEN)
+
+        voucher_ids = request.data.get('voucher_ids') or []
+        if isinstance(voucher_ids, str):
+            voucher_ids = [voucher_ids]
+        reg_id = request.data.get('registration_id')
+
+        if not voucher_ids or not isinstance(voucher_ids, (list, tuple)):
+            return Response({'success': False, 'error': 'voucher_ids must be a non-empty list.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not reg_id:
+            return Response({'success': False, 'error': 'registration_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            registration = GSTRegistration.objects.get(id=reg_id, company=company)
+        except GSTRegistration.DoesNotExist:
+            return Response({'success': False, 'error': f"GST Registration '{reg_id}' not found for this company."}, status=status.HTTP_404_NOT_FOUND)
+
+        if registration.status != 'ACTIVE':
+            return Response({'success': False, 'error': f"GST Registration '{registration.gstin}' is inactive."}, status=status.HTTP_400_BAD_REQUEST)
+
+        vouchers = Voucher.objects.filter(
+            id__in=voucher_ids,
+            company=company,
+            voucher_type__in=['PURCHASE', 'DEBIT_NOTE']
+        )
+        if not vouchers.exists():
+            return Response({'success': False, 'error': 'No eligible purchase vouchers found for attribution.'}, status=status.HTTP_404_NOT_FOUND)
+
+        now = timezone.now()
+        source = request.data.get('attribution_source') or 'MANUAL_USER_ATTRIBUTION'
+        updated_count = 0
+
+        for v in vouchers:
+            v.buyer_gstin = registration.gstin
+            v.itc_gstin_attributed_by = request.user
+            v.itc_gstin_attributed_at = now
+            v.itc_gstin_attribution_source = source
+            v.itc_match_status = 'UNCHECKED'
+            v.save(update_fields=[
+                'buyer_gstin', 'itc_gstin_attributed_by',
+                'itc_gstin_attributed_at', 'itc_gstin_attribution_source',
+                'itc_match_status'
+            ])
+            updated_count += 1
+
+        # Re-trigger reconciliation for the newly mapped registration
+        ITCReconciliationService.reconcile_period(company, registration=registration)
+
+        return Response({
+            'success': True,
+            'message': f"Successfully attributed {updated_count} voucher(s) to GSTIN {registration.gstin}.",
+            'attributed_count': updated_count,
+            'attributed_gstin': registration.gstin
+        }, status=status.HTTP_200_OK)

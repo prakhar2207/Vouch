@@ -227,6 +227,9 @@ class Voucher(models.Model):
     itc_match_status = models.CharField(max_length=30, choices=ITC_MATCH_CHOICES, default='UNCHECKED', null=True, blank=True)
     itc_held_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00, null=True, blank=True)
     itc_notes = models.TextField(null=True, blank=True)
+    itc_gstin_attributed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='itc_attributed_vouchers')
+    itc_gstin_attributed_at = models.DateTimeField(null=True, blank=True)
+    itc_gstin_attribution_source = models.CharField(max_length=50, null=True, blank=True)
     
     narration = models.TextField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='DRAFT')

@@ -1,6 +1,8 @@
 import hashlib
 import uuid
+from dataclasses import dataclass
 from decimal import Decimal
+from typing import Any, Optional, Dict
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
@@ -10,6 +12,85 @@ from django.dispatch import receiver
 from apps.companies.models import Company
 from apps.accounting.models import Voucher
 from apps.gst.encryption import EncryptedTextField
+
+
+@dataclass(frozen=True)
+class DocumentFinancialEffect:
+    document_kind: str          # 'INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE', 'UNKNOWN'
+    financial_sign: int         # +1, -1, 0
+    is_credit_note: bool
+    is_debit_note: bool
+    is_review_required: bool
+    reason: str
+
+
+def resolve_document_financial_effect(record_or_dict: Any) -> DocumentFinancialEffect:
+    """
+    Canonical Financial & Document Type Resolver for GST Invoices, Credit Notes, and Debit Notes.
+    Accurately distinguishes CDNR credit notes ('C') from CDNR debit notes ('D').
+    Prevents negative inversion of debit notes.
+    Flags records with missing or ambiguous note_type as REVIEW_REQUIRED with financial_sign=0.
+    """
+    if hasattr(record_or_dict, 'document_type'):
+        doc_type = (getattr(record_or_dict, 'document_type', None) or '').strip().upper()
+        note_type = (getattr(record_or_dict, 'note_type', None) or '').strip().upper()
+    elif isinstance(record_or_dict, dict):
+        doc_type = (record_or_dict.get('document_type') or record_or_dict.get('doctype') or '').strip().upper()
+        note_type = (record_or_dict.get('note_type') or record_or_dict.get('ntty') or '').strip().upper()
+    else:
+        doc_type = ''
+        note_type = ''
+
+    # Credit Note / Debit Note sections (CDNR, CDNRA)
+    if doc_type in ['CDNR', 'CDNRA'] or note_type in ['C', 'CR', 'CREDIT', 'D', 'DR', 'DEBIT']:
+        if note_type in ['C', 'CR', 'CREDIT']:
+            return DocumentFinancialEffect(
+                document_kind='CREDIT_NOTE',
+                financial_sign=-1,
+                is_credit_note=True,
+                is_debit_note=False,
+                is_review_required=False,
+                reason='Credit note reduces recipient ITC balance'
+            )
+        elif note_type in ['D', 'DR', 'DEBIT']:
+            return DocumentFinancialEffect(
+                document_kind='DEBIT_NOTE',
+                financial_sign=1,
+                is_credit_note=False,
+                is_debit_note=True,
+                is_review_required=False,
+                reason='Debit note increases recipient ITC balance'
+            )
+        else:
+            return DocumentFinancialEffect(
+                document_kind='UNKNOWN',
+                financial_sign=0,
+                is_credit_note=False,
+                is_debit_note=False,
+                is_review_required=True,
+                reason=f"Ambiguous or missing note_type '{note_type}' on {doc_type} record"
+            )
+
+    # Standard B2B / B2BA tax invoices
+    if doc_type in ['B2B', 'B2BA', 'INV', 'INVOICE', ''] and not note_type:
+        return DocumentFinancialEffect(
+            document_kind='INVOICE',
+            financial_sign=1,
+            is_credit_note=False,
+            is_debit_note=False,
+            is_review_required=False,
+            reason='Standard B2B tax invoice'
+        )
+
+    # Fallback to standard positive invoice
+    return DocumentFinancialEffect(
+        document_kind='INVOICE',
+        financial_sign=1,
+        is_credit_note=False,
+        is_debit_note=False,
+        is_review_required=False,
+        reason='Default positive financial effect'
+    )
 
 
 class ProtectedGSTAllocationQuerySet(models.QuerySet):
@@ -149,8 +230,21 @@ class GSTRegistration(models.Model):
     address = models.TextField(blank=True, default='')
     pincode = models.CharField(max_length=10, blank=True, default='')
     
+    FILING_FREQUENCY_CHOICES = (
+        ('MONTHLY', 'Monthly'),
+        ('QRMP', 'Quarterly (QRMP)'),
+        ('UNKNOWN', 'Unknown'),
+    )
+
     taxpayer_type = models.CharField(max_length=30, choices=TAXPAYER_TYPE_CHOICES, default='REGULAR')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='ACTIVE')
+    filing_frequency = models.CharField(
+        max_length=20,
+        choices=FILING_FREQUENCY_CHOICES,
+        default='MONTHLY',
+        db_index=True,
+        help_text="GSTR-1 / GSTR-2B compliance frequency: MONTHLY or QRMP (Quarterly)"
+    )
     registration_date = models.DateField(null=True, blank=True)
     
     # Verification details
@@ -331,8 +425,15 @@ class GSTTaxpayerCache(models.Model):
 
 class GSTR2BImport(models.Model):
     STATUS_CHOICES = (
+        ('NOT_REQUESTED', 'Not Requested'),
         ('PROCESSING', 'Processing'),
+        ('FETCHED', 'Fetched'),
+        ('IMPORTED', 'Imported'),
         ('PROCESSED', 'Processed'),
+        ('EMPTY_PROCESSED', 'Empty Processed (No Invoices Reported)'),
+        ('REQUEST_FAILED', 'Request Failed'),
+        ('INVALID_PAYLOAD', 'Invalid Payload'),
+        ('REVIEW_REQUIRED', 'Review Required'),
         ('FAILED', 'Failed'),
     )
     FILE_FORMAT_CHOICES = (
@@ -362,6 +463,9 @@ class GSTR2BImport(models.Model):
     records_created = models.PositiveIntegerField(default=0)
     records_updated = models.PositiveIntegerField(default=0)
     records_unchanged = models.PositiveIntegerField(default=0)
+    records_rejected = models.PositiveIntegerField(default=0)
+    period_records_count = models.PositiveIntegerField(default=0)
+    is_empty_statement = models.BooleanField(default=False, db_index=True)
     source_info = models.CharField(max_length=100, blank=True, default='')
     
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PROCESSED')
@@ -474,17 +578,21 @@ class GSTR2BRecord(models.Model):
         return age > threshold_days
 
     @property
+    def financial_effect(self) -> DocumentFinancialEffect:
+        return resolve_document_financial_effect(self)
+
+    @property
     def is_credit_note(self) -> bool:
-        return (self.note_type or '').upper() == 'C' or 'CDNR' in (self.document_type or '').upper()
+        return self.financial_effect.is_credit_note
 
     @property
     def is_debit_note(self) -> bool:
-        return (self.note_type or '').upper() == 'D'
+        return self.financial_effect.is_debit_note
 
     @property
     def signed_taxable_value(self) -> Decimal:
         val = Decimal(str(self.taxable_value or 0))
-        return -val if self.is_credit_note else val
+        return val * self.financial_effect.financial_sign
 
     @property
     def signed_total_tax(self) -> Decimal:
@@ -494,7 +602,23 @@ class GSTR2BRecord(models.Model):
             Decimal(str(self.sgst_amount or 0)) +
             Decimal(str(self.cess_amount or 0))
         )
-        return -tax if self.is_credit_note else tax
+        return tax * self.financial_effect.financial_sign
+
+    @property
+    def signed_cgst(self) -> Decimal:
+        return Decimal(str(self.cgst_amount or 0)) * self.financial_effect.financial_sign
+
+    @property
+    def signed_sgst(self) -> Decimal:
+        return Decimal(str(self.sgst_amount or 0)) * self.financial_effect.financial_sign
+
+    @property
+    def signed_igst(self) -> Decimal:
+        return Decimal(str(self.igst_amount or 0)) * self.financial_effect.financial_sign
+
+    @property
+    def signed_cess(self) -> Decimal:
+        return Decimal(str(self.cess_amount or 0)) * self.financial_effect.financial_sign
 
     class Meta:
         indexes = [

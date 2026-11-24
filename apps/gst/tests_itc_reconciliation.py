@@ -1,7 +1,7 @@
 from decimal import Decimal
 from datetime import date
 from unittest.mock import patch, MagicMock
-from django.test import TestCase
+from django.test import TestCase, TransactionTestCase
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from rest_framework.test import APIClient
@@ -84,6 +84,7 @@ class ITCReconciliationTests(TestCase):
             voucher_number='PUR/26-27/001',
             external_invoice_number='INV/2026/088',
             voucher_date=date(2026, 8, 10),
+            buyer_gstin=self.registration.gstin,
             party_ledger=self.vendor_ledger,
             total_amount=Decimal('11800.00'),
             created_by=self.user,
@@ -109,6 +110,7 @@ class ITCReconciliationTests(TestCase):
             voucher_number='PUR/26-27/002',
             external_invoice_number='INV/2026/099',
             voucher_date=date(2026, 8, 12),
+            buyer_gstin=self.registration.gstin,
             party_ledger=self.vendor_ledger,
             total_amount=Decimal('23600.00'),
             created_by=self.user,
@@ -134,6 +136,7 @@ class ITCReconciliationTests(TestCase):
             voucher_number='PUR/26-27/003',
             external_invoice_number='INV/2026/500',
             voucher_date=date(2026, 8, 15),
+            buyer_gstin=self.registration.gstin,
             party_ledger=self.vendor_ledger,
             total_amount=Decimal('5900.00'),
             created_by=self.user,
@@ -317,6 +320,7 @@ class ITCReconciliationTests(TestCase):
             voucher_number='PUR/26-27/099',
             external_invoice_number='INV/2026/UNCHECKED',
             voucher_date=date(2026, 8, 20),
+            buyer_gstin=self.registration.gstin,
             party_ledger=self.vendor_ledger,
             total_amount=Decimal('1180.00'),
             created_by=self.user,
@@ -801,6 +805,7 @@ class ITCReconciliationTests(TestCase):
             voucher_number='PUR/26-27/040-APR',
             external_invoice_number='INV/2026/LATE-01',
             voucher_date=date(2026, 4, 15),
+            buyer_gstin=self.registration.gstin,
             party_ledger=self.vendor_ledger,
             total_amount=Decimal('11800.00'),
             created_by=self.user,
@@ -874,6 +879,7 @@ class ITCReconciliationTests(TestCase):
             voucher_number='PUR/26-27/SEP01',
             external_invoice_number='INV/2026/SEP01',
             voucher_date=date(2026, 9, 15),
+            buyer_gstin=self.registration.gstin,
             party_ledger=self.vendor_ledger,
             total_amount=Decimal('1180.00'),
             created_by=self.user,
@@ -1045,6 +1051,7 @@ class ITCReconciliationTests(TestCase):
             voucher_number='PUR/26-27/AMEND01',
             external_invoice_number='INV/AMEND/01',
             voucher_date=date(2026, 4, 15),
+            buyer_gstin=self.registration.gstin,
             party_ledger=self.vendor_ledger,
             total_amount=Decimal('11800.00'),
             created_by=self.user,
@@ -1155,3 +1162,295 @@ class ITCReconciliationTests(TestCase):
         t2.join()
 
         self.assertEqual(len(errors), 0, f"Concurrent lock acquisition failed with errors: {errors}")
+
+    def test_cdnr_debit_note_sign_math_not_inverted(self):
+        """
+        DEF-01: Verifies debit note sign logic.
+        Debit note (CDNR with note_type='D') must NOT be treated as a credit note.
+        Must have positive signed taxable and tax values.
+        """
+        batch = GSTR2BImport.objects.create(
+            company=self.company,
+            gst_registration=self.registration,
+            return_period='082026',
+            status='PROCESSED',
+            uploaded_by=self.user
+        )
+        rec = GSTR2BRecord.objects.create(
+            import_batch=batch,
+            company=self.company,
+            gst_registration=self.registration,
+            return_period='082026',
+            supplier_gstin='07STEEL8888S1Z8',
+            invoice_number='DN/2026/01',
+            normalized_invoice_number='DN202601',
+            document_type='CDNR',
+            note_type='D',
+            taxable_value=Decimal('5000.00'),
+            cgst_amount=Decimal('450.00'),
+            sgst_amount=Decimal('450.00'),
+            igst_amount=Decimal('0.00'),
+            cess_amount=Decimal('0.00'),
+            match_status='MISSING_IN_BOOKS'
+        )
+
+        eff = rec.financial_effect
+        self.assertFalse(rec.is_credit_note, "CDNR with note_type='D' must not be credit note")
+        self.assertTrue(rec.is_debit_note, "CDNR with note_type='D' must be debit note")
+        self.assertEqual(eff.financial_sign, 1)
+        self.assertEqual(rec.signed_taxable_value, Decimal('5000.00'))
+        self.assertEqual(rec.signed_total_tax, Decimal('900.00'))
+        self.assertEqual(rec.signed_cgst, Decimal('450.00'))
+        self.assertEqual(rec.signed_sgst, Decimal('450.00'))
+
+    def test_cdnr_unknown_note_type_flags_review_required(self):
+        """
+        DEF-01: Verifies that CDNR with missing or ambiguous note_type
+        evaluates to financial_sign=0 and is_review_required=True.
+        """
+        batch = GSTR2BImport.objects.create(
+            company=self.company,
+            gst_registration=self.registration,
+            return_period='082026',
+            status='PROCESSED',
+            uploaded_by=self.user
+        )
+        rec = GSTR2BRecord.objects.create(
+            import_batch=batch,
+            company=self.company,
+            gst_registration=self.registration,
+            return_period='082026',
+            supplier_gstin='07STEEL8888S1Z8',
+            invoice_number='AMBIG/2026/01',
+            normalized_invoice_number='AMBIG202601',
+            document_type='CDNR',
+            note_type='',
+            taxable_value=Decimal('3000.00'),
+            cgst_amount=Decimal('270.00'),
+            sgst_amount=Decimal('270.00'),
+            match_status='REVIEW_REQUIRED'
+        )
+
+        eff = rec.financial_effect
+        self.assertTrue(eff.is_review_required)
+        self.assertEqual(eff.financial_sign, 0)
+        self.assertEqual(rec.signed_taxable_value, Decimal('0.00'))
+        self.assertEqual(rec.signed_total_tax, Decimal('0.00'))
+
+    def test_qrmp_period_resolver_maps_interim_months_to_quarter_end(self):
+        """
+        DEF-02: Central Return-Period Resolver with QRMP Intelligence.
+        Verifies that April and May invoices map to the June quarter-end statement (06YYYY),
+        and July/August invoices map to the September statement (09YYYY).
+        """
+        # Set registration to QRMP
+        self.registration.filing_frequency = 'QRMP'
+        self.registration.save(update_fields=['filing_frequency'])
+
+        res_apr = GSTPeriodService.resolve_gstr2b_statement_period(
+            invoice_date=date(2026, 4, 15),
+            recipient_registration=self.registration
+        )
+        self.assertEqual(res_apr.expected_statement_period, '062026')
+        self.assertEqual(res_apr.invoice_period, '042026')
+        self.assertEqual(res_apr.period_resolution_status, 'RESOLVED_QRMP')
+
+        res_may = GSTPeriodService.resolve_gstr2b_statement_period(
+            invoice_date=date(2026, 5, 20),
+            recipient_registration=self.registration
+        )
+        self.assertEqual(res_may.expected_statement_period, '062026')
+
+        res_jul = GSTPeriodService.resolve_gstr2b_statement_period(
+            invoice_date=date(2026, 7, 10),
+            recipient_registration=self.registration
+        )
+        self.assertEqual(res_jul.expected_statement_period, '092026')
+
+        res_aug = GSTPeriodService.resolve_gstr2b_statement_period(
+            invoice_date=date(2026, 8, 25),
+            recipient_registration=self.registration
+        )
+        self.assertEqual(res_aug.expected_statement_period, '092026')
+
+        # Test Monthly registration behavior
+        self.registration.filing_frequency = 'MONTHLY'
+        self.registration.save(update_fields=['filing_frequency'])
+
+        res_monthly_apr = GSTPeriodService.resolve_gstr2b_statement_period(
+            invoice_date=date(2026, 4, 15),
+            recipient_registration=self.registration
+        )
+        self.assertEqual(res_monthly_apr.expected_statement_period, '042026')
+        self.assertEqual(res_monthly_apr.period_resolution_status, 'RESOLVED_MONTHLY')
+
+    def test_empty_statement_processed_marks_unmatched_as_missing_in_2b(self):
+        """
+        DEF-03: EMPTY_PROCESSED is valid evidence that un-reflected invoices are missing.
+        When an empty statement is ingested, batch status is EMPTY_PROCESSED and is_empty_statement=True.
+        Unmatched invoices for that period become MISSING_IN_2B.
+        """
+        empty_payload = {
+            'gstin': self.registration.gstin,
+            'fp': '052026',
+            'data': {
+                'docdata': {
+                    'b2b': [],
+                    'b2ba': [],
+                    'cdnr': [],
+                    'cdnra': []
+                }
+            }
+        }
+        batch = ITCReconciliationService.ingest_gstr2b_json(
+            company=self.company,
+            json_data=empty_payload,
+            return_period='052026',
+            registration=self.registration
+        )
+        self.assertEqual(batch.status, 'EMPTY_PROCESSED')
+        self.assertTrue(batch.is_empty_statement)
+        self.assertEqual(batch.total_invoices_count, 0)
+        self.assertEqual(batch.records_created, 0)
+
+        # Voucher in May 2026
+        v = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/26-27/MAY01',
+            external_invoice_number='INV/MAY/01',
+            voucher_date=date(2026, 5, 10),
+            buyer_gstin=self.registration.gstin,
+            party_ledger=self.vendor_ledger,
+            total_amount=Decimal('1180.00'),
+            created_by=self.user,
+            status='POSTED',
+            itc_match_status='UNCHECKED'
+        )
+        VoucherItem.objects.create(
+            voucher=v,
+            product=self.product,
+            quantity=Decimal('10.00'),
+            rate=Decimal('100.00'),
+            taxable_amount=Decimal('1000.00'),
+            cgst_rate=Decimal('9.00'),
+            cgst_amount=Decimal('90.00'),
+            sgst_rate=Decimal('9.00'),
+            sgst_amount=Decimal('90.00'),
+            total_amount=Decimal('1180.00')
+        )
+
+        ITCReconciliationService.reconcile_period(
+            company=self.company,
+            return_period='052026',
+            registration=self.registration
+        )
+        v.refresh_from_db()
+        self.assertEqual(v.itc_match_status, 'MISSING_IN_2B')
+
+    def test_attribution_api_maps_unmapped_voucher_to_gstin_with_audit_trail(self):
+        """
+        DEF-04: Explicit GSTIN attribution endpoint assigns unmapped voucher to registration
+        and records audit fields (attributed_by, attributed_at, attribution_source).
+        """
+        unmapped_v = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/26-27/UNMAPPED01',
+            external_invoice_number='INV/UNMAPPED/01',
+            voucher_date=date(2026, 8, 10),
+            buyer_gstin=None,
+            party_ledger=self.vendor_ledger,
+            total_amount=Decimal('1180.00'),
+            created_by=self.user,
+            status='POSTED',
+            itc_match_status='UNCHECKED'
+        )
+
+        url = reverse('itc_attribute_voucher')
+        payload = {
+            'voucher_ids': [str(unmapped_v.id)],
+            'registration_id': str(self.registration.id),
+            'attribution_source': 'TEST_SUITE_AUDIT'
+        }
+        res = self.client.post(url, payload, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue(res.data.get('success'))
+        self.assertEqual(res.data.get('attributed_count'), 1)
+
+        unmapped_v.refresh_from_db()
+        self.assertEqual(unmapped_v.buyer_gstin, self.registration.gstin)
+        self.assertEqual(unmapped_v.itc_gstin_attributed_by, self.user)
+        self.assertIsNotNone(unmapped_v.itc_gstin_attributed_at)
+        self.assertEqual(unmapped_v.itc_gstin_attribution_source, 'TEST_SUITE_AUDIT')
+
+class PostgreSQLConcurrencyCertificationTests(TransactionTestCase):
+    """
+    DEF-05: Dedicated PostgreSQL Concurrency Certification (TransactionTestCase).
+    Because TransactionTestCase commits rows rather than wrapping them in an outer uncommitted transaction,
+    concurrent threads on independent database connections can read foreign key relations (Company, Registration)
+    and verify PostgreSQL savepoint + select_for_update race safety under real threading.Barrier conditions.
+    """
+    def setUp(self):
+        self.company = Company.objects.create(
+            name='Concurrency Heavy Industries Ltd',
+            legal_name='Concurrency Heavy Industries Ltd',
+            gstin='07CHI9999C1Z5',
+            state_code='07'
+        )
+        self.registration = GSTRegistration.objects.create(
+            company=self.company,
+            gstin='07CHI9999C1Z5',
+            legal_name='Concurrency Heavy Industries Ltd',
+            state_code='07',
+            status='ACTIVE',
+            is_primary=True
+        )
+
+    def test_postgresql_concurrency_barrier_certification(self):
+        import threading
+        from django.db import connection, transaction
+
+        target_period = '122026'
+        worker_count = 4
+        barrier = threading.Barrier(worker_count)
+        errors = []
+        acquired_locks = []
+
+        if connection.vendor == 'sqlite':
+            # Under SQLite test runner, sequential lock verify
+            for _ in range(worker_count):
+                lock = ITCReconciliationService._acquire_ingestion_lock(
+                    company=self.company,
+                    registration=self.registration,
+                    return_period=target_period
+                )
+                self.assertIsNotNone(lock)
+                acquired_locks.append(lock.id)
+            self.assertEqual(len(set(acquired_locks)), 1)
+            return
+
+        def worker():
+            from django.db import connection
+            connection.close()  # Independent database connection per thread
+            try:
+                barrier.wait(timeout=10)  # Synchronize threads for simultaneous race
+                with transaction.atomic():
+                    lock = ITCReconciliationService._acquire_ingestion_lock(
+                        company=self.company,
+                        registration=self.registration,
+                        return_period=target_period
+                    )
+                    acquired_locks.append(lock.id)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker) for _ in range(worker_count)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=15)
+
+        self.assertEqual(len(errors), 0, f"PostgreSQL concurrency race encountered errors: {errors}")
+        self.assertEqual(len(acquired_locks), worker_count)
+        self.assertEqual(len(set(acquired_locks)), 1, "All concurrent threads must resolve to the identical lock row")
