@@ -2405,41 +2405,68 @@ export default function SettingsPage() {
                         </div>
                       )}
 
-                      {/* Step 3 & 5 Guided Onboarding Card: When API Access is Disabled on GST Portal */}
-                      {(portalErrorCode === 'API_ACCESS_DISABLED' || portalErrorCode === 'GSP_AUTH_MISSING') && (
-                        <div className="p-5 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-4 animate-in fade-in duration-200">
-                          <div className="flex items-start gap-3">
-                            <div className="p-2 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400 shrink-0">
+                      {/* Step 3 & 5 Guided Onboarding Card: Always visible before connecting to guide the taxpayer */}
+                      <div className={`p-5 rounded-2xl space-y-4 transition-all duration-200 ${
+                        (portalErrorCode === 'API_ACCESS_DISABLED' || portalErrorCode === 'GSP_AUTH_MISSING')
+                          ? 'bg-amber-500/10 border border-amber-500/30'
+                          : 'bg-muted/30 border border-border/50'
+                      }`}>
+                        <div className="flex items-start gap-3">
+                          <div className={`p-2 rounded-xl shrink-0 ${
+                            (portalErrorCode === 'API_ACCESS_DISABLED' || portalErrorCode === 'GSP_AUTH_MISSING')
+                              ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
+                              : 'bg-primary/10 text-primary'
+                          }`}>
+                            {(portalErrorCode === 'API_ACCESS_DISABLED' || portalErrorCode === 'GSP_AUTH_MISSING') ? (
                               <ShieldAlert className="w-5 h-5" />
-                            </div>
-                            <div className="space-y-1">
-                              <h3 className="text-sm font-bold text-foreground">Action Required on Government GST Portal</h3>
-                              <p className="text-xs text-muted-foreground leading-relaxed">
-                                {portalError || "GST API access is currently disabled for this GST registration. Please enable API access in your GST Portal account and try again."}
-                              </p>
-                            </div>
+                            ) : (
+                              <Globe className="w-5 h-5" />
+                            )}
                           </div>
-
-                          <div className="bg-background/80 dark:bg-background/40 border border-amber-500/20 rounded-xl p-4 space-y-2.5 text-xs text-foreground">
-                            <div className="font-bold text-[11px] uppercase tracking-wider text-muted-foreground">Follow these 4 simple steps:</div>
-                            <ol className="list-decimal list-inside space-y-1.5 text-muted-foreground font-normal">
-                              <li><span className="text-foreground font-medium">Sign in to your GST Portal account</span> at services.gst.gov.in</li>
-                              <li>Go to <span className="text-foreground font-medium">My Profile</span> &gt; <span className="text-foreground font-medium">Manage API Access</span></li>
-                              <li>Select <span className="text-foreground font-medium">Yes</span> for &apos;Enable API Request&apos; and choose <span className="text-foreground font-medium">30 days</span></li>
-                              <li>If prompted for GSP, choose <span className="text-foreground font-bold text-amber-700 dark:text-amber-300">Quicko Infosoft Private Limited</span></li>
-                            </ol>
+                          <div className="space-y-1">
+                            <h3 className="text-sm font-bold text-foreground">
+                              {(portalErrorCode === 'API_ACCESS_DISABLED' || portalErrorCode === 'GSP_AUTH_MISSING')
+                                ? 'Action Required on Government GST Portal'
+                                : '1-Time Setup: Enable API Access on Government GST Portal'}
+                            </h3>
+                            <p className="text-xs text-muted-foreground leading-relaxed">
+                              {(portalErrorCode === 'API_ACCESS_DISABLED' || portalErrorCode === 'GSP_AUTH_MISSING')
+                                ? (portalError || "GST API access is currently disabled for this GST registration. Please ensure 'Enable API Request' is set to 'Yes' in your GST Portal profile.")
+                                : "Before connecting, please ensure API access is enabled in your official GST Common Portal profile (services.gst.gov.in):"}
+                            </p>
                           </div>
+                        </div>
 
-                          <div className="flex flex-wrap items-center gap-3 pt-1">
-                            <a
-                              href="https://services.gst.gov.in"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-2 cursor-pointer"
-                            >
-                              <ExternalLink className="w-3.5 h-3.5" />
-                              <span>Open Government GST Portal ↗</span>
-                            </a>
+                        <div className={`border rounded-xl p-4 space-y-2.5 text-xs text-foreground ${
+                          (portalErrorCode === 'API_ACCESS_DISABLED' || portalErrorCode === 'GSP_AUTH_MISSING')
+                            ? 'bg-background/80 dark:bg-background/40 border-amber-500/20'
+                            : 'bg-background/60 border-border/40'
+                        }`}>
+                          <div className="font-bold text-[11px] uppercase tracking-wider text-muted-foreground">Follow these 4 simple steps:</div>
+                          <ol className="list-decimal list-inside space-y-2 text-muted-foreground font-normal">
+                            <li><span className="text-foreground font-medium">Sign in to your GST Portal account</span> at <span className="font-mono text-foreground font-semibold">services.gst.gov.in</span></li>
+                            <li>Go to <span className="text-foreground font-medium">My Profile</span> &gt; <span className="text-foreground font-medium">Manage API Access</span></li>
+                            <li>
+                              Set the master toggle <span className="text-foreground font-bold">&apos;Enable API Request&apos;</span> to <span className="text-foreground font-bold text-emerald-600 dark:text-emerald-400">Yes</span> and select duration <span className="text-foreground font-medium">30 days</span>
+                              <div className="text-[11px] text-amber-700 dark:text-amber-400 font-medium mt-1 ml-4 bg-amber-500/10 dark:bg-amber-500/15 p-2 rounded-lg border border-amber-500/20">
+                                ⚠️ <strong>Crucial:</strong> Even if Quicko / Sandbox is already in your Access History table, the master radio button <strong>&apos;Enable API Request&apos;</strong> at the top must be toggled to <strong>&apos;Yes&apos;</strong> and saved.
+                              </div>
+                            </li>
+                            <li>If adding a new GSP, choose <span className="text-foreground font-bold text-primary">Quicko Infosoft Private Limited</span> (ASP: Sandbox Financial Technologies)</li>
+                          </ol>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-3 pt-1">
+                          <a
+                            href="https://services.gst.gov.in"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-2 cursor-pointer"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                            <span>Open Government GST Portal ↗</span>
+                          </a>
+                          {(portalErrorCode === 'API_ACCESS_DISABLED' || portalErrorCode === 'GSP_AUTH_MISSING') && (
                             <button
                               type="button"
                               onClick={handleRequestPortalOTP}
@@ -2449,16 +2476,16 @@ export default function SettingsPage() {
                               <RefreshCw className={`w-3.5 h-3.5 ${portalLoading ? 'animate-spin' : ''}`} />
                               <span>{portalLoading ? 'Connecting...' : "I've enabled API access — Try Connecting Again"}</span>
                             </button>
-                          </div>
+                          )}
                         </div>
-                      )}
+                      </div>
 
                       {portalStep === 'idle' ? (
                         <div className="p-5 rounded-2xl bg-muted/20 border border-border/40 space-y-4">
                           <div className="space-y-1">
                             <label className="text-xs font-bold text-foreground">GST Portal Username</label>
                             <p className="text-xs text-muted-foreground">
-                              Enter your registered GST Portal username. We will request a one-time OTP directly from the Government GST Portal to your registered mobile and email:
+                              Enter your registered GST Portal login username. We will request a one-time OTP directly from the Government GST Portal to your registered mobile and email:
                             </p>
                           </div>
 
@@ -2468,7 +2495,7 @@ export default function SettingsPage() {
                               value={portalUsername}
                               onChange={(e) => setPortalUsername(e.target.value)}
                               placeholder={gstin || currentCompany.gstin || "Enter GST Portal Username"}
-                              className="flex-1 w-full bg-background border border-input text-foreground text-xs p-2.5 rounded-xl outline-none focus:ring-2 focus:ring-primary/20"
+                              className="flex-1 w-full bg-background border border-input text-foreground text-xs p-2.5 rounded-xl outline-none focus:ring-2 focus:ring-primary/20 font-mono"
                             />
                             <button
                               type="button"
@@ -2477,13 +2504,13 @@ export default function SettingsPage() {
                               className="w-full sm:w-auto px-5 py-2.5 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2 shrink-0 shadow-sm"
                             >
                               <Key className={`w-3.5 h-3.5 ${portalLoading ? 'animate-spin' : ''}`} />
-                              <span>{portalLoading ? 'Connecting...' : 'Connect GST Portal'}</span>
+                              <span>{portalLoading ? 'Connecting...' : 'Request Portal OTP'}</span>
                             </button>
                           </div>
 
                           <div className="flex flex-col gap-1.5 text-[11px] text-muted-foreground pt-1">
                             <div>
-                              Note: By default, your GST Portal username is your 15-character GSTIN unless you created a customized API username on the GST Common Portal.
+                              <span className="font-semibold text-foreground">Note:</span> Enter the login username you use to sign in to <span className="font-mono text-foreground font-semibold">services.gst.gov.in</span>. If you haven&apos;t created a separate username, it may be your 15-character GSTIN.
                             </div>
                             <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium">
                               <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
