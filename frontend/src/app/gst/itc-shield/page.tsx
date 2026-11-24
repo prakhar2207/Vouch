@@ -105,7 +105,10 @@ export default function VendorITCRiskShieldPage() {
 
   // Modals
   const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
-  const [syncPeriod, setSyncPeriod] = useState<string>("");
+  const [syncMode, setSyncMode] = useState<"range" | "single">("range");
+  const [syncFromPeriod, setSyncFromPeriod] = useState<string>("042026");
+  const [syncToPeriod, setSyncToPeriod] = useState<string>("102026");
+  const [syncPeriod, setSyncPeriod] = useState<string>("102026");
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncSuccess, setSyncSuccess] = useState<string | null>(null);
@@ -222,27 +225,44 @@ export default function VendorITCRiskShieldPage() {
   // Direct Portal Sync Handler
   const handleSyncSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanPeriod = syncPeriod.replace('-', '').trim();
-    if (!cleanPeriod) {
-      setSyncError("Please enter a return period (MMYYYY, e.g. 102026 for October 2026).");
-      return;
-    }
     setSyncing(true);
     setSyncError(null);
     setSyncSuccess(null);
+
+    let payload: any = {};
+    if (syncMode === "range") {
+      payload = {
+        from_period: syncFromPeriod,
+        to_period: syncToPeriod,
+      };
+    } else {
+      const cleanPeriod = syncPeriod.replace(/[-/]/g, '').trim();
+      if (!cleanPeriod) {
+        setSyncError("Please enter a return period (MMYYYY, e.g. 102026 for October 2026).");
+        setSyncing(false);
+        return;
+      }
+      payload = { period: cleanPeriod };
+    }
+
     try {
       const res = await api.post(
         `/api/v1/gst/reconciliation/gstr2b/sync/${companyId}/`,
-        { period: cleanPeriod },
+        payload,
         { headers: { "X-Company-ID": companyId } }
       );
       if (res.data?.success) {
-        setSyncSuccess(`Synced successfully! Ingested ${res.data.total_invoices_ingested || 0} GSTR-2B invoices.`);
+        const count = res.data.total_invoices_ingested ?? 0;
+        const syncedCount = res.data.periods_synced?.length;
+        const msg = syncedCount
+          ? `Synced ${syncedCount} months successfully! Ingested ${count} GSTR-2B invoices.`
+          : `Synced successfully! Ingested ${count} GSTR-2B invoices.`;
+        setSyncSuccess(msg);
         await handleRefresh();
         setTimeout(() => {
           setIsSyncModalOpen(false);
           setSyncSuccess(null);
-        }, 1500);
+        }, 2000);
       } else {
         setSyncError(res.data?.error || "Failed to fetch GSTR-2B from GST Portal.");
       }
@@ -727,12 +747,12 @@ export default function VendorITCRiskShieldPage() {
             <div className="bg-card border border-border/40 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-in fade-in zoom-in-95">
               <div className="flex items-center justify-between border-b border-border/40 pb-3">
                 <div className="flex items-center gap-2">
-                  <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                    <RefreshCw className="w-5 h-5" />
+                  <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
+                    <RefreshCw className="w-4 h-4" />
                   </div>
                   <div>
-                    <h3 className="font-bold text-foreground">Sync GSTR-2B from GST Portal</h3>
-                    <p className="text-xs text-muted-foreground">Directly fetch official auto-drafted ITC statement</p>
+                    <h3 className="font-bold text-foreground text-sm">Sync GSTR-2B from GST Portal</h3>
+                    <p className="text-[11px] text-muted-foreground">Directly fetch official auto-drafted ITC statement</p>
                   </div>
                 </div>
                 <button
@@ -743,22 +763,129 @@ export default function VendorITCRiskShieldPage() {
                 </button>
               </div>
 
+              {/* Sync Mode Selection Tabs */}
+              <div className="grid grid-cols-2 gap-2 p-1 bg-muted/40 rounded-xl border border-border/40">
+                <button
+                  type="button"
+                  onClick={() => setSyncMode("range")}
+                  className={`px-3 py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                    syncMode === "range"
+                      ? "bg-card text-foreground shadow-sm border border-border/50"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <span>Apr &ndash; Oct 2026</span>
+                  <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold">
+                    Full Year
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSyncMode("single")}
+                  className={`px-3 py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                    syncMode === "single"
+                      ? "bg-card text-foreground shadow-sm border border-border/50"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <span>Single Month</span>
+                </button>
+              </div>
+
               <form onSubmit={handleSyncSubmit} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-foreground mb-1.5">
-                    Return Period (Month &amp; Year)
-                  </label>
-                  <input
-                    type="text"
-                    value={syncPeriod}
-                    onChange={(e) => setSyncPeriod(e.target.value)}
-                    placeholder="e.g. 102026 (for Oct 2026) or 092026"
-                    className="w-full px-3 py-2 text-xs rounded-lg border border-border/60 bg-background focus:outline-none focus:ring-1 focus:ring-primary font-mono"
-                  />
-                  <p className="text-[11px] text-muted-foreground mt-1">
-                    Format: MMYYYY (e.g. <strong>102026</strong> for October 2026, <strong>092026</strong> for September 2026).
-                  </p>
-                </div>
+                {syncMode === "range" ? (
+                  <div className="space-y-3">
+                    <div className="p-3 rounded-xl bg-primary/5 border border-primary/20 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                          <Calendar className="w-3.5 h-3.5 text-primary" />
+                          FY 2026&ndash;27 (April to October)
+                        </span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                          7 Months
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground leading-relaxed">
+                        Fetches official GSTR-2B statements for <strong>April, May, June, July, August, September, and October 2026</strong>. Reconciles all your purchase invoices against GSTN.
+                      </p>
+                      <div className="flex flex-wrap gap-1.5 pt-0.5">
+                        {["Apr 26", "May 26", "Jun 26", "Jul 26", "Aug 26", "Sep 26", "Oct 26"].map((m) => (
+                          <span key={m} className="px-2 py-0.5 text-[10px] font-medium rounded-md bg-muted/80 text-foreground border border-border/40">
+                            {m}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 pt-1">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
+                          From Month
+                        </label>
+                        <select
+                          value={syncFromPeriod}
+                          onChange={(e) => setSyncFromPeriod(e.target.value)}
+                          className="w-full px-3 py-2 text-xs rounded-lg border border-border/60 bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary font-mono cursor-pointer"
+                        >
+                          <option value="042026">042026 (Apr 2026)</option>
+                          <option value="052026">052026 (May 2026)</option>
+                          <option value="062026">062026 (Jun 2026)</option>
+                          <option value="072026">072026 (Jul 2026)</option>
+                          <option value="082026">082026 (Aug 2026)</option>
+                          <option value="092026">092026 (Sep 2026)</option>
+                          <option value="102026">102026 (Oct 2026)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
+                          To Month
+                        </label>
+                        <select
+                          value={syncToPeriod}
+                          onChange={(e) => setSyncToPeriod(e.target.value)}
+                          className="w-full px-3 py-2 text-xs rounded-lg border border-border/60 bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary font-mono cursor-pointer"
+                        >
+                          <option value="102026">102026 (Oct 2026)</option>
+                          <option value="092026">092026 (Sep 2026)</option>
+                          <option value="082026">082026 (Aug 2026)</option>
+                          <option value="072026">072026 (Jul 2026)</option>
+                          <option value="062026">062026 (Jun 2026)</option>
+                          <option value="052026">052026 (May 2026)</option>
+                          <option value="042026">042026 (Apr 2026)</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-xs font-semibold text-foreground mb-1.5">
+                      Return Period (Month &amp; Year)
+                    </label>
+                    <select
+                      value={syncPeriod}
+                      onChange={(e) => setSyncPeriod(e.target.value)}
+                      className="w-full px-3 py-2 text-xs rounded-lg border border-border/60 bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary font-mono cursor-pointer mb-2"
+                    >
+                      <option value="102026">102026 &mdash; October 2026</option>
+                      <option value="092026">092026 &mdash; September 2026</option>
+                      <option value="082026">082026 &mdash; August 2026</option>
+                      <option value="072026">072026 &mdash; July 2026</option>
+                      <option value="062026">062026 &mdash; June 2026</option>
+                      <option value="052026">052026 &mdash; May 2026</option>
+                      <option value="042026">042026 &mdash; April 2026</option>
+                    </select>
+                    <input
+                      type="text"
+                      value={syncPeriod}
+                      onChange={(e) => setSyncPeriod(e.target.value)}
+                      placeholder="Or enter custom period: MMYYYY (e.g. 102026)"
+                      className="w-full px-3 py-2 text-xs rounded-lg border border-border/60 bg-background focus:outline-none focus:ring-1 focus:ring-primary font-mono"
+                    />
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      Format: MMYYYY (e.g. <strong>102026</strong> for October 2026, <strong>092026</strong> for September 2026).
+                    </p>
+                  </div>
+                )}
 
                 {syncError && (
                   <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-xs text-rose-500 flex items-start gap-2">
@@ -784,11 +911,17 @@ export default function VendorITCRiskShieldPage() {
                   </button>
                   <button
                     type="submit"
-                    disabled={syncing || !syncPeriod.trim()}
+                    disabled={syncing}
                     className="px-4 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 cursor-pointer flex items-center gap-2 shadow-sm"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
-                    <span>{syncing ? "Fetching from GST Portal..." : "Sync & Reconcile"}</span>
+                    <span>
+                      {syncing
+                        ? "Fetching from GST Portal..."
+                        : syncMode === "range"
+                        ? "Sync All 7 Months (Apr – Oct)"
+                        : "Sync & Reconcile"}
+                    </span>
                   </button>
                 </div>
               </form>

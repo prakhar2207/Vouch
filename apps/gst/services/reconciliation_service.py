@@ -9,7 +9,7 @@ from django.utils import timezone
 from apps.companies.models import Company
 from apps.accounting.models import Voucher, VoucherItem
 from apps.accounting.services.effective_voucher_service import EffectiveVoucherService
-from apps.gst.models import GSTRegistration, GSTR2BImport, GSTR2BRecord
+from apps.gst.models import CompanyGSTConfig, GSTRegistration, GSTR2BImport, GSTR2BRecord
 from apps.gst.services.sandbox_client import SandboxGSTClient
 
 logger = logging.getLogger('apps.gst.reconciliation_service')
@@ -47,24 +47,62 @@ class GSTReconciliationService:
     def fetch_and_ingest_from_sandbox(
         cls,
         company: Company,
-        registration: Optional[GSTRegistration],
-        return_period: str,
+        registration: Optional[GSTRegistration] = None,
+        return_period: Optional[str] = None,
         user: Any = None
     ) -> Dict[str, Any]:
         """
         Fetches GSTR-2B statement directly from Sandbox by Quicko:
         GET /gst/compliance/tax-payer/gstrs/gstr-2b/{year}/{month}
         And ingests the records into GSTR2BImport and GSTR2BRecord.
+        Supports MMYYYY (082026), DDMMYYYY (01082026), and YYYY-MM (2026-08).
         """
-        # Parse return_period (e.g. "082026") into year and month
-        p = return_period.strip().replace('-', '')
-        if len(p) == 6:
-            month = p[:2]
-            year = p[2:]
+        # Parse return_period (e.g. "082026", "01082026", "2026-08", "2026/08") into year and month
+        raw_period = str(return_period or '').strip()
+        if '-' in raw_period or '/' in raw_period:
+            sep = '-' if '-' in raw_period else '/'
+            parts = raw_period.split(sep)
+            if len(parts) == 2:
+                if len(parts[0]) == 4:  # YYYY-MM
+                    year = parts[0]
+                    month = parts[1].zfill(2)
+                else:  # MM-YYYY
+                    month = parts[0].zfill(2)
+                    year = parts[1]
+                norm_period = f"{month}{year}"
+            elif len(parts) == 3:  # DD-MM-YYYY
+                month = parts[1].zfill(2)
+                year = parts[2]
+                norm_period = f"{month}{year}"
+            else:
+                p = raw_period.replace('-', '').replace('/', '')
+                month = p[:2]
+                year = p[2:]
+                norm_period = f"{month}{year}"
         else:
-            now = timezone.now()
-            month = str(now.month).zfill(2)
-            year = str(now.year)
+            p = raw_period.replace('-', '').replace('/', '')
+            if len(p) == 8:
+                # DDMMYYYY format, e.g. 01042026 -> month=04, year=2026
+                month = p[2:4]
+                year = p[4:]
+                norm_period = f"{month}{year}"
+            elif len(p) == 6:
+                # Distinguish YYYYMM (e.g. 202605) vs MMYYYY (e.g. 052026)
+                if p[:4].isdigit() and int(p[:4]) >= 2015:
+                    year = p[:4]
+                    month = p[4:].zfill(2)
+                    norm_period = f"{month}{year}"
+                else:
+                    month = p[:2]
+                    year = p[2:]
+                    norm_period = p
+            else:
+                now = timezone.now()
+                prev_month = now.month - 1 if now.month > 1 else 12
+                prev_year = now.year if now.month > 1 else now.year - 1
+                month = str(prev_month).zfill(2)
+                year = str(prev_year)
+                norm_period = f"{month}{year}"
 
         if not registration:
             registration = (
@@ -102,8 +140,8 @@ class GSTReconciliationService:
             company=company,
             json_data=data,
             user=user,
-            file_name=f"sandbox_gstr2b_{return_period}.json",
-            return_period=return_period
+            file_name=f"sandbox_gstr2b_{norm_period}.json",
+            return_period=norm_period
         )
 
         if registration:
@@ -115,14 +153,94 @@ class GSTReconciliationService:
         rec_summary = cls.reconcile_period(
             company=company,
             registration=registration,
-            return_period=return_period
+            return_period=norm_period
         )
 
         return {
             "success": True,
             "import_batch_id": str(import_batch.id),
-            "return_period": return_period,
+            "return_period": norm_period,
             "total_invoices_ingested": import_batch.total_invoices_count,
+            "reconciliation_summary": rec_summary
+        }
+
+    @classmethod
+    def fetch_and_ingest_range(
+        cls,
+        company: Company,
+        registration: Optional[GSTRegistration] = None,
+        periods: Optional[List[str]] = None,
+        from_period: Optional[str] = None,
+        to_period: Optional[str] = None,
+        user: Any = None
+    ) -> Dict[str, Any]:
+        """
+        Fetches and ingests GSTR-2B statements across multiple return periods (e.g. April to October).
+        Runs a consolidated reconciliation at the end.
+        """
+        resolved_periods = []
+        if periods and isinstance(periods, list):
+            for p in periods:
+                clean_p = str(p or '').strip().replace('-', '').replace('/', '')
+                if len(clean_p) == 8:
+                    clean_p = clean_p[2:]
+                if clean_p and clean_p not in resolved_periods:
+                    resolved_periods.append(clean_p)
+        elif from_period and to_period:
+            fp = str(from_period).strip().replace('-', '').replace('/', '')
+            tp = str(to_period).strip().replace('-', '').replace('/', '')
+            if len(fp) == 8:
+                fp = fp[2:]
+            if len(tp) == 8:
+                tp = tp[2:]
+            if len(fp) == 6 and len(tp) == 6:
+                fm, fy = int(fp[:2]), int(fp[2:])
+                tm, ty = int(tp[:2]), int(tp[2:])
+                cur_m, cur_y = fm, fy
+                while (cur_y < ty) or (cur_y == ty and cur_m <= tm):
+                    resolved_periods.append(f"{str(cur_m).zfill(2)}{cur_y}")
+                    cur_m += 1
+                    if cur_m > 12:
+                        cur_m = 1
+                        cur_y += 1
+
+        if not resolved_periods:
+            return {
+                "success": False,
+                "error": "No valid return periods specified for multi-period sync."
+            }
+
+        results = []
+        total_ingested = 0
+        success_periods = []
+        failed_periods = []
+
+        for p in resolved_periods:
+            res = cls.fetch_and_ingest_from_sandbox(
+                company=company,
+                registration=registration,
+                return_period=p,
+                user=user
+            )
+            results.append({"period": p, "result": res})
+            if res.get("success"):
+                success_periods.append(p)
+                total_ingested += res.get("total_invoices_ingested", 0)
+            else:
+                failed_periods.append({"period": p, "error": res.get("error")})
+
+        # Run final overall reconciliation across all records for the company
+        rec_summary = cls.reconcile_period(
+            company=company,
+            registration=registration
+        )
+
+        return {
+            "success": len(success_periods) > 0,
+            "periods_requested": resolved_periods,
+            "periods_synced": success_periods,
+            "failed_periods": failed_periods,
+            "total_invoices_ingested": total_ingested,
             "reconciliation_summary": rec_summary
         }
 

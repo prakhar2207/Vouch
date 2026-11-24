@@ -1183,26 +1183,46 @@ class GSTR2BSyncFromSandboxAPIView(APIView):
     """
     POST /api/v1/gst/reconciliation/gstr2b/sync/<uuid:company_id>/
     Fetches GSTR-2B data directly from Sandbox and executes reconciliation.
+    Supports single period, list of periods, or from_period / to_period range.
     """
     permission_classes = [IsAuthenticated, CanReconcileGST]
 
     def post(self, request, company_id):
-        company = get_company_or_404(request.user, company_id)
-        period = request.data.get('period', '082026')
-        reg_id = request.data.get('registration_id')
+        try:
+            company = get_company_or_404(request.user, company_id)
+            period = request.data.get('period')
+            periods = request.data.get('periods')
+            from_period = request.data.get('from_period')
+            to_period = request.data.get('to_period')
+            reg_id = request.data.get('registration_id')
 
-        registration = None
-        if reg_id:
-            registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
+            registration = None
+            if reg_id:
+                registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
 
-        res = GSTReconciliationService.fetch_and_ingest_from_sandbox(
-            company=company,
-            registration=registration,
-            return_period=period,
-            user=request.user
-        )
-        status_code = 200 if res.get("success") else 400
-        return Response(res, status=status_code)
+            if periods or (from_period and to_period):
+                res = GSTReconciliationService.fetch_and_ingest_range(
+                    company=company,
+                    registration=registration,
+                    periods=periods,
+                    from_period=from_period,
+                    to_period=to_period,
+                    user=request.user
+                )
+            else:
+                res = GSTReconciliationService.fetch_and_ingest_from_sandbox(
+                    company=company,
+                    registration=registration,
+                    return_period=period or '082026',
+                    user=request.user
+                )
+
+            status_code = 200 if res.get("success") else 400
+            return Response(res, status=status_code)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).exception(f"GSTR-2B sync failed for company {company_id}: {e}")
+            return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class GSTR2BReviewRecordAPIView(APIView):

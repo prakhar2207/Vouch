@@ -1,5 +1,6 @@
 from decimal import Decimal
 from datetime import date
+from unittest.mock import patch, MagicMock
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.urls import reverse
@@ -10,9 +11,10 @@ from apps.companies.models import Company, UserCompany
 from apps.ledgers.models import LedgerGroup, Ledger
 from apps.inventory.models import Product, Warehouse
 from apps.accounting.models import Voucher, VoucherItem
-from apps.gst.models import GSTR2BImport, GSTR2BRecord
+from apps.gst.models import CompanyGSTConfig, GSTR2BImport, GSTR2BRecord
 from apps.gst.services.itc_reconciliation_service import ITCReconciliationService
 from apps.gst.services.itc_notification_service import ITCNotificationService
+from apps.gst.services.reconciliation_service import GSTReconciliationService
 
 User = get_user_model()
 
@@ -328,3 +330,78 @@ class ITCReconciliationTests(TestCase):
         results = res.data.get('results', [])
         invoice_numbers = [r['invoice_number'] for r in results]
         self.assertIn('INV/2026/UNCHECKED', invoice_numbers)
+
+    @patch('apps.gst.services.reconciliation_service.SandboxGSTClient')
+    @patch('apps.gst.services.itc_reconciliation_service.ITCReconciliationService.ingest_gstr2b_json')
+    def test_flexible_date_parsing_and_sync(self, mock_ingest, mock_client_cls):
+        CompanyGSTConfig.objects.create(
+            company=self.company,
+            auth_token="dummy-auth-token-12345"
+        )
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.is_configured.return_value = True
+        mock_client.fetch_gstr2b.return_value = {"success": True, "data": {"b2b": []}}
+        mock_import = MagicMock()
+        mock_import.id = "00000000-0000-0000-0000-000000000001"
+        mock_import.total_invoices_count = 5
+        mock_ingest.return_value = mock_import
+
+        # 1. Test DDMMYYYY format (01042026 -> 042026)
+        res = GSTReconciliationService.fetch_and_ingest_from_sandbox(
+            company=self.company,
+            return_period="01042026",
+            user=self.user
+        )
+        self.assertTrue(res['success'])
+        self.assertEqual(res['return_period'], '042026')
+        mock_client.fetch_gstr2b.assert_called_with(year="2026", month="04", session_token="dummy-auth-token-12345", user=self.user)
+
+        # 2. Test YYYY-MM format (2026-05 -> 052026)
+        res2 = GSTReconciliationService.fetch_and_ingest_from_sandbox(
+            company=self.company,
+            return_period="2026-05",
+            user=self.user
+        )
+        self.assertTrue(res2['success'])
+        self.assertEqual(res2['return_period'], '052026')
+        mock_client.fetch_gstr2b.assert_called_with(year="2026", month="05", session_token="dummy-auth-token-12345", user=self.user)
+
+    @patch('apps.gst.services.reconciliation_service.GSTReconciliationService.fetch_and_ingest_from_sandbox')
+    def test_multi_period_range_sync(self, mock_single_fetch):
+        mock_single_fetch.return_value = {
+            "success": True,
+            "total_invoices_ingested": 10,
+            "return_period": "042026"
+        }
+
+        # Test April to October (042026 to 102026)
+        res = GSTReconciliationService.fetch_and_ingest_range(
+            company=self.company,
+            from_period="042026",
+            to_period="102026",
+            user=self.user
+        )
+        self.assertTrue(res['success'])
+        expected_periods = ["042026", "052026", "062026", "072026", "082026", "092026", "102026"]
+        self.assertEqual(res['periods_requested'], expected_periods)
+        self.assertEqual(res['periods_synced'], expected_periods)
+        self.assertEqual(mock_single_fetch.call_count, 7)
+
+    @patch('apps.gst.services.reconciliation_service.GSTReconciliationService.fetch_and_ingest_range')
+    def test_sync_api_view_with_range(self, mock_range_sync):
+        mock_range_sync.return_value = {
+            "success": True,
+            "periods_synced": ["042026", "052026"],
+            "total_invoices_ingested": 15
+        }
+        url = reverse('gst_reconciliation_gstr2b_sync', kwargs={'company_id': self.company.id})
+        res = self.client.post(
+            url,
+            data={'from_period': '042026', 'to_period': '052026'},
+            format='json',
+            HTTP_X_COMPANY_ID=str(self.company.id)
+        )
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue(res.data['success'])
+        mock_range_sync.assert_called_once()
