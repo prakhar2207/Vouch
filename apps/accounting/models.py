@@ -217,6 +217,10 @@ class Voucher(models.Model):
         ('MATCHED', 'Matched in 2B'),
         ('MISMATCHED', 'Mismatch with 2B'),
         ('MISSING_IN_2B', 'Missing in 2B'),
+        ('REVIEW_REQUIRED', 'Review Required'),
+        ('LATER_PERIOD_MATCH', 'Matched in Later Period'),
+        ('AMENDED', 'Amended in Later Period'),
+        ('NOT_YET_REFLECTED', 'Not Yet Reflected in 2B'),
     )
     itc_match_status = models.CharField(max_length=30, choices=ITC_MATCH_CHOICES, default='UNCHECKED', null=True, blank=True)
     itc_held_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00, null=True, blank=True)

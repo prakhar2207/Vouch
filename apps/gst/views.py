@@ -28,6 +28,7 @@ from apps.gst.services.gstin_lookup_service import GSTINLookupService
 from apps.gst.services.eway_bill_service import EWayBillService
 from apps.gst.services.gstr_report_service import GSTRReportService
 from apps.gst.services.gst_sandbox_service import GSTPortalService
+from apps.gst.services.period_service import GSTPeriodService
 from rest_framework.exceptions import NotFound, PermissionDenied
 
 def get_company_or_404(user_or_request, company_id=None):
@@ -1214,6 +1215,25 @@ class GSTR2BSyncFromSandboxAPIView(APIView):
                     }, status=status.HTTP_400_BAD_REQUEST)
 
             if periods or (from_period and to_period):
+                if from_period and to_period:
+                    try:
+                        p_from = GSTPeriodService.parse_return_period(from_period)
+                        p_to = GSTPeriodService.parse_return_period(to_period)
+                        if p_from.start_date > p_to.start_date:
+                            return Response({
+                                "status": "VALIDATION_ERROR",
+                                "success": False,
+                                "error": "Reversed return period range: from_period cannot be later than to_period.",
+                                "error_code": "INVALID_PERIOD_RANGE"
+                            }, status=status.HTTP_400_BAD_REQUEST)
+                    except Exception as e:
+                        return Response({
+                            "status": "VALIDATION_ERROR",
+                            "success": False,
+                            "error": f"Invalid period in range: {str(e)}",
+                            "error_code": "INVALID_RETURN_PERIOD"
+                        }, status=status.HTTP_400_BAD_REQUEST)
+
                 res = GSTReconciliationService.fetch_and_ingest_range(
                     company=company,
                     registration=registration,
@@ -1223,10 +1243,29 @@ class GSTR2BSyncFromSandboxAPIView(APIView):
                     user=request.user
                 )
             else:
+                if not period:
+                    return Response({
+                        "status": "VALIDATION_ERROR",
+                        "success": False,
+                        "error": "Return period (MMYYYY) or period range (from_period, to_period) is required.",
+                        "error_code": "PERIOD_REQUIRED"
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+                try:
+                    p_info = GSTPeriodService.parse_return_period(period)
+                    clean_period = p_info.normalized_period
+                except Exception:
+                    return Response({
+                        "status": "VALIDATION_ERROR",
+                        "success": False,
+                        "error": f"Invalid return period '{period}'. Format must be MMYYYY (e.g. 102026).",
+                        "error_code": "INVALID_RETURN_PERIOD"
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
                 res = GSTReconciliationService.fetch_and_ingest_from_sandbox(
                     company=company,
                     registration=registration,
-                    return_period=period or '082026',
+                    return_period=clean_period,
                     user=request.user
                 )
 

@@ -13,6 +13,7 @@ from rest_framework.exceptions import PermissionDenied, NotFound
 
 from apps.companies.models import Company
 from apps.accounting.models import Voucher
+from apps.accounting.services.effective_voucher_service import EffectiveVoucherService
 from apps.accounts.permissions import get_authorized_company, user_has_company_roles, CanViewGST, CanReconcileGST
 from apps.gst.models import GSTR2BImport, GSTR2BRecord, GSTRegistration
 from apps.gst.services.period_service import GSTPeriodService
@@ -126,8 +127,9 @@ class GSTR2BUploadView(APIView):
 class ITCReconciliationListView(APIView):
     """
     Returns reconciled invoice items with filtering by status:
-    ALL, MATCHED, MISMATCHED, MISSING_IN_2B, MISSING_IN_BOOKS.
-    Supports multi-GSTIN registration isolation and canonical period filtering.
+    ALL, MATCHED, MISMATCHED, MISSING_IN_2B, MISSING_IN_BOOKS, REVIEW_REQUIRED, LATER_PERIOD_MATCH.
+    Supports multi-GSTIN registration isolation and strict period validation.
+    Delegates to ITCReconciliationService.get_scoped_reconciliation_data for 100% mathematical consistency.
     """
     permission_classes = [IsAuthenticated, CanViewGST]
 
@@ -137,152 +139,45 @@ class ITCReconciliationListView(APIView):
         filter_status = request.query_params.get('status', 'ALL').upper()
         return_period = request.query_params.get('return_period')
         reg_id = request.query_params.get('registration_id')
-        search_query = request.query_params.get('search', '').strip().lower()
+        search_query = request.query_params.get('search', '').strip()
 
+        # Strict return period validation
+        if return_period and return_period != 'ALL':
+            try:
+                p_info = GSTPeriodService.parse_return_period(return_period)
+                return_period = p_info.normalized_period
+            except Exception:
+                return Response({
+                    'error': f"Invalid return period '{return_period}'. Format must be MMYYYY (e.g. 102026).",
+                    'error_code': 'INVALID_RETURN_PERIOD'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Strict registration resolution and tenant isolation
         registration = None
         if reg_id:
             registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
             if not registration:
-                return Response({'error': f"GST Registration '{reg_id}' not found."}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({
+                    'error': f"GST Registration '{reg_id}' was not found for this company.",
+                    'error_code': 'INVALID_REGISTRATION'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            if registration.status != 'ACTIVE':
+                return Response({
+                    'error': f"GST Registration '{registration.gstin}' is inactive.",
+                    'error_code': 'INVALID_REGISTRATION'
+                }, status=status.HTTP_400_BAD_REQUEST)
 
-        results = []
-
-        # 1. Purchase Vouchers (Books side)
-        vouchers = Voucher.objects.filter(
+        scoped = ITCReconciliationService.get_scoped_reconciliation_data(
             company=company,
-            voucher_type__in=['PURCHASE', 'DEBIT_NOTE'],
-            status__in=['POSTED', 'VALIDATING']
-        ).select_related('party_ledger').prefetch_related('items', 'gstr2b_matches').defer('attachment_data', 'attachment_mime')
-
-        norm_period = None
-        if return_period and return_period != 'ALL':
-            try:
-                p_info = GSTPeriodService.parse_return_period(return_period)
-                norm_period = p_info.normalized_period
-                vouchers = vouchers.filter(voucher_date__year=p_info.year_int, voucher_date__month=p_info.month_int)
-            except Exception:
-                pass
-
-        today = timezone.now().date()
-        current_fy_start_year = today.year if today.month >= 4 else today.year - 1
-        prev_fy_start = date(current_fy_start_year - 1, 4, 1)
-        prev_fy_end = date(current_fy_start_year, 3, 31)
-
-        for v in vouchers:
-            matched_rec = v.gstr2b_matches.first()
-            eff_status = v.itc_match_status or 'UNCHECKED'
-            if eff_status == 'UNCHECKED':
-                eff_status = 'MATCHED' if matched_rec else 'MISSING_IN_2B'
-
-            if filter_status == 'EXPIRING_SEC16_4':
-                is_prev_fy = bool(v.voucher_date and prev_fy_start <= v.voucher_date <= prev_fy_end)
-                if not (is_prev_fy and eff_status in ['MISSING_IN_2B', 'MISMATCHED']):
-                    continue
-            elif filter_status not in ['ALL', 'MATCHED', 'MISMATCHED', 'MISSING_IN_2B']:
-                if filter_status == 'MISSING_IN_BOOKS':
-                    continue
-
-            # Check status match
-            if filter_status not in ['ALL', 'EXPIRING_SEC16_4'] and eff_status != filter_status:
-                continue
-
-            # Calculate book values
-            b_taxable = sum(i.taxable_amount for i in v.items.all())
-            b_cgst = sum(i.cgst_amount for i in v.items.all())
-            b_sgst = sum(i.sgst_amount for i in v.items.all())
-            b_igst = sum(i.igst_amount for i in v.items.all())
-            b_cess = sum(getattr(i, 'cess_amount', 0) for i in v.items.all())
-            b_total_tax = b_cgst + b_sgst + b_igst + b_cess
-
-            supplier_name = v.party_ledger.name if v.party_ledger else (v.buyer_name or 'Unknown')
-            supplier_gstin = (v.party_ledger.gstin if v.party_ledger and v.party_ledger.gstin else (v.buyer_gstin or '')).upper()
-            inv_no = v.external_invoice_number or v.reference_number or v.voucher_number
-
-            # Search filter
-            if search_query:
-                q = search_query
-                if q not in supplier_name.lower() and q not in supplier_gstin.lower() and q not in inv_no.lower():
-                    continue
-
-            # Matched 2B Record details if any
-            g2b_data = None
-            if matched_rec:
-                g2b_data = {
-                    'invoice_number': matched_rec.invoice_number,
-                    'invoice_date': matched_rec.invoice_date.isoformat(),
-                    'taxable_value': float(matched_rec.taxable_value),
-                    'total_tax': float(matched_rec.cgst_amount + matched_rec.sgst_amount + matched_rec.igst_amount + matched_rec.cess_amount),
-                    'cgst': float(matched_rec.cgst_amount),
-                    'sgst': float(matched_rec.sgst_amount),
-                    'igst': float(matched_rec.igst_amount),
-                    'mismatch_details': matched_rec.mismatch_details
-                }
-
-            results.append({
-                'source': 'BOOKS',
-                'voucher_id': str(v.id),
-                'voucher_number': v.voucher_number,
-                'invoice_number': inv_no,
-                'invoice_date': v.voucher_date.isoformat() if v.voucher_date else '',
-                'supplier_name': supplier_name,
-                'supplier_gstin': supplier_gstin,
-                'books_taxable': float(b_taxable),
-                'books_tax': float(b_total_tax),
-                'books_total': float(v.total_amount),
-                'itc_match_status': eff_status,
-                'itc_held_amount': float(v.itc_held_amount or 0),
-                'itc_notes': v.itc_notes,
-                'gstr2b_record': g2b_data
-            })
-
-        # 2. GSTR-2B Records missing in books (Supplier filed, but buyer hasn't booked)
-        if filter_status in ['ALL', 'MISSING_IN_BOOKS']:
-            rec_qs = GSTR2BRecord.objects.filter(
-                company=company,
-                match_status='MISSING_IN_BOOKS'
-            )
-            if norm_period:
-                rec_qs = rec_qs.filter(return_period=norm_period)
-            if registration:
-                from django.db.models import Q
-                rec_qs = rec_qs.filter(Q(gst_registration=registration) | Q(gst_registration__isnull=True))
-
-            for rec in rec_qs:
-                if search_query:
-                    q = search_query
-                    if q not in rec.supplier_name.lower() and q not in rec.supplier_gstin.lower() and q not in rec.invoice_number.lower():
-                        continue
-
-                rec_total_tax = rec.cgst_amount + rec.sgst_amount + rec.igst_amount + rec.cess_amount
-                results.append({
-                    'source': 'GSTR2B',
-                    'voucher_id': None,
-                    'record_id': str(rec.id),
-                    'invoice_number': rec.invoice_number,
-                    'invoice_date': rec.invoice_date.isoformat() if rec.invoice_date else '',
-                    'supplier_name': rec.supplier_name or 'Unmapped Vendor',
-                    'supplier_gstin': rec.supplier_gstin,
-                    'books_taxable': 0.0,
-                    'books_tax': 0.0,
-                    'books_total': 0.0,
-                    'itc_match_status': 'MISSING_IN_BOOKS',
-                    'itc_held_amount': 0.0,
-                    'itc_notes': 'Reflecting in GSTR-2B but missing in your Purchase Register. You may be missing out on this ITC!',
-                    'gstr2b_record': {
-                        'invoice_number': rec.invoice_number,
-                        'invoice_date': rec.invoice_date.isoformat(),
-                        'taxable_value': float(rec.taxable_value),
-                        'total_tax': float(rec_total_tax),
-                        'cgst': float(rec.cgst_amount),
-                        'sgst': float(rec.sgst_amount),
-                        'igst': float(rec.igst_amount),
-                        'mismatch_details': {}
-                    }
-                })
+            return_period=return_period,
+            registration=registration,
+            status_filter=filter_status,
+            search_query=search_query
+        )
 
         return Response({
-            'count': len(results),
-            'results': results
+            'count': scoped['count'],
+            'results': scoped['results']
         })
 
 
@@ -352,7 +247,7 @@ class ITCVendorNoticeView(APIView):
 class ITCSummaryView(APIView):
     """
     Provides aggregated risk stats: ITC at risk, Safe ITC, Held amounts, Section 16(4) counts.
-    Supports multi-GSTIN registration isolation.
+    Supports multi-GSTIN registration isolation and strict return period validation.
     """
     permission_classes = [IsAuthenticated, CanViewGST]
 
@@ -362,11 +257,31 @@ class ITCSummaryView(APIView):
         period = request.query_params.get('return_period')
         reg_id = request.query_params.get('registration_id')
 
+        # Strict return period validation
+        if period and period != 'ALL':
+            try:
+                p_info = GSTPeriodService.parse_return_period(period)
+                period = p_info.normalized_period
+            except Exception:
+                return Response({
+                    'error': f"Invalid return period '{period}'. Format must be MMYYYY (e.g. 102026).",
+                    'error_code': 'INVALID_RETURN_PERIOD'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Strict registration resolution
         registration = None
         if reg_id:
             registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
             if not registration:
-                return Response({'error': f"GST Registration '{reg_id}' not found."}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({
+                    'error': f"GST Registration '{reg_id}' was not found for this company.",
+                    'error_code': 'INVALID_REGISTRATION'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            if registration.status != 'ACTIVE':
+                return Response({
+                    'error': f"GST Registration '{registration.gstin}' is inactive.",
+                    'error_code': 'INVALID_REGISTRATION'
+                }, status=status.HTTP_400_BAD_REQUEST)
 
         stats = ITCReconciliationService.get_summary_stats(company, return_period=period, registration=registration)
         radar = ITCReconciliationService.get_sec16_4_expiry_radar(company, registration=registration)
@@ -374,6 +289,86 @@ class ITCSummaryView(APIView):
         return Response({
             'summary': stats,
             'expiry_radar': radar
+        })
+
+
+class ITCAvailablePeriodsView(APIView):
+    """
+    GET /api/v1/gst/itc/periods/
+    Returns all available return periods for the company dynamically:
+    - Ingested GSTR-2B statement periods
+    - Purchase voucher periods in books
+    - Standard monthly compliance periods for recent financial years (e.g. FY 2024-25, 2025-26, 2026-27)
+    """
+    permission_classes = [IsAuthenticated, CanViewGST]
+
+    def get(self, request, *args, **kwargs):
+        company = get_authorized_company(request)
+        reg_id = request.query_params.get('registration_id')
+
+        registration = None
+        if reg_id:
+            registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
+
+        # Ingested periods from 2B
+        batch_qs = GSTR2BImport.objects.filter(company=company, status='PROCESSED')
+        if registration:
+            batch_qs = batch_qs.filter(gst_registration=registration)
+        ingested_periods = set(batch_qs.values_list('return_period', flat=True))
+
+        # Periods from purchase register vouchers in books
+        voucher_qs = Voucher.objects.filter(
+            company=company,
+            voucher_type__in=['PURCHASE', 'DEBIT_NOTE'],
+            status__in=EffectiveVoucherService.ACTIVE_STATUSES,
+            voucher_date__isnull=False
+        )
+        if registration and registration.gstin:
+            voucher_qs = voucher_qs.filter(
+                Q(buyer_gstin=registration.gstin) | Q(buyer_gstin__isnull=True) | Q(buyer_gstin='')
+            )
+
+        book_periods = set()
+        for v_date in voucher_qs.values_list('voucher_date', flat=True).distinct():
+            if v_date:
+                book_periods.add(f"{str(v_date.month).zfill(2)}{v_date.year}")
+
+        # Calendar generation for 3 financial years: FY 24-25, FY 25-26, FY 26-27
+        today = timezone.now().date()
+        base_year = today.year if today.month >= 4 else today.year - 1
+        calendar_periods = []
+        for fy_start_y in [base_year - 2, base_year - 1, base_year]:
+            fy_label = f"{fy_start_y}-{str(fy_start_y + 1)[-2:]}"
+            # Apr to Dec of fy_start_y
+            for m in range(4, 13):
+                p_code = f"{str(m).zfill(2)}{fy_start_y}"
+                calendar_periods.append((p_code, fy_label))
+            # Jan to Mar of fy_start_y + 1
+            for m in range(1, 4):
+                p_code = f"{str(m).zfill(2)}{fy_start_y + 1}"
+                calendar_periods.append((p_code, fy_label))
+
+        seen = set()
+        period_list = []
+        # Sort descending so newest periods appear first
+        for p_code, fy in reversed(calendar_periods):
+            if p_code not in seen:
+                seen.add(p_code)
+                try:
+                    p_info = GSTPeriodService.parse_return_period(p_code)
+                    period_list.append({
+                        'period': p_info.normalized_period,
+                        'label': p_info.period_label,
+                        'financial_year': fy,
+                        'has_ingested_data': p_info.normalized_period in ingested_periods,
+                        'has_book_data': p_info.normalized_period in book_periods,
+                    })
+                except Exception:
+                    continue
+
+        return Response({
+            'count': len(period_list),
+            'periods': period_list
         })
 
 

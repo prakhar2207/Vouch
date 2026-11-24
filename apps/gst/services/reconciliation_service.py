@@ -97,6 +97,10 @@ class GSTReconciliationService:
             return {
                 "success": False,
                 "status": "PROVIDER_ERROR",
+                "fetch_status": "SKIPPED",
+                "auth_status": "UNCONFIGURED",
+                "ingestion_status": "SKIPPED",
+                "reconciliation_status": "NOT_RECONCILED",
                 "error_category": "CONFIGURATION_MISSING",
                 "error": "Sandbox GST API is not configured. Please supply API credentials in settings.",
                 "return_period": norm_period,
@@ -107,6 +111,10 @@ class GSTReconciliationService:
             return {
                 "success": False,
                 "status": "AUTHENTICATION_REQUIRED",
+                "fetch_status": "SKIPPED",
+                "auth_status": "AUTHENTICATION_REQUIRED",
+                "ingestion_status": "SKIPPED",
+                "reconciliation_status": "NOT_RECONCILED",
                 "error_category": "SESSION_EXPIRED",
                 "error": "No active GST Portal session found. Please connect your GST Portal under Settings > Government GST Portal Integration first.",
                 "return_period": norm_period,
@@ -119,6 +127,7 @@ class GSTReconciliationService:
             raw_err = res.get("error") or "Failed to fetch GSTR-2B from GST Portal."
             err_cat = "PROVIDER_ERROR"
             err_msg = raw_err
+            auth_st = "AUTHENTICATED"
 
             if "not applicable" in raw_err.lower():
                 err_cat = "FORM_NOT_APPLICABLE"
@@ -129,10 +138,15 @@ class GSTReconciliationService:
                 )
             elif "session" in raw_err.lower() or "token" in raw_err.lower() or "auth" in raw_err.lower() or "otp" in raw_err.lower():
                 err_cat = "AUTHENTICATION_REQUIRED"
+                auth_st = "AUTHENTICATION_REQUIRED"
 
             return {
                 "success": False,
-                "status": "PROVIDER_ERROR",
+                "status": "PROVIDER_ERROR" if err_cat != "AUTHENTICATION_REQUIRED" else "AUTHENTICATION_REQUIRED",
+                "fetch_status": "FETCH_FAILED",
+                "auth_status": auth_st,
+                "ingestion_status": "SKIPPED",
+                "reconciliation_status": "NOT_RECONCILED",
                 "error_category": err_cat,
                 "error": err_msg,
                 "return_period": norm_period,
@@ -144,26 +158,52 @@ class GSTReconciliationService:
 
         # Ingest idempotently into GSTR2BImport and GSTR2BRecord
         from apps.gst.services.itc_reconciliation_service import ITCReconciliationService
-        import_batch = ITCReconciliationService.ingest_gstr2b_json(
-            company=company,
-            json_data=data,
-            user=user,
-            file_name=f"sandbox_gstr2b_{norm_period}.json",
-            return_period=norm_period,
-            registration=registration,
-            source_info='SANDBOX_API'
-        )
+        try:
+            import_batch = ITCReconciliationService.ingest_gstr2b_json(
+                company=company,
+                json_data=data,
+                user=user,
+                file_name=f"sandbox_gstr2b_{norm_period}.json",
+                return_period=norm_period,
+                registration=registration,
+                source_info='SANDBOX_API'
+            )
+            ingest_status = "INGESTION_SUCCESS"
+        except Exception as e:
+            logger.exception(f"GSTR-2B ingestion failed for period {norm_period}: {e}")
+            return {
+                "success": False,
+                "status": "RECONCILIATION_ERROR",
+                "fetch_status": "FETCH_SUCCESS",
+                "auth_status": "AUTHENTICATED",
+                "ingestion_status": "INGESTION_FAILED",
+                "reconciliation_status": "NOT_RECONCILED",
+                "error_category": "INGESTION_FAILED",
+                "error": f"Failed to ingest GSTR-2B data: {str(e)}",
+                "return_period": norm_period,
+                "period_label": period_info.period_label
+            }
 
-        # Run period-isolated 11-category reconciliation
-        rec_summary = cls.reconcile_period(
-            company=company,
-            registration=registration,
-            return_period=norm_period
-        )
+        # Run period-isolated reconciliation
+        try:
+            rec_summary = cls.reconcile_period(
+                company=company,
+                registration=registration,
+                return_period=norm_period
+            )
+            rec_st = "RECONCILED"
+        except Exception as e:
+            logger.exception(f"GSTR-2B reconciliation failed for period {norm_period}: {e}")
+            rec_summary = {}
+            rec_st = "RECONCILIATION_FAILED"
 
         return {
             "success": True,
             "status": "SUCCESS",
+            "fetch_status": "FETCH_SUCCESS",
+            "auth_status": "AUTHENTICATED",
+            "ingestion_status": ingest_status,
+            "reconciliation_status": rec_st,
             "import_batch_id": str(import_batch.id),
             "return_period": norm_period,
             "period_label": period_info.period_label,
@@ -189,7 +229,14 @@ class GSTReconciliationService:
         Fetches and ingests GSTR-2B statements across multiple return periods (e.g. April to October).
         Maintains complete period isolation, records GSTR2BSyncAttempt, and provides explicit
         partial-success reporting conforming to enterprise API contracts.
+        Rejects reversed ranges with explicit validation error.
         """
+        if from_period and to_period:
+            p_from = GSTPeriodService.parse_return_period(from_period)
+            p_to = GSTPeriodService.parse_return_period(to_period)
+            if p_from.start_date > p_to.start_date:
+                raise ValidationError("Reversed return period range: from_period cannot be later than to_period.")
+
         period_infos = GSTPeriodService.resolve_period_range(
             from_period=from_period,
             to_period=to_period,

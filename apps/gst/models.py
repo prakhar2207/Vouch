@@ -392,6 +392,11 @@ class GSTR2BRecord(models.Model):
         ('DUPLICATE', 'Duplicate Invoice'),
         ('INELIGIBLE_ITC', 'Blocked / Ineligible ITC'),
         ('PARTIAL_MATCH', 'Partial Match'),
+        ('REVIEW_REQUIRED', 'Review Required'),
+        ('LATER_PERIOD_MATCH', 'Matched in Later Period'),
+        ('AMENDED', 'Amended in Later Period'),
+        ('CDNR_LATER_PERIOD', 'Credit/Debit Note in Later Period'),
+        ('NOT_YET_REFLECTED', 'Not Yet Reflected in 2B'),
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -414,7 +419,11 @@ class GSTR2BRecord(models.Model):
     invoice_number = models.CharField(max_length=100, db_index=True)
     normalized_invoice_number = models.CharField(max_length=100, db_index=True)
     invoice_type = models.CharField(max_length=10, default='R')  # Regular, Deemed, SEZ, etc.
-    invoice_date = models.DateField()
+    invoice_date = models.DateField(null=True, blank=True)
+    raw_invoice_date = models.CharField(max_length=100, blank=True, default='')
+    note_type = models.CharField(max_length=5, blank=True, default='')  # 'C' = Credit Note, 'D' = Debit Note
+    is_amendment = models.BooleanField(default=False)
+    amendment_return_period = models.CharField(max_length=10, blank=True, default='')
     invoice_value = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
     
     taxable_value = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
@@ -522,6 +531,42 @@ class GSTR2BSyncAttempt(models.Model):
 
     def __str__(self):
         return f"Sync {self.company.name} - {self.return_period} ({self.status})"
+
+
+class GSTR2BIngestionLock(models.Model):
+    """
+    Parent synchronization lock row keyed by company, registration, and return period.
+    Used with select_for_update() inside transaction.atomic() to serialize concurrent
+    ingestion workers for the same statement window without deadlock.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='gstr2b_ingestion_locks')
+    gst_registration = models.ForeignKey(
+        GSTRegistration,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='gstr2b_ingestion_locks'
+    )
+    return_period = models.CharField(max_length=10, db_index=True)
+    locked_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['company', 'gst_registration', 'return_period'],
+                name='unique_gstr2b_lock_with_reg',
+                condition=models.Q(gst_registration__isnull=False)
+            ),
+            models.UniqueConstraint(
+                fields=['company', 'return_period'],
+                name='unique_gstr2b_lock_null_reg',
+                condition=models.Q(gst_registration__isnull=True)
+            ),
+        ]
+
+    def __str__(self):
+        return f"Lock {self.company.name} - {self.return_period}"
 
 
 class SupplierGSTR3BFilingRecord(models.Model):

@@ -42,7 +42,21 @@ interface SummaryStats {
   missing_in_2b_count: number;
   missing_in_books_count: number;
   missing_in_books_itc: number;
+  review_required_count?: number;
+  later_period_count?: number;
+  not_yet_reflected_count?: number;
+  gross_invoices_count?: number;
+  credit_notes_count?: number;
+  debit_notes_count?: number;
   return_period: string;
+}
+
+interface AvailablePeriod {
+  period: string;
+  label: string;
+  financial_year: string;
+  has_ingested_data: boolean;
+  has_book_data: boolean;
 }
 
 interface ExpiryRadar {
@@ -73,7 +87,7 @@ interface ReconciliationItem {
   books_taxable: number;
   books_tax: number;
   books_total: number;
-  itc_match_status: "MATCHED" | "MISMATCHED" | "MISSING_IN_2B" | "MISSING_IN_BOOKS" | "UNCHECKED";
+  itc_match_status: "MATCHED" | "MISMATCHED" | "MISSING_IN_2B" | "MISSING_IN_BOOKS" | "UNCHECKED" | "LATER_PERIOD_MATCH" | "AMENDED" | "REVIEW_REQUIRED" | "NOT_YET_REFLECTED" | string;
   itc_held_amount: number;
   itc_notes: string;
   gstr2b_record?: {
@@ -114,6 +128,7 @@ export default function VendorITCRiskShieldPage() {
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [selectedPeriod, setSelectedPeriod] = useState<string>("");
+  const [availablePeriods, setAvailablePeriods] = useState<AvailablePeriod[]>([]);
 
   // Multi-GSTIN Registrations
   const [registrations, setRegistrations] = useState<GSTRegistration[]>([]);
@@ -122,9 +137,10 @@ export default function VendorITCRiskShieldPage() {
   // Modals
   const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
   const [syncMode, setSyncMode] = useState<"range" | "single">("range");
-  const [syncFromPeriod, setSyncFromPeriod] = useState<string>("042026");
-  const [syncToPeriod, setSyncToPeriod] = useState<string>("102026");
-  const [syncPeriod, setSyncPeriod] = useState<string>("102026");
+  const [syncRangePreset, setSyncRangePreset] = useState<"2025" | "2026" | "custom">("2025");
+  const [syncFromPeriod, setSyncFromPeriod] = useState<string>("042025");
+  const [syncToPeriod, setSyncToPeriod] = useState<string>("102025");
+  const [syncPeriod, setSyncPeriod] = useState<string>("102025");
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncSuccess, setSyncSuccess] = useState<string | null>(null);
@@ -225,11 +241,29 @@ export default function VendorITCRiskShieldPage() {
     }
   }, [companyId, statusFilter, selectedPeriod, selectedRegistrationId, searchQuery]);
 
+  // Fetch dynamic available periods
+  const fetchAvailablePeriods = useCallback(async () => {
+    if (!companyId) return;
+    try {
+      const params: any = {};
+      if (selectedRegistrationId) params.registration_id = selectedRegistrationId;
+      const res = await api.get('/api/v1/gst/itc/periods/', {
+        headers: { "X-Company-ID": companyId },
+        params,
+      });
+      if (res.data?.periods) {
+        setAvailablePeriods(res.data.periods);
+      }
+    } catch (err) {
+      console.error("Failed to fetch available periods:", err);
+    }
+  }, [companyId, selectedRegistrationId]);
+
   const loadData = useCallback(async () => {
     setLoading(true);
-    await Promise.all([fetchSummaryAndRadar(), fetchItems()]);
+    await Promise.all([fetchSummaryAndRadar(), fetchItems(), fetchAvailablePeriods()]);
     setLoading(false);
-  }, [fetchSummaryAndRadar, fetchItems]);
+  }, [fetchSummaryAndRadar, fetchItems, fetchAvailablePeriods]);
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -241,7 +275,7 @@ export default function VendorITCRiskShieldPage() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([fetchSummaryAndRadar(), fetchItems()]);
+    await Promise.all([fetchSummaryAndRadar(), fetchItems(), fetchAvailablePeriods()]);
     setRefreshing(false);
   };
 
@@ -463,21 +497,38 @@ export default function VendorITCRiskShieldPage() {
               </select>
             )}
 
-            {/* Return Period Selector */}
+            {/* Dynamic Return Period Selector */}
             <select
               value={selectedPeriod}
               onChange={(e) => setSelectedPeriod(e.target.value)}
               className="px-2.5 py-2 text-xs font-mono font-medium rounded-lg border border-border/60 bg-card hover:bg-muted/70 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary"
               title="Filter by Return Period"
             >
-              <option value="">All Periods (FY 2026–27 YTD)</option>
-              <option value="102026">102026 — Oct 2026</option>
-              <option value="092026">092026 — Sep 2026</option>
-              <option value="082026">082026 — Aug 2026</option>
-              <option value="072026">072026 — Jul 2026</option>
-              <option value="062026">062026 — Jun 2026</option>
-              <option value="052026">052026 — May 2026</option>
-              <option value="042026">042026 — Apr 2026</option>
+              <option value="">All Periods</option>
+              {availablePeriods.length > 0 ? (
+                availablePeriods.map((p) => (
+                  <option key={p.period} value={p.period}>
+                    {p.period} &mdash; {p.label} (FY {p.financial_year})
+                  </option>
+                ))
+              ) : (
+                <>
+                  <option value="102026">102026 &mdash; Oct 2026 (FY 2026-27)</option>
+                  <option value="092026">092026 &mdash; Sep 2026 (FY 2026-27)</option>
+                  <option value="082026">082026 &mdash; Aug 2026 (FY 2026-27)</option>
+                  <option value="072026">072026 &mdash; Jul 2026 (FY 2026-27)</option>
+                  <option value="062026">062026 &mdash; Jun 2026 (FY 2026-27)</option>
+                  <option value="052026">052026 &mdash; May 2026 (FY 2026-27)</option>
+                  <option value="042026">042026 &mdash; Apr 2026 (FY 2026-27)</option>
+                  <option value="102025">102025 &mdash; Oct 2025 (FY 2025-26)</option>
+                  <option value="092025">092025 &mdash; Sep 2025 (FY 2025-26)</option>
+                  <option value="082025">082025 &mdash; Aug 2025 (FY 2025-26)</option>
+                  <option value="072025">072025 &mdash; Jul 2025 (FY 2025-26)</option>
+                  <option value="062025">062025 &mdash; Jun 2025 (FY 2025-26)</option>
+                  <option value="052025">052025 &mdash; May 2025 (FY 2025-26)</option>
+                  <option value="042025">042025 &mdash; Apr 2025 (FY 2025-26)</option>
+                </>
+              )}
             </select>
 
             <button
@@ -656,6 +707,8 @@ export default function VendorITCRiskShieldPage() {
                 { key: "MISMATCHED", label: "Mismatches", count: summary?.mismatched_count, color: "text-amber-500 bg-amber-500/10" },
                 { key: "MISSING_IN_BOOKS", label: "Missing in Books", count: summary?.missing_in_books_count, color: "text-blue-500 bg-blue-500/10" },
                 { key: "MATCHED", label: "Reconciled (Safe)", count: summary?.matched_count, color: "text-emerald-500 bg-emerald-500/10" },
+                ...(summary?.later_period_count ? [{ key: "LATER_PERIOD_MATCH", label: "Later 2B Period", count: summary.later_period_count, color: "text-cyan-500 bg-cyan-500/10" }] : []),
+                ...(summary?.review_required_count ? [{ key: "REVIEW_REQUIRED", label: "Review Required", count: summary.review_required_count, color: "text-orange-500 bg-orange-500/10" }] : []),
               ].map((tab) => (
                 <button
                   key={tab.key}
@@ -726,7 +779,11 @@ export default function VendorITCRiskShieldPage() {
                 ) : (
                   items.map((item, idx) => {
                     const isMatched = item.itc_match_status === "MATCHED";
+                    const isLaterPeriod = item.itc_match_status === "LATER_PERIOD_MATCH";
+                    const isAmended = item.itc_match_status === "AMENDED";
                     const isMismatched = item.itc_match_status === "MISMATCHED";
+                    const isReviewRequired = item.itc_match_status === "REVIEW_REQUIRED";
+                    const isNotYetReflected = item.itc_match_status === "NOT_YET_REFLECTED";
                     const isMissing2B =
                       item.itc_match_status === "MISSING_IN_2B" ||
                       item.itc_match_status === "UNCHECKED" ||
@@ -743,13 +800,37 @@ export default function VendorITCRiskShieldPage() {
                               Matched
                             </span>
                           )}
+                          {isLaterPeriod && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20" title="Filed in a later GSTR-2B period by vendor">
+                              <CheckCircle2 className="w-3 h-3" />
+                              Later 2B
+                            </span>
+                          )}
+                          {isAmended && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
+                              <Info className="w-3 h-3" />
+                              Amended
+                            </span>
+                          )}
                           {isMismatched && (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-500 border border-amber-500/20">
                               <AlertTriangle className="w-3 h-3" />
                               Mismatch
                             </span>
                           )}
-                          {isMissing2B && (
+                          {isReviewRequired && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-orange-500/10 text-orange-600 dark:text-orange-400 border border-orange-500/20">
+                              <AlertTriangle className="w-3 h-3" />
+                              Review Req
+                            </span>
+                          )}
+                          {isNotYetReflected && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20">
+                              <Clock className="w-3 h-3" />
+                              Pending 2B
+                            </span>
+                          )}
+                          {isMissing2B && !isReviewRequired && !isNotYetReflected && (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/10 text-rose-500 border border-rose-500/20">
                               <XCircle className="w-3 h-3" />
                               Missing in 2B
@@ -911,31 +992,54 @@ export default function VendorITCRiskShieldPage() {
               )}
 
               {/* Sync Mode Selection Tabs */}
-              <div className="grid grid-cols-2 gap-2 p-1 bg-muted/40 rounded-xl border border-border/40">
+              <div className="grid grid-cols-3 gap-2 p-1 bg-muted/40 rounded-xl border border-border/40">
                 <button
                   type="button"
-                  onClick={() => setSyncMode("range")}
-                  className={`px-3 py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                    syncMode === "range"
-                      ? "bg-card text-foreground shadow-sm border border-border/50"
+                  onClick={() => {
+                    setSyncMode("range");
+                    setSyncFromPeriod("042025");
+                    setSyncToPeriod("102025");
+                  }}
+                  className={`px-2.5 py-2 text-xs font-semibold rounded-lg transition-all flex flex-col items-center justify-center gap-0.5 cursor-pointer ${
+                    syncMode === "range" && syncFromPeriod.endsWith("2025")
+                      ? "bg-card text-foreground shadow-sm border border-border/50 font-bold"
                       : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
-                  <span>FY 2026&ndash;27 YTD</span>
-                  <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold">
-                    Apr &ndash; Oct
+                  <span>FY 2025&ndash;26</span>
+                  <span className="text-[9px] uppercase px-1.5 py-0.2 rounded bg-blue-500/15 text-blue-600 dark:text-blue-400 font-bold">
+                    Apr &ndash; Oct &apos;25
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSyncMode("range");
+                    setSyncFromPeriod("042026");
+                    setSyncToPeriod("102026");
+                  }}
+                  className={`px-2.5 py-2 text-xs font-semibold rounded-lg transition-all flex flex-col items-center justify-center gap-0.5 cursor-pointer ${
+                    syncMode === "range" && syncFromPeriod.endsWith("2026")
+                      ? "bg-card text-foreground shadow-sm border border-border/50 font-bold"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <span>FY 2026&ndash;27</span>
+                  <span className="text-[9px] uppercase px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold">
+                    Apr &ndash; Oct &apos;26
                   </span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setSyncMode("single")}
-                  className={`px-3 py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  className={`px-2.5 py-2 text-xs font-semibold rounded-lg transition-all flex flex-col items-center justify-center gap-0.5 cursor-pointer ${
                     syncMode === "single"
-                      ? "bg-card text-foreground shadow-sm border border-border/50"
+                      ? "bg-card text-foreground shadow-sm border border-border/50 font-bold"
                       : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   <span>Single Month</span>
+                  <span className="text-[9px] text-muted-foreground">Any Month</span>
                 </button>
               </div>
 
@@ -946,22 +1050,15 @@ export default function VendorITCRiskShieldPage() {
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                           <Calendar className="w-3.5 h-3.5 text-primary" />
-                          FY 2026&ndash;27 (April to October)
+                          {syncFromPeriod.endsWith("2025") ? "FY 2025–26 (April to October 2025)" : "FY 2026–27 (April to October 2026)"}
                         </span>
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                          7 Months
+                          Multi-Month Range
                         </span>
                       </div>
                       <p className="text-[11px] text-muted-foreground leading-relaxed">
-                        Fetches official GSTR-2B statements for <strong>April, May, June, July, August, September, and October 2026</strong>. Reconciles all your purchase invoices against GSTN.
+                        Fetches official auto-drafted GSTR-2B statements from GST Portal and idempotently reconciles your purchase invoices.
                       </p>
-                      <div className="flex flex-wrap gap-1.5 pt-0.5">
-                        {["Apr 26", "May 26", "Jun 26", "Jul 26", "Aug 26", "Sep 26", "Oct 26"].map((m) => (
-                          <span key={m} className="px-2 py-0.5 text-[10px] font-medium rounded-md bg-muted/80 text-foreground border border-border/40 font-mono">
-                            {m}
-                          </span>
-                        ))}
-                      </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-3 pt-1">
@@ -974,13 +1071,30 @@ export default function VendorITCRiskShieldPage() {
                           onChange={(e) => setSyncFromPeriod(e.target.value)}
                           className="w-full px-3 py-2 text-xs rounded-lg border border-border/60 bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary font-mono cursor-pointer"
                         >
-                          <option value="042026">042026 (Apr 2026)</option>
-                          <option value="052026">052026 (May 2026)</option>
-                          <option value="062026">062026 (Jun 2026)</option>
-                          <option value="072026">072026 (Jul 2026)</option>
-                          <option value="082026">082026 (Aug 2026)</option>
-                          <option value="092026">092026 (Sep 2026)</option>
-                          <option value="102026">102026 (Oct 2026)</option>
+                          {availablePeriods.length > 0 ? (
+                            availablePeriods.map((p) => (
+                              <option key={p.period} value={p.period}>
+                                {p.period} ({p.label})
+                              </option>
+                            ))
+                          ) : (
+                            <>
+                              <option value="042025">042025 (Apr 2025)</option>
+                              <option value="052025">052025 (May 2025)</option>
+                              <option value="062025">062025 (Jun 2025)</option>
+                              <option value="072025">072025 (Jul 2025)</option>
+                              <option value="082025">082025 (Aug 2025)</option>
+                              <option value="092025">092025 (Sep 2025)</option>
+                              <option value="102025">102025 (Oct 2025)</option>
+                              <option value="042026">042026 (Apr 2026)</option>
+                              <option value="052026">052026 (May 2026)</option>
+                              <option value="062026">062026 (Jun 2026)</option>
+                              <option value="072026">072026 (Jul 2026)</option>
+                              <option value="082026">082026 (Aug 2026)</option>
+                              <option value="092026">092026 (Sep 2026)</option>
+                              <option value="102026">102026 (Oct 2026)</option>
+                            </>
+                          )}
                         </select>
                       </div>
                       <div>
@@ -992,13 +1106,30 @@ export default function VendorITCRiskShieldPage() {
                           onChange={(e) => setSyncToPeriod(e.target.value)}
                           className="w-full px-3 py-2 text-xs rounded-lg border border-border/60 bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary font-mono cursor-pointer"
                         >
-                          <option value="102026">102026 (Oct 2026)</option>
-                          <option value="092026">092026 (Sep 2026)</option>
-                          <option value="082026">082026 (Aug 2026)</option>
-                          <option value="072026">072026 (Jul 2026)</option>
-                          <option value="062026">062026 (Jun 2026)</option>
-                          <option value="052026">052026 (May 2026)</option>
-                          <option value="042026">042026 (Apr 2026)</option>
+                          {availablePeriods.length > 0 ? (
+                            availablePeriods.map((p) => (
+                              <option key={p.period} value={p.period}>
+                                {p.period} ({p.label})
+                              </option>
+                            ))
+                          ) : (
+                            <>
+                              <option value="102025">102025 (Oct 2025)</option>
+                              <option value="092025">092025 (Sep 2025)</option>
+                              <option value="082025">082025 (Aug 2025)</option>
+                              <option value="072025">072025 (Jul 2025)</option>
+                              <option value="062025">062025 (Jun 2025)</option>
+                              <option value="052025">052025 (May 2025)</option>
+                              <option value="042025">042025 (Apr 2025)</option>
+                              <option value="102026">102026 (Oct 2026)</option>
+                              <option value="092026">092026 (Sep 2026)</option>
+                              <option value="082026">082026 (Aug 2026)</option>
+                              <option value="072026">072026 (Jul 2026)</option>
+                              <option value="062026">062026 (Jun 2026)</option>
+                              <option value="052026">052026 (May 2026)</option>
+                              <option value="042026">042026 (Apr 2026)</option>
+                            </>
+                          )}
                         </select>
                       </div>
                     </div>
@@ -1013,23 +1144,40 @@ export default function VendorITCRiskShieldPage() {
                       onChange={(e) => setSyncPeriod(e.target.value)}
                       className="w-full px-3 py-2 text-xs rounded-lg border border-border/60 bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary font-mono cursor-pointer mb-2"
                     >
-                      <option value="102026">102026 &mdash; October 2026</option>
-                      <option value="092026">092026 &mdash; September 2026</option>
-                      <option value="082026">082026 &mdash; August 2026</option>
-                      <option value="072026">072026 &mdash; July 2026</option>
-                      <option value="062026">062026 &mdash; June 2026</option>
-                      <option value="052026">052026 &mdash; May 2026</option>
-                      <option value="042026">042026 &mdash; April 2026</option>
+                      {availablePeriods.length > 0 ? (
+                        availablePeriods.map((p) => (
+                          <option key={p.period} value={p.period}>
+                            {p.period} &mdash; {p.label} (FY {p.financial_year})
+                          </option>
+                        ))
+                      ) : (
+                        <>
+                          <option value="102025">102025 &mdash; October 2025 (FY 2025-26)</option>
+                          <option value="092025">092025 &mdash; September 2025 (FY 2025-26)</option>
+                          <option value="082025">082025 &mdash; August 2025 (FY 2025-26)</option>
+                          <option value="072025">072025 &mdash; July 2025 (FY 2025-26)</option>
+                          <option value="062025">062025 &mdash; June 2025 (FY 2025-26)</option>
+                          <option value="052025">052025 &mdash; May 2025 (FY 2025-26)</option>
+                          <option value="042025">042025 &mdash; April 2025 (FY 2025-26)</option>
+                          <option value="102026">102026 &mdash; October 2026 (FY 2026-27)</option>
+                          <option value="092026">092026 &mdash; September 2026 (FY 2026-27)</option>
+                          <option value="082026">082026 &mdash; August 2026 (FY 2026-27)</option>
+                          <option value="072026">072026 &mdash; July 2026 (FY 2026-27)</option>
+                          <option value="062026">062026 &mdash; June 2026 (FY 2026-27)</option>
+                          <option value="052026">052026 &mdash; May 2026 (FY 2026-27)</option>
+                          <option value="042026">042026 &mdash; April 2026 (FY 2026-27)</option>
+                        </>
+                      )}
                     </select>
                     <input
                       type="text"
                       value={syncPeriod}
                       onChange={(e) => setSyncPeriod(e.target.value)}
-                      placeholder="Or enter custom period: MMYYYY (e.g. 102026)"
+                      placeholder="Or enter custom period: MMYYYY (e.g. 102025)"
                       className="w-full px-3 py-2 text-xs rounded-lg border border-border/60 bg-background focus:outline-none focus:ring-1 focus:ring-primary font-mono"
                     />
                     <p className="text-[11px] text-muted-foreground mt-1">
-                      Format: MMYYYY (e.g. <strong>102026</strong> for October 2026, <strong>092026</strong> for September 2026).
+                      Format: MMYYYY (e.g. <strong>102025</strong> for October 2025, <strong>092025</strong> for September 2025).
                     </p>
                   </div>
                 )}

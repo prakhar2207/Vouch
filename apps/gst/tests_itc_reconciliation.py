@@ -11,7 +11,7 @@ from apps.companies.models import Company, UserCompany
 from apps.ledgers.models import LedgerGroup, Ledger
 from apps.inventory.models import Product, Warehouse
 from apps.accounting.models import Voucher, VoucherItem
-from apps.gst.models import CompanyGSTConfig, GSTR2BImport, GSTR2BRecord
+from apps.gst.models import CompanyGSTConfig, GSTR2BImport, GSTR2BRecord, GSTRegistration
 from apps.gst.services.itc_reconciliation_service import ITCReconciliationService
 from apps.gst.services.itc_notification_service import ITCNotificationService
 from apps.gst.services.reconciliation_service import GSTReconciliationService
@@ -38,6 +38,14 @@ class ITCReconciliationTests(TestCase):
             email='accounts@precisioneng.com'
         )
         UserCompany.objects.create(user=self.user, company=self.company, role='OWNER')
+        self.registration = GSTRegistration.objects.create(
+            company=self.company,
+            gstin='07AAAAA9999A1Z9',
+            legal_name='Precision Engineering Works Pvt Ltd',
+            state_code='07',
+            status='ACTIVE',
+            is_primary=True
+        )
         self.warehouse = Warehouse.objects.create(company=self.company, name='Raw Material Store')
 
         self.creditors_group = LedgerGroup.objects.create(company=self.company, name='Sundry Creditors', nature='LIABILITY')
@@ -612,3 +620,238 @@ class ITCReconciliationTests(TestCase):
         self.assertEqual(len(res['period_results']), 7)
         self.assertIn("failed or not applicable", res['error'])
         self.assertIn("GSTR2B form is not applicable", res['failed_periods_details'][0]['error'])
+
+    def test_invalid_return_period_list_api_returns_400(self):
+        res = self.client.get(
+            reverse('itc_reconciliation_list'),
+            {'return_period': 'invalid-period'},
+            HTTP_X_COMPANY_ID=str(self.company.id)
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(res.data.get('error_code'), 'INVALID_RETURN_PERIOD')
+
+    def test_invalid_return_period_summary_api_returns_400(self):
+        res = self.client.get(
+            reverse('itc_summary'),
+            {'return_period': '132026'},
+            HTTP_X_COMPANY_ID=str(self.company.id)
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(res.data.get('error_code'), 'INVALID_RETURN_PERIOD')
+
+    def test_reversed_period_range_sync_returns_400(self):
+        res = self.client.post(
+            reverse('gst_reconciliation_gstr2b_sync', kwargs={'company_id': self.company.id}),
+            {'from_period': '102026', 'to_period': '042026'},
+            format='json',
+            HTTP_X_COMPANY_ID=str(self.company.id)
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(res.data.get('error_code'), 'INVALID_PERIOD_RANGE')
+
+    def test_missing_period_sync_returns_400(self):
+        res = self.client.post(
+            reverse('gst_reconciliation_gstr2b_sync', kwargs={'company_id': self.company.id}),
+            {},
+            format='json'
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(res.data.get('error_code'), 'PERIOD_REQUIRED')
+
+    def test_unknown_registration_id_returns_400(self):
+        import uuid
+        res = self.client.get(
+            reverse('itc_reconciliation_list'),
+            {'registration_id': str(uuid.uuid4())},
+            HTTP_X_COMPANY_ID=str(self.company.id)
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(res.data.get('error_code'), 'INVALID_REGISTRATION')
+
+    def test_unknown_payload_gstin_rejected_without_fallback(self):
+        sample_gstr2b = {
+            'gstin': '99UNKNOWN9999Z9',
+            'fp': '082026',
+            'data': {'b2b': []}
+        }
+        with self.assertRaises(ValidationError):
+            ITCReconciliationService.ingest_gstr2b_json(
+                company=self.company,
+                json_data=sample_gstr2b,
+                return_period='082026'
+            )
+
+    def test_cdnr_credit_note_reduces_taxable_and_itc(self):
+        sample_cdnr = {
+            'gstin': '07AAAAA9999A1Z9',
+            'fp': '082026',
+            'data': {
+                'b2b': [{
+                    'ctin': '07STEEL8888S1Z8',
+                    'inv': [{
+                        'inum': 'INV-100',
+                        'dt': '01-08-2026',
+                        'val': 11800.0,
+                        'items': [{'txval': 10000.0, 'camt': 900.0, 'samt': 900.0, 'iamt': 0.0, 'csamt': 0.0}]
+                    }]
+                }],
+                'cdnr': [{
+                    'ctin': '07STEEL8888S1Z8',
+                    'nt': [{
+                        'nt_num': 'CN-01',
+                        'nt_dt': '05-08-2026',
+                        'ntty': 'C',
+                        'val': 2360.0,
+                        'items': [{'txval': 2000.0, 'camt': 180.0, 'samt': 180.0, 'iamt': 0.0, 'csamt': 0.0}]
+                    }]
+                }]
+            }
+        }
+        batch = ITCReconciliationService.ingest_gstr2b_json(
+            company=self.company,
+            json_data=sample_cdnr,
+            return_period='082026'
+        )
+        # Gross invoice 10000 - credit note 2000 = 8000 net taxable
+        self.assertEqual(batch.total_taxable_amount, Decimal('8000.00'))
+        # Gross ITC 1800 - credit note ITC 360 = 1440 net ITC
+        self.assertEqual(batch.total_itc_available, Decimal('1440.00'))
+
+        cn_rec = GSTR2BRecord.objects.get(company=self.company, invoice_number='CN-01')
+        self.assertEqual(cn_rec.note_type, 'C')
+
+    def test_cdnr_debit_note_increases_taxable_and_itc(self):
+        sample_cdnr_d = {
+            'gstin': '07AAAAA9999A1Z9',
+            'fp': '082026',
+            'data': {
+                'b2b': [{
+                    'ctin': '07STEEL8888S1Z8',
+                    'inv': [{
+                        'inum': 'INV-101',
+                        'dt': '01-08-2026',
+                        'val': 11800.0,
+                        'items': [{'txval': 10000.0, 'camt': 900.0, 'samt': 900.0, 'iamt': 0.0, 'csamt': 0.0}]
+                    }]
+                }],
+                'cdnr': [{
+                    'ctin': '07STEEL8888S1Z8',
+                    'nt': [{
+                        'nt_num': 'DN-01',
+                        'nt_dt': '05-08-2026',
+                        'ntty': 'D',
+                        'val': 2360.0,
+                        'items': [{'txval': 2000.0, 'camt': 180.0, 'samt': 180.0, 'iamt': 0.0, 'csamt': 0.0}]
+                    }]
+                }]
+            }
+        }
+        batch_d = ITCReconciliationService.ingest_gstr2b_json(
+            company=self.company,
+            json_data=sample_cdnr_d,
+            return_period='082026'
+        )
+        # Gross invoice 10000 + debit note 2000 = 12000 net taxable
+        self.assertEqual(batch_d.total_taxable_amount, Decimal('12000.00'))
+        # Gross ITC 1800 + debit note ITC 360 = 2160 net ITC
+        self.assertEqual(batch_d.total_itc_available, Decimal('2160.00'))
+
+        dn_rec = GSTR2BRecord.objects.get(company=self.company, invoice_number='DN-01')
+        self.assertEqual(dn_rec.note_type, 'D')
+
+    def test_no_date_fabrication_preserves_raw_and_sets_review_required(self):
+        sample_bad_date = {
+            'gstin': '07AAAAA9999A1Z9',
+            'fp': '082026',
+            'data': {
+                'b2b': [{
+                    'ctin': '07STEEL8888S1Z8',
+                    'inv': [{
+                        'inum': 'INV-CORRUPT',
+                        'dt': 'invalid-raw-date',
+                        'val': 1180.0,
+                        'items': [{'txval': 1000.0, 'camt': 90.0, 'samt': 90.0, 'iamt': 0.0, 'csamt': 0.0}]
+                    }]
+                }]
+            }
+        }
+        ITCReconciliationService.ingest_gstr2b_json(
+            company=self.company,
+            json_data=sample_bad_date,
+            return_period='082026'
+        )
+        rec = GSTR2BRecord.objects.get(company=self.company, invoice_number='INV-CORRUPT')
+        self.assertIsNone(rec.invoice_date)
+        self.assertEqual(rec.raw_invoice_date, 'invalid-raw-date')
+        self.assertEqual(rec.match_status, 'REVIEW_REQUIRED')
+
+    def test_cross_period_reconciliation_later_period_match(self):
+        # Purchase voucher dated in APRIL 2026
+        apr_voucher = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/26-27/040-APR',
+            external_invoice_number='INV/2026/LATE-01',
+            voucher_date=date(2026, 4, 15),
+            party_ledger=self.vendor_ledger,
+            total_amount=Decimal('11800.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+        VoucherItem.objects.create(
+            voucher=apr_voucher,
+            product=self.product,
+            quantity=Decimal('100.00'),
+            rate=Decimal('100.00'),
+            taxable_amount=Decimal('10000.00'),
+            cgst_rate=Decimal('9.00'),
+            cgst_amount=Decimal('900.00'),
+            sgst_rate=Decimal('9.00'),
+            sgst_amount=Decimal('900.00'),
+            total_amount=Decimal('11800.00')
+        )
+
+        # Ingest June 2026 GSTR-2B containing this April invoice
+        sample_june_2b = {
+            'gstin': '07AAAAA9999A1Z9',
+            'fp': '062026',
+            'data': {
+                'b2b': [{
+                    'ctin': '07STEEL8888S1Z8',
+                    'inv': [{
+                        'inum': 'INV/2026/LATE-01',
+                        'dt': '15-04-2026',
+                        'val': 11800.0,
+                        'items': [{'txval': 10000.0, 'camt': 900.0, 'samt': 900.0, 'iamt': 0.0, 'csamt': 0.0}]
+                    }]
+                }]
+            }
+        }
+        ITCReconciliationService.ingest_gstr2b_json(
+            company=self.company,
+            json_data=sample_june_2b,
+            return_period='062026'
+        )
+
+        # Reconcile June 2026
+        ITCReconciliationService.reconcile_period(
+            company=self.company,
+            return_period='062026'
+        )
+
+        apr_voucher.refresh_from_db()
+        self.assertEqual(apr_voucher.itc_match_status, 'LATER_PERIOD_MATCH')
+        self.assertIn('later GSTR-2B statement (062026)', apr_voucher.itc_notes)
+
+    def test_available_periods_endpoint(self):
+        res = self.client.get(
+            reverse('itc_available_periods'),
+            HTTP_X_COMPANY_ID=str(self.company.id)
+        )
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertGreater(res.data['count'], 0)
+        periods = [p['period'] for p in res.data['periods']]
+        self.assertIn('042025', periods)
+        self.assertIn('102025', periods)
+        self.assertIn('042026', periods)
+        self.assertIn('102026', periods)
