@@ -66,14 +66,29 @@ class GSTReconciliationService:
             month = str(now.month).zfill(2)
             year = str(now.year)
 
+        if not registration:
+            registration = (
+                GSTRegistration.objects.filter(company=company, is_primary=True, status='ACTIVE').first()
+                or GSTRegistration.objects.filter(company=company, status='ACTIVE').first()
+            )
+
         client = SandboxGSTClient(company=company, registration=registration)
         config = CompanyGSTConfig.objects.filter(company=company).first()
-        session_token = (registration.auth_token if registration and registration.auth_token else None) or (config.auth_token if config and config.auth_token else None)
+        session_token = (
+            (registration.auth_token if registration and registration.auth_token else None)
+            or (config.auth_token if config and config.auth_token else None)
+        )
 
         if not client.is_configured():
             return {
                 "success": False,
                 "error": "Sandbox GST API is not configured. Please supply API credentials in settings or company configuration."
+            }
+
+        if not session_token:
+            return {
+                "success": False,
+                "error": "No active GST Portal session found. Please connect your GST Portal under Settings > Government GST Portal Integration first."
             }
 
         res = client.fetch_gstr2b(year=year, month=month, session_token=session_token, user=user)

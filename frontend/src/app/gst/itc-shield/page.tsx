@@ -104,6 +104,12 @@ export default function VendorITCRiskShieldPage() {
   const [selectedPeriod, setSelectedPeriod] = useState<string>("");
 
   // Modals
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
+  const [syncPeriod, setSyncPeriod] = useState<string>("");
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncSuccess, setSyncSuccess] = useState<string | null>(null);
+
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isExpiryModalOpen, setIsExpiryModalOpen] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -213,6 +219,40 @@ export default function VendorITCRiskShieldPage() {
     }
   };
 
+  // Direct Portal Sync Handler
+  const handleSyncSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanPeriod = syncPeriod.replace('-', '').trim();
+    if (!cleanPeriod) {
+      setSyncError("Please enter a return period (MMYYYY, e.g. 102026 for October 2026).");
+      return;
+    }
+    setSyncing(true);
+    setSyncError(null);
+    setSyncSuccess(null);
+    try {
+      const res = await api.post(
+        `/api/v1/gst/reconciliation/gstr2b/sync/${companyId}/`,
+        { period: cleanPeriod },
+        { headers: { "X-Company-ID": companyId } }
+      );
+      if (res.data?.success) {
+        setSyncSuccess(`Synced successfully! Ingested ${res.data.total_invoices_ingested || 0} GSTR-2B invoices.`);
+        await handleRefresh();
+        setTimeout(() => {
+          setIsSyncModalOpen(false);
+          setSyncSuccess(null);
+        }, 1500);
+      } else {
+        setSyncError(res.data?.error || "Failed to fetch GSTR-2B from GST Portal.");
+      }
+    } catch (err: any) {
+      setSyncError(err.response?.data?.error || "Failed to fetch GSTR-2B from GST Portal. Please ensure GST Portal is connected in Settings.");
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   // Open Hold Modal
   const openHoldModal = (item: ReconciliationItem) => {
     setHoldModalItem(item);
@@ -304,6 +344,18 @@ export default function VendorITCRiskShieldPage() {
             >
               <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
               <span>Refresh</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setSyncError(null);
+                setSyncSuccess(null);
+                setIsSyncModalOpen(true);
+              }}
+              className="inline-flex items-center gap-2 px-4 py-2 text-xs sm:text-sm font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-500/20 transition-all cursor-pointer"
+            >
+              <RefreshCw className="w-4 h-4" />
+              <span>Sync from GST Portal</span>
             </button>
 
             <button
@@ -668,6 +720,81 @@ export default function VendorITCRiskShieldPage() {
             </table>
           </div>
         </div>
+
+        {/* MODAL 0: SYNC FROM GST PORTAL */}
+        {isSyncModalOpen && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-card border border-border/40 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-in fade-in zoom-in-95">
+              <div className="flex items-center justify-between border-b border-border/40 pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                    <RefreshCw className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-foreground">Sync GSTR-2B from GST Portal</h3>
+                    <p className="text-xs text-muted-foreground">Directly fetch official auto-drafted ITC statement</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsSyncModalOpen(false)}
+                  className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form onSubmit={handleSyncSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-foreground mb-1.5">
+                    Return Period (Month &amp; Year)
+                  </label>
+                  <input
+                    type="text"
+                    value={syncPeriod}
+                    onChange={(e) => setSyncPeriod(e.target.value)}
+                    placeholder="e.g. 102026 (for Oct 2026) or 092026"
+                    className="w-full px-3 py-2 text-xs rounded-lg border border-border/60 bg-background focus:outline-none focus:ring-1 focus:ring-primary font-mono"
+                  />
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    Format: MMYYYY (e.g. <strong>102026</strong> for October 2026, <strong>092026</strong> for September 2026).
+                  </p>
+                </div>
+
+                {syncError && (
+                  <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-xs text-rose-500 flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{syncError}</span>
+                  </div>
+                )}
+
+                {syncSuccess && (
+                  <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span>{syncSuccess}</span>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-border/40">
+                  <button
+                    type="button"
+                    onClick={() => setIsSyncModalOpen(false)}
+                    className="px-4 py-2 text-xs font-medium rounded-lg text-muted-foreground hover:bg-muted/60 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={syncing || !syncPeriod.trim()}
+                    className="px-4 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 cursor-pointer flex items-center gap-2 shadow-sm"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
+                    <span>{syncing ? "Fetching from GST Portal..." : "Sync & Reconcile"}</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
         {/* MODAL 1: UPLOAD GSTR-2B */}
         {isUploadModalOpen && (
