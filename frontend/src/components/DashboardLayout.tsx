@@ -641,6 +641,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       </div>
                     </Link>
                     <Link
+                      href="/pay"
+                      onClick={() => setIsMoreOpen(false)}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                          <span>SriLekh Pay</span>
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/10 text-emerald-500 border border-emerald-500/30">NEW</span>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">UPI, Bank Transfers & Auto-Accounting</div>
+                      </div>
+                    </Link>
+                    <Link
                       href="/vouchers/credit-note"
                       onClick={() => setIsMoreOpen(false)}
                       className="flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-muted/70 transition-colors"
@@ -1306,6 +1319,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 }`}
               >
                 Banking
+              </Link>
+              <Link
+                href="/pay"
+                onClick={() => setIsMobileNavOpen(false)}
+                className={`flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                  pathname.startsWith("/pay") ? "bg-muted font-semibold text-foreground" : "text-muted-foreground hover:bg-muted/60"
+                }`}
+              >
+                <span>SriLekh Pay</span>
+                <span className="text-[9px] bg-emerald-500/10 text-emerald-500 font-bold px-1.5 py-0.5 rounded border border-emerald-500/30">NEW</span>
               </Link>
               <Link
                 href="/analytics"

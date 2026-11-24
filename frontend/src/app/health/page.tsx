@@ -315,6 +315,9 @@ export default function HealthPage() {
     if (cat.includes("BANK")) {
       return { label: "Bank Reconciliation", bg: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/25" };
     }
+    if (cat === "LIQUIDITY") {
+      return { label: "Cash & Liquidity", bg: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/25" };
+    }
     if (cat.includes("INVENTORY")) {
       return { label: "Inventory Stock", bg: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25" };
     }
@@ -330,51 +333,142 @@ export default function HealthPage() {
     return { label: category.replace(/_/g, " "), bg: "bg-muted text-muted-foreground border-border/40" };
   };
 
+  // Dedicated predicate helpers with strict mutual exclusivity
+  const isBankFinding = (f: AccountingFindingItem): boolean => {
+    const cat = (f.category || "").toUpperCase();
+    const fix = (f.fix_type || "").toUpperCase();
+    const actionUrl = f.evidence?.action_url || "";
+    const title = (f.title || "").toLowerCase();
+
+    // Absolute exclusion: Never classify inventory stock, negative stock, or product merge as bank
+    if (
+      cat.includes("INVENTORY") ||
+      fix === "MERGE_INVENTORY_ITEMS" ||
+      actionUrl === "/inventory" ||
+      title.startsWith("negative stock") ||
+      title.includes("in-stock item")
+    ) {
+      return false;
+    }
+
+    return (
+      cat.includes("BANK") ||
+      cat === "LIQUIDITY" ||
+      cat === "BANK_RECONCILIATION" ||
+      cat.startsWith("DUPLICATE_BANK") ||
+      fix === "EXCLUDE_DUPLICATE_BANK" ||
+      fix === "REVIEW_BANK_BALANCE" ||
+      fix === "NAVIGATE_BANK_RECON" ||
+      actionUrl === "/banking" ||
+      title.includes("bank") ||
+      title.includes("cash in hand") ||
+      title.includes("overdraft") ||
+      title.includes("od limit")
+    );
+  };
+
+  const isInventoryFinding = (f: AccountingFindingItem): boolean => {
+    const cat = (f.category || "").toUpperCase();
+    const fix = (f.fix_type || "").toUpperCase();
+    const actionUrl = f.evidence?.action_url || "";
+    const title = (f.title || "").toLowerCase();
+
+    // Absolute exclusion: Never classify bank or liquidity issues as inventory
+    if (
+      cat.includes("BANK") ||
+      cat === "LIQUIDITY" ||
+      cat === "BANK_RECONCILIATION" ||
+      actionUrl === "/banking" ||
+      fix === "EXCLUDE_DUPLICATE_BANK" ||
+      fix === "REVIEW_BANK_BALANCE" ||
+      fix === "NAVIGATE_BANK_RECON"
+    ) {
+      return false;
+    }
+
+    return (
+      cat.includes("INVENTORY") ||
+      fix === "MERGE_INVENTORY_ITEMS" ||
+      actionUrl === "/inventory" ||
+      title.startsWith("negative stock") ||
+      title.includes("in-stock item") ||
+      title.includes("inventory")
+    );
+  };
+
+  const isGstFinding = (f: AccountingFindingItem): boolean => {
+    const cat = (f.category || "").toUpperCase();
+    const title = (f.title || "").toLowerCase();
+    return cat.includes("GST") || title.includes("gst");
+  };
+
+  const isDuplicateFinding = (f: AccountingFindingItem): boolean => {
+    const cat = (f.category || "").toUpperCase();
+    const fix = (f.fix_type || "").toUpperCase();
+    const title = (f.title || "").toLowerCase();
+    return (
+      cat.startsWith("DUPLICATE") ||
+      fix.includes("DUPLICATE") ||
+      fix === "VOID_DUPLICATE_VOUCHER" ||
+      fix === "MERGE_INVENTORY_ITEMS" ||
+      fix === "EXCLUDE_DUPLICATE_BANK" ||
+      title.startsWith("duplicate")
+    );
+  };
+
+  const isCriticalFinding = (f: AccountingFindingItem): boolean => {
+    return f.severity === "CRITICAL";
+  };
+
+  const isActionableFinding = (f: AccountingFindingItem): boolean => {
+    return Boolean(f.is_actionable || f.fix_type);
+  };
+
   const duplicateFindingsCount = useMemo(() => {
-    return report?.findings?.filter((f) => f.category?.startsWith("DUPLICATE") || f.fix_type === "VOID_DUPLICATE_VOUCHER")?.length || 0;
+    return report?.findings?.filter(isDuplicateFinding)?.length || 0;
   }, [report]);
 
   const bankFindingsCount = useMemo(() => {
-    return report?.findings?.filter((f) => f.category?.includes("BANK") || f.category === "LIQUIDITY")?.length || 0;
+    return report?.findings?.filter(isBankFinding)?.length || 0;
   }, [report]);
 
   const inventoryFindingsCount = useMemo(() => {
-    return report?.findings?.filter((f) => f.category?.includes("INVENTORY"))?.length || 0;
+    return report?.findings?.filter(isInventoryFinding)?.length || 0;
   }, [report]);
 
   const gstFindingsCount = useMemo(() => {
-    return report?.findings?.filter((f) => f.category?.includes("GST"))?.length || 0;
+    return report?.findings?.filter(isGstFinding)?.length || 0;
   }, [report]);
 
   const criticalCount = report?.metrics?.critical_findings_count || 0;
   const warningCount = (report?.metrics?.warning_findings_count || 0) + (report?.metrics?.info_findings_count || 0);
-  const actionableCount = report?.findings?.filter((f) => f.is_actionable).length || 0;
+  const actionableCount = report?.findings?.filter(isActionableFinding).length || 0;
 
   const filteredFindings = useMemo(() => {
     if (!report?.findings) return [];
     let list = report.findings;
 
     if (activeTab === "DUPLICATES") {
-      list = list.filter((f) => f.category?.startsWith("DUPLICATE") || f.fix_type === "VOID_DUPLICATE_VOUCHER");
+      list = list.filter(isDuplicateFinding);
     } else if (activeTab === "BANK") {
-      list = list.filter((f) => f.category?.includes("BANK") || f.category === "LIQUIDITY");
+      list = list.filter(isBankFinding);
     } else if (activeTab === "INVENTORY") {
-      list = list.filter((f) => f.category?.includes("INVENTORY"));
+      list = list.filter(isInventoryFinding);
     } else if (activeTab === "GST") {
-      list = list.filter((f) => f.category?.includes("GST"));
+      list = list.filter(isGstFinding);
     } else if (activeTab === "CRITICAL") {
-      list = list.filter((f) => f.severity === "CRITICAL");
+      list = list.filter(isCriticalFinding);
     } else if (activeTab === "ACTIONABLE") {
-      list = list.filter((f) => f.is_actionable);
+      list = list.filter(isActionableFinding);
     }
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       list = list.filter(
         (f) =>
-          f.title.toLowerCase().includes(q) ||
-          f.description.toLowerCase().includes(q) ||
-          f.category.toLowerCase().includes(q) ||
+          (f.title || "").toLowerCase().includes(q) ||
+          (f.description || "").toLowerCase().includes(q) ||
+          (f.category || "").toLowerCase().includes(q) ||
           (f.evidence?.party_name && String(f.evidence.party_name).toLowerCase().includes(q)) ||
           (f.evidence?.primary_voucher_number && String(f.evidence.primary_voucher_number).toLowerCase().includes(q))
       );
@@ -634,8 +728,22 @@ export default function HealthPage() {
                   <div
                     key={check.name}
                     onClick={() => {
-                      if (check.name.toLowerCase().includes("duplicate")) {
+                      const name = check.name.toLowerCase();
+                      if (name.includes("bank") || name.includes("liquidity")) {
+                        setActiveTab("BANK");
+                        setSearchQuery("");
+                      } else if (name.includes("inventory") || name.includes("stock")) {
+                        setActiveTab("INVENTORY");
+                        setSearchQuery("");
+                      } else if (name.includes("gst") || name.includes("tax")) {
+                        setActiveTab("GST");
+                        setSearchQuery("");
+                      } else if (name.includes("duplicate")) {
                         setActiveTab("DUPLICATES");
+                        setSearchQuery("");
+                      } else if (name.includes("tds")) {
+                        setActiveTab("GST");
+                        setSearchQuery("");
                       } else if (!isPassed) {
                         setActiveTab("ALL");
                         setSearchQuery(check.name);
@@ -788,13 +896,13 @@ export default function HealthPage() {
           <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3">
             
             {/* Filter Tabs */}
-            <div className="flex items-center gap-1 p-1 bg-muted/30 border border-border/40 rounded-xl overflow-x-auto">
+            <div className="flex items-center gap-1 p-1 bg-muted/40 border border-border/50 rounded-xl overflow-x-auto">
               <button
                 onClick={() => setActiveTab("ALL")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer shrink-0 ${
+                className={`px-3 py-1.5 rounded-lg text-xs transition-all cursor-pointer shrink-0 ${
                   activeTab === "ALL"
-                    ? "bg-card text-foreground shadow-xs border border-border/60"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? "bg-foreground text-background font-bold shadow-xs border border-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/40 font-medium"
                 }`}
               >
                 All Issues ({report?.findings?.length || 0})
@@ -802,16 +910,20 @@ export default function HealthPage() {
 
               <button
                 onClick={() => setActiveTab("BANK")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                className={`px-3 py-1.5 rounded-lg text-xs transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
                   activeTab === "BANK"
-                    ? "bg-card text-foreground shadow-xs border border-border/60"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? "bg-cyan-600 text-white font-bold shadow-xs border border-cyan-700 dark:bg-cyan-500 dark:text-cyan-950"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/40 font-medium"
                 }`}
               >
-                <Layers className="w-3 h-3 text-cyan-500" />
+                <Layers className={`w-3 h-3 ${activeTab === "BANK" ? "text-white dark:text-cyan-950" : "text-muted-foreground/70"}`} />
                 <span>Bank & Cash</span>
                 {bankFindingsCount > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-cyan-500/20 text-cyan-600 dark:text-cyan-400">
+                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+                    activeTab === "BANK"
+                      ? "bg-white/25 text-white dark:bg-cyan-950/20 dark:text-cyan-950"
+                      : "bg-muted text-muted-foreground"
+                  }`}>
                     {bankFindingsCount}
                   </span>
                 )}
@@ -819,16 +931,20 @@ export default function HealthPage() {
 
               <button
                 onClick={() => setActiveTab("INVENTORY")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                className={`px-3 py-1.5 rounded-lg text-xs transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
                   activeTab === "INVENTORY"
-                    ? "bg-card text-foreground shadow-xs border border-border/60"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? "bg-emerald-600 text-white font-bold shadow-xs border border-emerald-700 dark:bg-emerald-500 dark:text-emerald-950"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/40 font-medium"
                 }`}
               >
-                <Package className="w-3 h-3 text-emerald-500" />
+                <Package className={`w-3 h-3 ${activeTab === "INVENTORY" ? "text-white dark:text-emerald-950" : "text-muted-foreground/70"}`} />
                 <span>Inventory</span>
                 {inventoryFindingsCount > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400">
+                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+                    activeTab === "INVENTORY"
+                      ? "bg-white/25 text-white dark:bg-emerald-950/20 dark:text-emerald-950"
+                      : "bg-muted text-muted-foreground"
+                  }`}>
                     {inventoryFindingsCount}
                   </span>
                 )}
@@ -836,16 +952,20 @@ export default function HealthPage() {
 
               <button
                 onClick={() => setActiveTab("GST")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                className={`px-3 py-1.5 rounded-lg text-xs transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
                   activeTab === "GST"
-                    ? "bg-card text-foreground shadow-xs border border-border/60"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? "bg-rose-600 text-white font-bold shadow-xs border border-rose-700 dark:bg-rose-500 dark:text-white"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/40 font-medium"
                 }`}
               >
-                <Scale className="w-3 h-3 text-rose-500" />
+                <Scale className={`w-3 h-3 ${activeTab === "GST" ? "text-white" : "text-muted-foreground/70"}`} />
                 <span>GST</span>
                 {gstFindingsCount > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-rose-500/20 text-rose-600 dark:text-rose-400">
+                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+                    activeTab === "GST"
+                      ? "bg-white/25 text-white"
+                      : "bg-muted text-muted-foreground"
+                  }`}>
                     {gstFindingsCount}
                   </span>
                 )}
@@ -853,16 +973,20 @@ export default function HealthPage() {
 
               <button
                 onClick={() => setActiveTab("DUPLICATES")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                className={`px-3 py-1.5 rounded-lg text-xs transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
                   activeTab === "DUPLICATES"
-                    ? "bg-card text-foreground shadow-xs border border-border/60"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? "bg-purple-600 text-white font-bold shadow-xs border border-purple-700 dark:bg-purple-500 dark:text-white"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/40 font-medium"
                 }`}
               >
-                <Layers className="w-3 h-3 text-purple-500" />
+                <Layers className={`w-3 h-3 ${activeTab === "DUPLICATES" ? "text-white" : "text-muted-foreground/70"}`} />
                 <span>Duplicates</span>
                 {duplicateFindingsCount > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-purple-500/20 text-purple-600 dark:text-purple-400">
+                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+                    activeTab === "DUPLICATES"
+                      ? "bg-white/25 text-white"
+                      : "bg-muted text-muted-foreground"
+                  }`}>
                     {duplicateFindingsCount}
                   </span>
                 )}
@@ -870,16 +994,20 @@ export default function HealthPage() {
 
               <button
                 onClick={() => setActiveTab("CRITICAL")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                className={`px-3 py-1.5 rounded-lg text-xs transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
                   activeTab === "CRITICAL"
-                    ? "bg-card text-foreground shadow-xs border border-border/60"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? "bg-rose-600 text-white font-bold shadow-xs border border-rose-700 dark:bg-rose-500 dark:text-white"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/40 font-medium"
                 }`}
               >
-                <AlertOctagon className="w-3 h-3 text-rose-500" />
+                <AlertOctagon className={`w-3 h-3 ${activeTab === "CRITICAL" ? "text-white" : "text-muted-foreground/70"}`} />
                 <span>Critical</span>
                 {criticalCount > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-rose-500/20 text-rose-600 dark:text-rose-400">
+                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+                    activeTab === "CRITICAL"
+                      ? "bg-white/25 text-white"
+                      : "bg-muted text-muted-foreground"
+                  }`}>
                     {criticalCount}
                   </span>
                 )}
@@ -887,16 +1015,20 @@ export default function HealthPage() {
 
               <button
                 onClick={() => setActiveTab("ACTIONABLE")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                className={`px-3 py-1.5 rounded-lg text-xs transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
                   activeTab === "ACTIONABLE"
-                    ? "bg-card text-foreground shadow-xs border border-border/60"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? "bg-primary text-primary-foreground font-bold shadow-xs border border-primary/80"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/40 font-medium"
                 }`}
               >
-                <Sparkles className="w-3 h-3 text-primary" />
+                <Sparkles className={`w-3 h-3 ${activeTab === "ACTIONABLE" ? "text-primary-foreground" : "text-muted-foreground/70"}`} />
                 <span>Auto-Fixable</span>
                 {actionableCount > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-primary/20 text-primary">
+                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+                    activeTab === "ACTIONABLE"
+                      ? "bg-primary-foreground/20 text-primary-foreground"
+                      : "bg-muted text-muted-foreground"
+                  }`}>
                     {actionableCount}
                   </span>
                 )}

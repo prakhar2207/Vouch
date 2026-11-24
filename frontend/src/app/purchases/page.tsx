@@ -35,7 +35,8 @@ import {
   Check,
   Building2,
   Users,
-  Search
+  Search,
+  Zap
 } from "lucide-react";
 import { offlineDb } from "@/lib/db/offlineDb";
 import { retryFailedVoucher, pullIncrementalChanges } from "@/lib/sync/sync-worker";
@@ -1167,6 +1168,13 @@ function PurchaseInvoiceListContent() {
                         })()}
                       </span>
                       <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                        <Link
+                          href={`/pay/new?invoice_id=${inv.id}&party_id=${inv.party_id || ''}&amount=${inv.outstanding_amount || inv.total_amount || ''}&party_name=${encodeURIComponent(inv.party_name || '')}`}
+                          className="p-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer flex items-center justify-center"
+                          title="Pay via SriLekh Pay"
+                        >
+                          <Zap className="w-4 h-4 fill-current" />
+                        </Link>
                         <button
                           onClick={() => handleOpenVoucherDetail(inv.id)}
                           className="p-2 bg-muted/60 hover:bg-muted text-foreground rounded-lg text-xs font-semibold border border-border/70 transition-colors cursor-pointer"
@@ -1311,6 +1319,15 @@ function PurchaseInvoiceListContent() {
                       {/* Actions */}
                       <td className="p-4 text-right">
                         <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                          <Link
+                            href={`/pay/new?invoice_id=${inv.id}&party_id=${inv.party_id || ''}&amount=${inv.outstanding_amount || inv.total_amount || ''}&party_name=${encodeURIComponent(inv.party_name || '')}`}
+                            className="px-3 py-1.5 bg-emerald-600/15 hover:bg-emerald-600/25 text-emerald-500 rounded-lg text-xs font-semibold border border-emerald-500/30 transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
+                            title="Pay Invoice via SriLekh Pay"
+                          >
+                            <Zap className="w-3.5 h-3.5 fill-current" />
+                            <span>Pay</span>
+                          </Link>
+
                           <button
                             onClick={() => handleOpenVoucherDetail(inv.id)}
                             className="px-3 py-1.5 bg-muted/60 hover:bg-muted text-foreground rounded-lg text-xs font-semibold border border-border transition-colors flex items-center gap-1.5 cursor-pointer min-h-[36px]"
@@ -1617,6 +1634,17 @@ function PurchaseInvoiceListContent() {
                           {/* Actions */}
                           <td className="p-4 text-right">
                             <div className="flex items-center justify-end gap-2">
+                              {isPayable && (
+                                <Link
+                                  href={`/pay/new?party_id=${supplier.id}&amount=${Math.abs(Number(supplier.current_balance || 0))}&party_name=${encodeURIComponent(supplier.name)}`}
+                                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-xs transition-colors flex items-center gap-1.5 min-h-[34px]"
+                                  title="Pay through SriLekh Pay (UPI/NEFT/IMPS)"
+                                >
+                                  <Zap className="w-3.5 h-3.5 fill-current" />
+                                  <span>SriLekh Pay</span>
+                                </Link>
+                              )}
+
                               {isPayable ? (
                                 <Link
                                   href={`/vouchers/new?type=PAYMENT&party=${supplier.id}`}
@@ -1684,6 +1712,15 @@ function PurchaseInvoiceListContent() {
                 <div className="flex items-center gap-2">
                   {selectedVoucher && (
                     <>
+                      <Link
+                        href={`/pay/new?invoice_id=${selectedVoucher.id}&party_id=${selectedVoucher.party?.id || ''}&amount=${selectedVoucher.total_amount || ''}&party_name=${encodeURIComponent(selectedVoucher.party?.name || '')}`}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                        title="Pay Bill through SriLekh Pay"
+                      >
+                        <Zap className="w-3.5 h-3.5 fill-current" />
+                        <span>Pay through SriLekh</span>
+                      </Link>
+
                       <button
                         onClick={() => {
                           handleStartEdit(selectedVoucher);

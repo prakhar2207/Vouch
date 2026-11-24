@@ -844,6 +844,18 @@ class GSTFilingRecord(models.Model):
         ordering = ['-submitted_at']
         indexes = [
             models.Index(fields=['company', 'return_type', 'return_period']),
+            models.Index(fields=['company', 'gst_registration', 'return_type', 'return_period']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['company', 'gst_registration', 'return_type', 'return_period'],
+                name='unique_company_reg_return_identity'
+            ),
+            models.UniqueConstraint(
+                fields=['company', 'return_type', 'return_period'],
+                condition=models.Q(gst_registration__isnull=True),
+                name='unique_company_null_reg_return_identity'
+            ),
         ]
 
     def __str__(self):

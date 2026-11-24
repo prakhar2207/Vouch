@@ -42,6 +42,9 @@ class AccountingIntegrityEngine:
 
         if finding:
             changed = False
+            if finding.category != category:
+                finding.category = category
+                changed = True
             for k, val in defaults.items():
                 if getattr(finding, k) != val:
                     setattr(finding, k, val)

@@ -118,6 +118,7 @@ urlpatterns = [
     path('api/v1/invoices/public/view/', apps.notifications.views.SecureInvoicePublicView.as_view(), name='api_v1_invoice_public_view'),
     path('api/v1/protocol/', include('apps.protocol.urls')),
     path('api/v1/billing/', include('apps.billing.urls')),
+    path('api/v1/payments/', include('apps.payments.urls')),
 
     # Offline-First Batch Sync Endpoints
     path('api/v1/sync/bootstrap/', apps.accounting.sync_views.SyncBootstrapAPIView.as_view(), name='api_sync_bootstrap'),

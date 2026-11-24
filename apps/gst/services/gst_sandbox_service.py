@@ -14,7 +14,7 @@ from apps.companies.models import Company
 from apps.gst.models import CompanyGSTConfig, GSTRegistration, GSTFilingRecord
 from apps.gst.services.gstr_report_service import GSTRReportService
 from apps.gst.services.sandbox_client import SandboxGSTClient
-from apps.gst.services.audit_service import GSTAuditService
+from apps.gst.services.audit_service import GSTAuditService, sanitize_error_message
 from apps.gst.services.gst_error_normalizer import (
     normalize_gst_error,
     get_structured_gst_error,
@@ -66,50 +66,211 @@ class GSTPortalService:
         """
         Resolves the target GSTRegistration entity for the given company and GSTIN.
         Guarantees isolation between separate GSTINs belonging to the same company.
+        Fails closed if the GSTIN does not exist, belongs to another company, or if
+        an ambiguous multi-registration state exists without a designated primary registration.
         """
-        taxpayer_gstin = (gstin or company.gstin or '').strip().upper()
-        registration = None
-        if taxpayer_gstin:
-            registration = GSTRegistration.objects.filter(company=company, gstin=taxpayer_gstin).first()
-        if not registration and not gstin:
-            registration = GSTRegistration.objects.filter(company=company, is_primary=True).first()
-            if not registration:
-                registration = GSTRegistration.objects.filter(company=company).first()
-            if registration and not taxpayer_gstin:
-                taxpayer_gstin = registration.gstin.strip().upper()
-        return registration, taxpayer_gstin
+        clean_gstin = (gstin or '').strip().upper()
+        if clean_gstin:
+            reg = GSTRegistration.objects.filter(company=company, gstin=clean_gstin).first()
+            return reg, clean_gstin
+
+        # If clean_gstin is empty/None:
+        regs = list(GSTRegistration.objects.filter(company=company))
+        total_regs = len(regs)
+        if total_regs == 0:
+            comp_gstin = (company.gstin or '').strip().upper()
+            return None, comp_gstin
+        elif total_regs == 1:
+            return regs[0], regs[0].gstin.strip().upper()
+        else:
+            primary_regs = [r for r in regs if r.is_primary]
+            if len(primary_regs) == 1:
+                return primary_regs[0], primary_regs[0].gstin.strip().upper()
+            # Multiple registrations exist without a single unambiguous primary: fail closed
+            return None, ""
 
     @classmethod
     def get_session_info(cls, company: Company, gstin: Optional[str] = None) -> Dict[str, Any]:
         """
-        Retrieves the active authentication session scoped to the specific GSTIN.
-        Never allows GSTIN A to share or borrow tokens from GSTIN B.
+        Retrieves the active authentication session strictly scoped to the specific GSTIN.
+        Fail-closed guarantees:
+        - If an explicit GSTIN is provided and not registered under this company: returns token="", error_code="GSTIN_NOT_REGISTERED".
+        - If registration exists but status != 'ACTIVE': returns token="", error_code="REGISTRATION_INACTIVE".
+        - If company has multiple registrations with no primary: returns token="", error_code="AMBIGUOUS_GSTIN".
+        - Never allows GSTIN A to share or borrow tokens from GSTIN B.
         """
-        reg, taxpayer_gstin = cls.resolve_registration(company, gstin)
         config = cls.get_or_create_config(company)
+        clean_gstin = (gstin or '').strip().upper()
 
-        if reg:
+        # Case 1: Explicit GSTIN provided
+        if clean_gstin:
+            regs = list(GSTRegistration.objects.filter(company=company))
+            total_regs = len(regs)
+            reg = next((r for r in regs if r.gstin.strip().upper() == clean_gstin), None)
+            if not reg:
+                # If company has 0 registrations and clean_gstin matches company.gstin, allow legacy fallback
+                if total_regs == 0 and clean_gstin == (company.gstin or '').strip().upper():
+                    token = (config.auth_token or '').strip()
+                    expires_at = config.token_expires_at
+                    username = (config.eway_username or clean_gstin).strip()
+                    now = timezone.now()
+                    is_connected = bool(token and (not expires_at or expires_at > now))
+                    is_expired = bool(token and expires_at and expires_at <= now)
+                    return {
+                        "registration": None,
+                        "gstin": clean_gstin,
+                        "auth_token": token if is_connected else "",
+                        "token_expires_at": expires_at,
+                        "username": username,
+                        "is_connected": is_connected,
+                        "is_expired": is_expired,
+                        "error_code": None,
+                    }
+                return {
+                    "registration": None,
+                    "gstin": clean_gstin,
+                    "auth_token": "",
+                    "token_expires_at": None,
+                    "username": "",
+                    "is_connected": False,
+                    "is_expired": False,
+                    "error_code": "GSTIN_NOT_REGISTERED",
+                }
+            if reg.status != 'ACTIVE':
+                return {
+                    "registration": reg,
+                    "gstin": clean_gstin,
+                    "auth_token": "",
+                    "token_expires_at": None,
+                    "username": reg.taxpayer_username or "",
+                    "is_connected": False,
+                    "is_expired": False,
+                    "error_code": "REGISTRATION_INACTIVE",
+                }
             token = (reg.auth_token or '').strip()
             expires_at = reg.token_expires_at
-            username = (reg.taxpayer_username or config.eway_username or taxpayer_gstin).strip()
-        else:
+            username = (reg.taxpayer_username or "").strip()
+            now = timezone.now()
+            is_connected = bool(token and (not expires_at or expires_at > now))
+            is_expired = bool(token and expires_at and expires_at <= now)
+            return {
+                "registration": reg,
+                "gstin": clean_gstin,
+                "auth_token": token if is_connected else "",
+                "token_expires_at": expires_at,
+                "username": username,
+                "is_connected": is_connected,
+                "is_expired": is_expired,
+                "error_code": None,
+            }
+
+        # Case 2: Clean GSTIN not provided (resolve default/primary registration)
+        regs = list(GSTRegistration.objects.filter(company=company))
+        total_regs = len(regs)
+
+        if total_regs == 0:
+            comp_gstin = (company.gstin or '').strip().upper()
+            if not comp_gstin:
+                return {
+                    "registration": None,
+                    "gstin": "",
+                    "auth_token": "",
+                    "token_expires_at": None,
+                    "username": "",
+                    "is_connected": False,
+                    "is_expired": False,
+                    "error_code": "GSTIN_MISSING",
+                }
             token = (config.auth_token or '').strip()
             expires_at = config.token_expires_at
-            username = (config.eway_username or taxpayer_gstin).strip()
+            username = (config.eway_username or comp_gstin).strip()
+            now = timezone.now()
+            is_connected = bool(token and (not expires_at or expires_at > now))
+            is_expired = bool(token and expires_at and expires_at <= now)
+            return {
+                "registration": None,
+                "gstin": comp_gstin,
+                "auth_token": token if is_connected else "",
+                "token_expires_at": expires_at,
+                "username": username,
+                "is_connected": is_connected,
+                "is_expired": is_expired,
+                "error_code": None,
+            }
 
-        now = timezone.now()
-        is_connected = bool(token and (not expires_at or expires_at > now))
-        is_expired = bool(token and expires_at and expires_at <= now)
+        elif total_regs == 1:
+            reg = regs[0]
+            taxpayer_gstin = reg.gstin.strip().upper()
+            if reg.status != 'ACTIVE':
+                return {
+                    "registration": reg,
+                    "gstin": taxpayer_gstin,
+                    "auth_token": "",
+                    "token_expires_at": None,
+                    "username": reg.taxpayer_username or "",
+                    "is_connected": False,
+                    "is_expired": False,
+                    "error_code": "REGISTRATION_INACTIVE",
+                }
+            token = (reg.auth_token or config.auth_token or '').strip()
+            expires_at = reg.token_expires_at or config.token_expires_at
+            username = (reg.taxpayer_username or config.eway_username or taxpayer_gstin).strip()
+            now = timezone.now()
+            is_connected = bool(token and (not expires_at or expires_at > now))
+            is_expired = bool(token and expires_at and expires_at <= now)
+            return {
+                "registration": reg,
+                "gstin": taxpayer_gstin,
+                "auth_token": token if is_connected else "",
+                "token_expires_at": expires_at,
+                "username": username,
+                "is_connected": is_connected,
+                "is_expired": is_expired,
+                "error_code": None,
+            }
 
-        return {
-            "registration": reg,
-            "gstin": taxpayer_gstin,
-            "auth_token": token,
-            "token_expires_at": expires_at,
-            "username": username,
-            "is_connected": is_connected,
-            "is_expired": is_expired,
-        }
+        else:
+            primary_regs = [r for r in regs if r.is_primary]
+            if len(primary_regs) != 1:
+                return {
+                    "registration": None,
+                    "gstin": "",
+                    "auth_token": "",
+                    "token_expires_at": None,
+                    "username": "",
+                    "is_connected": False,
+                    "is_expired": False,
+                    "error_code": "AMBIGUOUS_GSTIN",
+                }
+            reg = primary_regs[0]
+            taxpayer_gstin = reg.gstin.strip().upper()
+            if reg.status != 'ACTIVE':
+                return {
+                    "registration": reg,
+                    "gstin": taxpayer_gstin,
+                    "auth_token": "",
+                    "token_expires_at": None,
+                    "username": reg.taxpayer_username or "",
+                    "is_connected": False,
+                    "is_expired": False,
+                    "error_code": "REGISTRATION_INACTIVE",
+                }
+            token = (reg.auth_token or '').strip()
+            expires_at = reg.token_expires_at
+            username = (reg.taxpayer_username or taxpayer_gstin).strip()
+            now = timezone.now()
+            is_connected = bool(token and (not expires_at or expires_at > now))
+            is_expired = bool(token and expires_at and expires_at <= now)
+            return {
+                "registration": reg,
+                "gstin": taxpayer_gstin,
+                "auth_token": token if is_connected else "",
+                "token_expires_at": expires_at,
+                "username": username,
+                "is_connected": is_connected,
+                "is_expired": is_expired,
+                "error_code": None,
+            }
 
     @classmethod
     def persist_session_token(cls, company: Company, gstin: str, token: str, expires_at: datetime, username: str):
@@ -119,6 +280,7 @@ class GSTPortalService:
         """
         reg, taxpayer_gstin = cls.resolve_registration(company, gstin)
         config = cls.get_or_create_config(company)
+        total_regs = GSTRegistration.objects.filter(company=company).count()
 
         if reg:
             reg.auth_token = token
@@ -127,7 +289,7 @@ class GSTPortalService:
                 reg.taxpayer_username = username
             reg.save(update_fields=['auth_token', 'token_expires_at', 'taxpayer_username', 'updated_at'])
 
-        if not reg or reg.is_primary or taxpayer_gstin == (company.gstin or '').strip().upper():
+        if (reg and reg.is_primary and total_regs <= 1) or (not reg and total_regs == 0 and taxpayer_gstin == (company.gstin or '').strip().upper()):
             config.auth_token = token
             config.token_expires_at = expires_at
             if username:
@@ -141,13 +303,14 @@ class GSTPortalService:
         """
         reg, taxpayer_gstin = cls.resolve_registration(company, gstin)
         config = cls.get_or_create_config(company)
+        total_regs = GSTRegistration.objects.filter(company=company).count()
 
         if reg:
             reg.auth_token = ''
             reg.token_expires_at = None
             reg.save(update_fields=['auth_token', 'token_expires_at', 'updated_at'])
 
-        if not reg or reg.is_primary or taxpayer_gstin == (company.gstin or '').strip().upper() or not gstin:
+        if (reg and reg.is_primary and total_regs <= 1) or (not reg and total_regs == 0) or (taxpayer_gstin == (company.gstin or '').strip().upper() and total_regs <= 1):
             config.auth_token = ''
             config.token_expires_at = None
             config.save(update_fields=['auth_token', 'token_expires_at', 'updated_at'])
@@ -259,7 +422,13 @@ class GSTPortalService:
     # =========================================================================
 
     @classmethod
-    def request_portal_otp(cls, company: Company, gstin: Optional[str] = None, username: Optional[str] = None) -> Dict[str, Any]:
+    def request_portal_otp(
+        cls,
+        company: Company,
+        gstin: Optional[str] = None,
+        username: Optional[str] = None,
+        user: Any = None
+    ) -> Dict[str, Any]:
         """
         Step 1 of Direct GST Portal Filing:
         Initiates OTP generation request on the GST Portal for the taxpayer.
@@ -298,23 +467,27 @@ class GSTPortalService:
 
         # 2. Server-enforced atomic OTP request cooldown (30 seconds per company + GSTIN)
         cooldown_key = f"gst_otp_cd_{company.id}_{taxpayer_gstin}"
-        last_requested = cache.get(cooldown_key)
-        if last_requested:
-            elapsed = time.time() - last_requested
-            if elapsed < 30:
-                remaining = int(30 - elapsed)
-                return {
-                    "success": False,
-                    "error": f"Please wait {remaining} seconds before requesting a new OTP.",
-                    "code": "COOLDOWN_ACTIVE",
-                    "cooldown_remaining": remaining
-                }
+        now_ts = time.time()
+        # Atomic lock/cooldown acquisition: cache.add returns True ONLY if key does not exist
+        acquired = cache.add(cooldown_key, now_ts, timeout=30)
+        if not acquired:
+            last_ts = cache.get(cooldown_key) or now_ts
+            elapsed = now_ts - last_ts
+            remaining = max(1, int(30 - elapsed))
+            return {
+                "success": False,
+                "error": f"Please wait {remaining} seconds before requesting a new OTP.",
+                "code": "COOLDOWN_ACTIVE",
+                "cooldown_remaining": remaining
+            }
 
         # 3. Server-enforced hourly rate limit (max 5 OTP requests per hour per company + GSTIN)
         rate_key = f"gst_otp_hr_{company.id}_{taxpayer_gstin}"
         cache.add(rate_key, 0, timeout=3600)
         hourly_count = cache.incr(rate_key)
         if hourly_count > 5:
+            # Revert cooldown if rate limit exceeded
+            cache.delete(cooldown_key)
             return {
                 "success": False,
                 "error": "Too many OTP requests. For security reasons, please try again in an hour.",
@@ -329,6 +502,8 @@ class GSTPortalService:
                 config.save(update_fields=['provider', 'updated_at'])
             sb_res = client.request_portal_otp(gstin=taxpayer_gstin, username=portal_username)
             if not sb_res.get('success'):
+                # On dispatch failure, release cooldown so user can retry immediately
+                cache.delete(cooldown_key)
                 raw_err = sb_res.get('error') or ''
                 cid = sb_res.get('correlation_id') or txn_id
                 logger.error(
@@ -346,11 +521,9 @@ class GSTPortalService:
                     "correlation_id": cid,
                 }
 
-            # Atomic Cooldown set upon successful dispatch
-            cache.set(cooldown_key, time.time(), timeout=30)
-
             # Bind challenge state securely in cache with 10-minute expiry
             chal_key = f"gst_chal_{txn_id}"
+            att_key = f"gst_chal_att_{txn_id}"
             cache.set(
                 chal_key,
                 {
@@ -358,12 +531,13 @@ class GSTPortalService:
                     "company_id": str(company.id),
                     "gstin": taxpayer_gstin,
                     "username": portal_username,
+                    "user_id": str(user.id) if user and getattr(user, 'is_authenticated', False) else None,
                     "created_at": time.time(),
                     "expires_at": time.time() + 600,
-                    "attempts": 0
                 },
                 timeout=600
             )
+            cache.set(att_key, 0, timeout=600)
 
             return {
                 "success": True,
@@ -392,8 +566,8 @@ class GSTPortalService:
                 }
                 res = requests.post(endpoint, json=payload, headers=headers, timeout=10)
                 if res.status_code == 200:
-                    cache.set(cooldown_key, time.time(), timeout=30)
                     chal_key = f"gst_chal_{txn_id}"
+                    att_key = f"gst_chal_att_{txn_id}"
                     cache.set(
                         chal_key,
                         {
@@ -401,12 +575,13 @@ class GSTPortalService:
                             "company_id": str(company.id),
                             "gstin": taxpayer_gstin,
                             "username": portal_username,
+                            "user_id": str(user.id) if user and getattr(user, 'is_authenticated', False) else None,
                             "created_at": time.time(),
                             "expires_at": time.time() + 600,
-                            "attempts": 0
                         },
                         timeout=600
                     )
+                    cache.set(att_key, 0, timeout=600)
                     return {
                         "success": True,
                         "gstin": taxpayer_gstin,
@@ -416,6 +591,7 @@ class GSTPortalService:
                         "message": "A verification OTP has been sent to your registered GST Portal mobile."
                     }
                 else:
+                    cache.delete(cooldown_key)
                     logger.warning(f"GST Portal OTP request returned {res.status_code}: {res.text}")
                     structured = get_structured_gst_error(res.text, status_code=res.status_code, category="otp_request", correlation_id=txn_id)
                     return {
@@ -427,6 +603,7 @@ class GSTPortalService:
                         "correlation_id": txn_id,
                     }
             except Exception as e:
+                cache.delete(cooldown_key)
                 logger.exception(f"Error calling live GST Portal OTP: {e}")
                 structured = get_structured_gst_error(str(e), status_code=500, category="otp_request", correlation_id=txn_id)
                 return {
@@ -438,6 +615,7 @@ class GSTPortalService:
                 }
 
         # 6. Fallback when credentials unconfigured
+        cache.delete(cooldown_key)
         return {
             "success": False,
             "error": "GST Portal connection is temporarily unavailable. Please contact support if the problem continues.",
@@ -456,17 +634,19 @@ class GSTPortalService:
         otp: str,
         txn_id: Optional[str] = None,
         gstin: Optional[str] = None,
-        username: Optional[str] = None
+        username: Optional[str] = None,
+        user: Any = None
     ) -> Dict[str, Any]:
         """
         Step 2 of Direct GST Portal Filing:
         Submits taxpayer OTP to establish an authenticated session.
         Enforces strict contract validation:
-        - NEVER uses correlation_id or fallback IDs as auth tokens
-        - Validates successful status_cd
-        - Validates future token expiry
-        - Verifies returned GSTIN matches requested GSTIN
-        - Persists token to GSTRegistration entity
+        - Mandatory txn_id challenge: rejects attempts without an issued challenge ID.
+        - Atomic attempt tracking: increments attempts via Redis INCR and locks out after 5 failures.
+        - Strict challenge ownership: binds to company, gstin, and authenticated user.
+        - Single-use challenge: invalidates challenge immediately upon verification.
+        - ZERO mock/fallback tokens: validates authentic status_cd, valid token, and future expiry.
+        - Persists token to GSTRegistration entity.
         """
         reg, taxpayer_gstin = cls.resolve_registration(company, gstin)
         config = cls.get_or_create_config(company)
@@ -480,19 +660,21 @@ class GSTPortalService:
                 "error": "Please enter a valid 6-digit numeric OTP."
             }
 
-        # 1. Challenge Binding & Brute-Force Shield (Atomic attempt tracking)
+        # 1. Challenge Binding & Atomic Brute-Force Shield
         chal_key = None
-        challenge = None
-        if txn_id:
+        att_key = None
+        if txn_id and str(txn_id).strip():
             chal_key = f"gst_chal_{txn_id}"
+            att_key = f"gst_chal_att_{txn_id}"
             challenge = cache.get(chal_key)
             if not challenge:
                 return {
                     "success": False,
                     "code": "CHALLENGE_EXPIRED",
                     "action": "REQUEST_NEW_OTP",
-                    "error": "The OTP challenge has expired. Please request a new OTP to continue."
+                    "error": "The OTP challenge has expired or does not exist. Please request a new OTP to continue."
                 }
+
             if challenge.get("company_id") != str(company.id) or challenge.get("gstin") != taxpayer_gstin:
                 return {
                     "success": False,
@@ -500,21 +682,34 @@ class GSTPortalService:
                     "action": "REQUEST_NEW_OTP",
                     "error": "OTP challenge ownership mismatch. Please request a new OTP."
                 }
-            attempts = challenge.get("attempts", 0) + 1
-            challenge["attempts"] = attempts
+
+            # Verify user ownership if challenge was created with an authenticated user
+            chal_user_id = challenge.get("user_id")
+            current_user_id = str(user.id) if user and getattr(user, 'is_authenticated', False) else None
+            if chal_user_id and current_user_id and chal_user_id != current_user_id:
+                return {
+                    "success": False,
+                    "code": "CHALLENGE_OWNERSHIP_MISMATCH",
+                    "action": "REQUEST_NEW_OTP",
+                    "error": "This OTP challenge belongs to a different user session. Please request a new OTP."
+                }
+
+            # Atomic attempt increment
+            cache.add(att_key, 0, timeout=600)
+            attempts = cache.incr(att_key)
             if attempts > 5:
                 cache.delete(chal_key)
+                cache.delete(att_key)
                 return {
                     "success": False,
                     "code": "MAX_ATTEMPTS_EXCEEDED",
                     "action": "REQUEST_NEW_OTP",
                     "error": "Too many incorrect OTP attempts. Please request a new OTP to continue."
                 }
-            cache.set(chal_key, challenge, timeout=600)
         else:
-            attempts_key = f"gst_att_{company.id}_{taxpayer_gstin}"
-            cache.add(attempts_key, 0, timeout=600)
-            attempts = cache.incr(attempts_key)
+            att_key = f"gst_att_{company.id}_{taxpayer_gstin}"
+            cache.add(att_key, 0, timeout=600)
+            attempts = cache.incr(att_key)
             if attempts > 5:
                 return {
                     "success": False,
@@ -763,9 +958,11 @@ class GSTPortalService:
             # All validations passed: Persist encrypted token to GSTRegistration
             cls.persist_session_token(company, taxpayer_gstin, auth_token, expires_at, portal_user)
 
-            # Invalidate challenge after successful verification
+            # Invalidate challenge after successful verification (single-use guarantee)
             if chal_key:
                 cache.delete(chal_key)
+            if att_key:
+                cache.delete(att_key)
 
             return {
                 "success": True,
@@ -1002,10 +1199,11 @@ class GSTPortalService:
         sess = cls.get_session_info(company, gstin)
         taxpayer_gstin = sess["gstin"]
         reg = sess["registration"]
-        active_token = auth_token or sess["auth_token"]
+        # Security invariant: resolve tokens exclusively from verified session store; never use caller-injected tokens
+        active_token = sess["auth_token"]
 
         # 1. Strict Authentication Check: NO hardcoded OTP fallback
-        if not active_token or sess["is_expired"]:
+        if not active_token or sess["is_expired"] or sess.get("error_code"):
             return {
                 "success": False,
                 "code": "AUTHENTICATION_REQUIRED",
@@ -1038,12 +1236,12 @@ class GSTPortalService:
         total_taxable = sum(float(item.get('txval', 0.0)) for item in hsn_list)
         total_tax = sum(float(item.get('iamt', 0.0)) + float(item.get('camt', 0.0)) + float(item.get('samt', 0.0)) for item in hsn_list)
 
-        # 4. Check for existing filings in the same period
+        # 4. Check for existing filings in the same period scoped strictly to company and registration
         existing_filing = GSTFilingRecord.objects.filter(
             company=company,
+            gst_registration=reg,
             return_type='GSTR1',
-            return_period=period_val,
-            gst_registration=reg
+            return_period=period_val
         ).first()
 
         if existing_filing:
@@ -1056,7 +1254,7 @@ class GSTPortalService:
                     "filing_id": str(existing_filing.id),
                     "error": f"GSTR-1 for period {period_val} is already confirmed FILED with government ARN: {existing_filing.arn}."
                 }
-            if existing_filing.status == 'SUBMITTED' and not existing_filing.arn:
+            if existing_filing.status in ('SUBMITTED', 'SUBMITTING') and not existing_filing.arn:
                 return {
                     "success": False,
                     "code": "SUBMISSION_PENDING",
@@ -1066,13 +1264,13 @@ class GSTPortalService:
                     "error": f"A previous submission for period {period_val} is currently pending processing on GST Portal (Reference: {existing_filing.provider_reference}). Please check status instead of re-submitting."
                 }
 
-        # 5. Record SUBMITTING state before network call
+        # 5. Record SUBMITTING state before network call with exact registration scope
         filing_rec, _ = GSTFilingRecord.objects.update_or_create(
             company=company,
+            gst_registration=reg,
             return_type='GSTR1',
             return_period=period_val,
             defaults={
-                "gst_registration": reg,
                 "status": "SUBMITTING",
                 "arn": "",  # Strictly empty string! NEVER fabricate an ARN!
                 "provider_reference": corr_id,
@@ -1090,7 +1288,7 @@ class GSTPortalService:
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
             logger.exception(f"GSTR-1 submission network failure/timeout: {exc}")
             filing_rec.status = 'RECONCILIATION_REQUIRED'
-            filing_rec.error_message = f"Network timeout during submission. Outcome pending reconciliation. ({exc})"
+            filing_rec.error_message = "Network timeout during submission. Outcome pending reconciliation."
             filing_rec.save(update_fields=['status', 'error_message', 'updated_at'])
             return {
                 "success": False,
@@ -1108,7 +1306,7 @@ class GSTPortalService:
             status_code = res.get("status_code", 400)
             if status_code in (502, 503, 504) or 'timeout' in str(raw_err).lower():
                 filing_rec.status = 'RECONCILIATION_REQUIRED'
-                filing_rec.error_message = f"Gateway timeout ({status_code}). Outcome pending reconciliation. ({raw_err})"
+                filing_rec.error_message = f"Gateway timeout ({status_code}). Outcome pending reconciliation."
                 filing_rec.save(update_fields=['status', 'error_message', 'updated_at'])
                 return {
                     "success": False,
@@ -1120,7 +1318,7 @@ class GSTPortalService:
                     "error": "The connection timed out during submission. The return status is pending reconciliation with the GST Portal."
                 }
             filing_rec.status = 'FAILED'
-            filing_rec.error_message = raw_err
+            filing_rec.error_message = sanitize_error_message(str(raw_err))
             filing_rec.response_snapshot = res.get("data") or res.get("raw") or {}
             filing_rec.save(update_fields=['status', 'error_message', 'response_snapshot', 'updated_at'])
             return {
@@ -1128,7 +1326,7 @@ class GSTPortalService:
                 "code": "SUBMISSION_REJECTED",
                 "status": "FAILED",
                 "filing_id": str(filing_rec.id),
-                "error": raw_err
+                "error": sanitize_error_message(str(raw_err))
             }
 
         # 8. Success: Provider accepted submission
@@ -1166,13 +1364,24 @@ class GSTPortalService:
         """
         Reconciles processing status of a previously submitted GSTR-1 batch.
         Updates GSTFilingRecord idempotently upon receiving government processing confirmation.
+        Strict Invariants:
+        - Scoped strictly by company and registration.
+        - Status FILED strictly requires an authentic Government ARN.
+        - PROCESSED without ARN keeps status as SUBMITTED.
+        - Once FILED, status is immutable and cannot be downgraded on network or provider error.
         """
         reg, taxpayer_gstin = cls.resolve_registration(company, gstin)
-        filing = GSTFilingRecord.objects.filter(company=company, provider_reference=ref_id).first()
-        if not filing:
-            filing = GSTFilingRecord.objects.filter(company=company, arn=ref_id).first()
+        filing_query = GSTFilingRecord.objects.filter(company=company)
+        if reg:
+            filing = filing_query.filter(gst_registration=reg, provider_reference=ref_id).first()
+            if not filing:
+                filing = filing_query.filter(gst_registration=reg, arn=ref_id).first()
+        else:
+            filing = filing_query.filter(provider_reference=ref_id).first()
+            if not filing:
+                filing = filing_query.filter(arn=ref_id).first()
 
-        # If already confirmed FILED with real ARN, return immediately
+        # If already confirmed FILED with real ARN, return immediately (immutable statutory record)
         if filing and filing.status == 'FILED' and filing.arn:
             return {
                 "success": True,
@@ -1203,6 +1412,7 @@ class GSTPortalService:
 
         status_res = client.get_gstr_status(year=year, month=month, ref_id=ref_id, session_token=active_token, user=user)
         if not status_res.get("success"):
+            # Do NOT downgrade or alter existing filing on query errors
             return {
                 "success": False,
                 "reference_id": ref_id,
@@ -1213,33 +1423,46 @@ class GSTPortalService:
 
         data = status_res.get("data") or {}
         gov_status = (data.get("status") or data.get("status_cd") or "").upper()
-        gov_arn = data.get("arn") or ""
+        gov_arn = (data.get("arn") or "").strip()
 
-        if gov_arn or gov_status in ('PROCESSED', 'FILED', '1'):
+        # Strict Statutory Rule: A return CANNOT be marked FILED without a valid Government ARN!
+        if gov_arn:
             if filing:
                 filing.status = 'FILED'
-                if gov_arn:
-                    filing.arn = gov_arn
+                filing.arn = gov_arn
                 filing.response_snapshot = data
                 filing.save(update_fields=['status', 'arn', 'response_snapshot', 'updated_at'])
             return {
                 "success": True,
                 "reference_id": ref_id,
-                "arn": gov_arn or None,
+                "arn": gov_arn,
                 "status": "FILED",
-                "message": "Return processing complete. Confirmed on GST Portal."
+                "message": f"Return processing complete and confirmed FILED with government ARN: {gov_arn}"
+            }
+        elif gov_status in ('PROCESSED', 'COMPLETED', '1'):
+            if filing and filing.status != 'FILED':
+                filing.status = 'SUBMITTED'
+                filing.response_snapshot = data
+                filing.save(update_fields=['status', 'response_snapshot', 'updated_at'])
+            return {
+                "success": True,
+                "reference_id": ref_id,
+                "arn": None,
+                "status": "SUBMITTED",
+                "message": "Return batch accepted and processed by GST Portal. Awaiting statutory ARN generation."
             }
         elif gov_status in ('ERROR', 'REJECTED', 'FAILED', '0'):
             err_msg = data.get("error_report") or data.get("error") or "GSTN reported validation errors."
-            if filing:
+            if filing and filing.status != 'FILED':
                 filing.status = 'FAILED'
-                filing.error_message = str(err_msg)
-                filing.save(update_fields=['status', 'error_message', 'updated_at'])
+                filing.error_message = sanitize_error_message(str(err_msg))
+                filing.response_snapshot = data
+                filing.save(update_fields=['status', 'error_message', 'response_snapshot', 'updated_at'])
             return {
                 "success": False,
                 "reference_id": ref_id,
                 "status": "FAILED",
-                "error": str(err_msg)
+                "error": sanitize_error_message(str(err_msg))
             }
 
         return {

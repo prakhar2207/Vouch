@@ -424,9 +424,12 @@ class GSTRMarkPeriodFiledAPIView(APIView):
         elif len(period) == 6 and period.isdigit():
             candidate_periods.append(f"{period[2:]}-{period[:2]}")
 
+        reg, _ = GSTPortalService.resolve_registration(company, request.data.get('gstin'))
+
         if is_unmark:
             GSTFilingRecord.objects.filter(
                 company=company,
+                gst_registration=reg,
                 return_type=return_type,
                 return_period__in=candidate_periods
             ).update(status='DRAFT')
@@ -448,6 +451,7 @@ class GSTRMarkPeriodFiledAPIView(APIView):
 
         record, _ = GSTFilingRecord.objects.update_or_create(
             company=company,
+            gst_registration=reg,
             return_type=return_type,
             return_period=period,
             defaults={
@@ -509,7 +513,7 @@ class GSTRDirectPortalOTPRequestAPIView(APIView):
         gstin = request.data.get('gstin')
         username = request.data.get('username')
 
-        result = GSTPortalService.request_portal_otp(company, gstin=gstin, username=username)
+        result = GSTPortalService.request_portal_otp(company, gstin=gstin, username=username, user=request.user)
         if not result.get('success'):
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
         return Response(result)
@@ -534,7 +538,8 @@ class GSTRDirectPortalVerifyOTPAPIView(APIView):
             otp=otp,
             txn_id=request.data.get('txn_id'),
             gstin=request.data.get('gstin'),
-            username=request.data.get('username')
+            username=request.data.get('username'),
+            user=request.user
         )
         if not result.get('success'):
             return Response(result, status=400)
@@ -557,15 +562,22 @@ class GSTRDirectPortalUploadGSTR1APIView(APIView):
             return Response({"success": False, "error": "company_id, start_date, and end_date are required."}, status=400)
 
         company = get_company_or_404(request.user, company_id)
-        auth_token = request.data.get('auth_token')
         gstin = request.data.get('gstin')
+
+        if gstin:
+            clean_gstin = str(gstin).strip().upper()
+            if not GSTRegistration.objects.filter(company=company, gstin=clean_gstin).exists() and clean_gstin != (company.gstin or '').strip().upper():
+                return Response({
+                    "success": False,
+                    "code": "GSTIN_NOT_REGISTERED",
+                    "error": f"GSTIN '{clean_gstin}' is not registered under this company."
+                }, status=status.HTTP_400_BAD_REQUEST)
 
         result = GSTPortalService.upload_gstr1_direct(
             company=company,
             start_date=start_date,
             end_date=end_date,
             gstin=gstin,
-            auth_token=auth_token,
             user=request.user
         )
         status_code = status.HTTP_200_OK if result.get('success') else status.HTTP_400_BAD_REQUEST

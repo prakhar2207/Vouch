@@ -93,6 +93,7 @@ INSTALLED_APPS = [
     'apps.superadmin',
     'apps.common',
     'apps.billing',
+    'apps.payments',
 ]
 
 AUTH_USER_MODEL = 'accounts.User'
