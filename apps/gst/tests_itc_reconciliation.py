@@ -15,6 +15,8 @@ from apps.gst.models import CompanyGSTConfig, GSTR2BImport, GSTR2BRecord
 from apps.gst.services.itc_reconciliation_service import ITCReconciliationService
 from apps.gst.services.itc_notification_service import ITCNotificationService
 from apps.gst.services.reconciliation_service import GSTReconciliationService
+from apps.gst.services.period_service import GSTPeriodService
+from rest_framework.exceptions import ValidationError
 
 User = get_user_model()
 
@@ -405,3 +407,208 @@ class ITCReconciliationTests(TestCase):
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         self.assertTrue(res.data['success'])
         mock_range_sync.assert_called_once()
+
+    def test_period_service_canonical_parsing_and_range(self):
+        # 1. MMYYYY format
+        p1 = GSTPeriodService.parse_return_period("042026")
+        self.assertEqual(p1.normalized_period, "042026")
+        self.assertEqual(p1.month, "04")
+        self.assertEqual(p1.year, "2026")
+        self.assertEqual(p1.financial_year, "2026-27")
+
+        # 2. DDMMYYYY format
+        p2 = GSTPeriodService.parse_return_period("01042026")
+        self.assertEqual(p2.normalized_period, "042026")
+
+        # 3. YYYY-MM format
+        p3 = GSTPeriodService.parse_return_period("2026-05")
+        self.assertEqual(p3.normalized_period, "052026")
+
+        # 4. MM-YYYY format
+        p4 = GSTPeriodService.parse_return_period("06-2026")
+        self.assertEqual(p4.normalized_period, "062026")
+
+        # 5. Invalid format raises ValidationError
+        with self.assertRaises(ValidationError):
+            GSTPeriodService.parse_return_period("invalid")
+
+        # 6. Invalid month raises ValidationError
+        with self.assertRaises(ValidationError):
+            GSTPeriodService.parse_return_period("132026")
+
+        # 7. Range expansion April to October gives 7 months
+        periods = GSTPeriodService.generate_period_range("042026", "102026")
+        self.assertEqual(periods, ["042026", "052026", "062026", "072026", "082026", "092026", "102026"])
+
+        # 8. Reversed range raises ValidationError
+        with self.assertRaises(ValidationError):
+            GSTPeriodService.generate_period_range("102026", "042026")
+
+    def test_idempotent_ingestion_no_duplicate_records(self):
+        sample_gstr2b = {
+            "gstin": "07AAAAA9999A1Z9",
+            "fp": "082026",
+            "data": {
+                "b2b": [
+                    {
+                        "ctin": "07STEEL8888S1Z8",
+                        "trdnm": "Steel Tubes & Alloys Ltd",
+                        "inv": [
+                            {
+                                "inum": "INV/2026/088",
+                                "dt": "10-08-2026",
+                                "val": 11800.0,
+                                "pos": "07",
+                                "rev": "N",
+                                "itcavl": "Y",
+                                "items": [
+                                    {
+                                        "itmdet": {
+                                            "txval": 10000.0,
+                                            "rt": 18.0,
+                                            "iamt": 0.0,
+                                            "camt": 900.0,
+                                            "samt": 900.0,
+                                            "csamt": 0.0
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+
+        # First ingestion
+        batch1 = ITCReconciliationService.ingest_gstr2b_json(
+            company=self.company,
+            json_data=sample_gstr2b,
+            user=self.user,
+            return_period="082026"
+        )
+        self.assertEqual(batch1.records_created, 1)
+        self.assertEqual(GSTR2BRecord.objects.filter(company=self.company, return_period="082026").count(), 1)
+
+        # Second ingestion with the same payload (idempotent retry)
+        batch2 = ITCReconciliationService.ingest_gstr2b_json(
+            company=self.company,
+            json_data=sample_gstr2b,
+            user=self.user,
+            return_period="082026"
+        )
+        self.assertEqual(batch2.records_created, 0)
+        self.assertEqual(batch2.records_unchanged, 1)
+        # Total records in DB must still be exactly 1, no duplicate rows created!
+        self.assertEqual(GSTR2BRecord.objects.filter(company=self.company, return_period="082026").count(), 1)
+
+    def test_manual_review_preserved_on_reingestion(self):
+        sample_gstr2b = {
+            "gstin": "07AAAAA9999A1Z9",
+            "fp": "082026",
+            "data": {
+                "b2b": [
+                    {
+                        "ctin": "07STEEL8888S1Z8",
+                        "trdnm": "Steel Tubes & Alloys Ltd",
+                        "inv": [
+                            {
+                                "inum": "INV/2026/088",
+                                "dt": "10-08-2026",
+                                "val": 11800.0,
+                                "pos": "07",
+                                "rev": "N",
+                                "itcavl": "Y",
+                                "items": [{"itmdet": {"txval": 10000.0, "rt": 18.0, "iamt": 0.0, "camt": 900.0, "samt": 900.0, "csamt": 0.0}}]
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+
+        ITCReconciliationService.ingest_gstr2b_json(
+            company=self.company,
+            json_data=sample_gstr2b,
+            user=self.user,
+            return_period="082026"
+        )
+        rec = GSTR2BRecord.objects.get(company=self.company, return_period="082026")
+        rec.is_reviewed = True
+        rec.review_notes = "Reviewed by compliance lead: vendor verified"
+        rec.save()
+
+        # Re-ingest
+        ITCReconciliationService.ingest_gstr2b_json(
+            company=self.company,
+            json_data=sample_gstr2b,
+            user=self.user,
+            return_period="082026"
+        )
+        rec.refresh_from_db()
+        self.assertTrue(rec.is_reviewed)
+        self.assertEqual(rec.review_notes, "Reviewed by compliance lead: vendor verified")
+
+    def test_period_isolated_reconciliation_future_vouchers_untouched(self):
+        # Create a purchase voucher dated in SEPTEMBER 2026
+        sept_voucher = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/26-27/099-SEPT',
+            external_invoice_number='INV/2026/SEPT-01',
+            voucher_date=date(2026, 9, 15),
+            party_ledger=self.vendor_ledger,
+            total_amount=Decimal('5900.00'),
+            created_by=self.user,
+            status='POSTED',
+            itc_match_status='UNCHECKED'
+        )
+
+        # Reconcile AUGUST 2026
+        ITCReconciliationService.reconcile_period(
+            company=self.company,
+            return_period="082026"
+        )
+
+        # September voucher must remain UNCHECKED, NOT falsely marked as MISSING_IN_2B
+        sept_voucher.refresh_from_db()
+        self.assertEqual(sept_voucher.itc_match_status, 'UNCHECKED')
+
+    @patch('apps.gst.services.reconciliation_service.GSTReconciliationService.fetch_and_ingest_from_sandbox')
+    def test_multi_period_partial_success_contract(self, mock_single_fetch):
+        # Simulate QRMP behavior: June and Sept succeed, other months fail with FORM_NOT_APPLICABLE
+        def fetch_side_effect(company, return_period, **kwargs):
+            if return_period in ("062026", "092026"):
+                return {
+                    "success": True,
+                    "status": "SUCCESS",
+                    "invoices_ingested": 5,
+                    "invoices_reconciled": 5,
+                    "return_period": return_period
+                }
+            else:
+                return {
+                    "success": False,
+                    "status": "FAILED",
+                    "error_code": "FORM_NOT_APPLICABLE",
+                    "error": f"GSTR2B form is not applicable for return period {return_period} (QRMP scheme).",
+                    "return_period": return_period
+                }
+
+        mock_single_fetch.side_effect = fetch_side_effect
+
+        res = GSTReconciliationService.fetch_and_ingest_range(
+            company=self.company,
+            from_period="042026",
+            to_period="102026",
+            user=self.user
+        )
+
+        self.assertEqual(res['status'], 'PARTIAL_SUCCESS')
+        self.assertFalse(res['success'])  # Critical: never return overall SUCCESS when periods failed
+        self.assertEqual(res['periods_synced'], ["062026", "092026"])
+        self.assertEqual(len(res['periods_failed']), 5)
+        self.assertIn("042026", res['periods_failed'])
+        self.assertEqual(len(res['period_results']), 7)
+        self.assertIn("failed or not applicable", res['error'])
+        self.assertIn("GSTR2B form is not applicable", res['failed_periods_details'][0]['error'])

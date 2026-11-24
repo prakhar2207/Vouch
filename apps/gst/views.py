@@ -1184,6 +1184,7 @@ class GSTR2BSyncFromSandboxAPIView(APIView):
     POST /api/v1/gst/reconciliation/gstr2b/sync/<uuid:company_id>/
     Fetches GSTR-2B data directly from Sandbox and executes reconciliation.
     Supports single period, list of periods, or from_period / to_period range.
+    Enforces tenant isolation, multi-GSTIN validation, and structured outcome contracts.
     """
     permission_classes = [IsAuthenticated, CanReconcileGST]
 
@@ -1199,6 +1200,18 @@ class GSTR2BSyncFromSandboxAPIView(APIView):
             registration = None
             if reg_id:
                 registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
+                if not registration:
+                    return Response({
+                        "status": "VALIDATION_ERROR",
+                        "success": False,
+                        "error": f"GST Registration '{reg_id}' was not found for this company."
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                if registration.status != 'ACTIVE':
+                    return Response({
+                        "status": "VALIDATION_ERROR",
+                        "success": False,
+                        "error": f"GST Registration '{registration.gstin}' is inactive."
+                    }, status=status.HTTP_400_BAD_REQUEST)
 
             if periods or (from_period and to_period):
                 res = GSTReconciliationService.fetch_and_ingest_range(
@@ -1217,12 +1230,25 @@ class GSTR2BSyncFromSandboxAPIView(APIView):
                     user=request.user
                 )
 
-            status_code = 200 if res.get("success") else 400
+            # Return 200 for SUCCESS or PARTIAL_SUCCESS so client receives the full period-wise breakdown
+            # Return 400 for VALIDATION_ERROR or FAILED
+            st = res.get("status")
+            if st in ["SUCCESS", "PARTIAL_SUCCESS"] or (st is None and res.get("success")):
+                status_code = status.HTTP_200_OK
+            elif st == "AUTHENTICATION_REQUIRED":
+                status_code = status.HTTP_401_UNAUTHORIZED
+            else:
+                status_code = status.HTTP_400_BAD_REQUEST
+
             return Response(res, status=status_code)
         except Exception as e:
             import logging
             logging.getLogger(__name__).exception(f"GSTR-2B sync failed for company {company_id}: {e}")
-            return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({
+                "status": "RECONCILIATION_ERROR",
+                "success": False,
+                "error": str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
 
 
 class GSTR2BReviewRecordAPIView(APIView):

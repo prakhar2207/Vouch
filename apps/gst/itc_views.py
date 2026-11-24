@@ -14,7 +14,8 @@ from rest_framework.exceptions import PermissionDenied, NotFound
 from apps.companies.models import Company
 from apps.accounting.models import Voucher
 from apps.accounts.permissions import get_authorized_company, user_has_company_roles, CanViewGST, CanReconcileGST
-from apps.gst.models import GSTR2BImport, GSTR2BRecord
+from apps.gst.models import GSTR2BImport, GSTR2BRecord, GSTRegistration
+from apps.gst.services.period_service import GSTPeriodService
 import io
 from apps.accounting.services.upload_security import (
     MAX_IMPORT_FILE_SIZE,
@@ -126,6 +127,7 @@ class ITCReconciliationListView(APIView):
     """
     Returns reconciled invoice items with filtering by status:
     ALL, MATCHED, MISMATCHED, MISSING_IN_2B, MISSING_IN_BOOKS.
+    Supports multi-GSTIN registration isolation and canonical period filtering.
     """
     permission_classes = [IsAuthenticated, CanViewGST]
 
@@ -134,7 +136,14 @@ class ITCReconciliationListView(APIView):
 
         filter_status = request.query_params.get('status', 'ALL').upper()
         return_period = request.query_params.get('return_period')
+        reg_id = request.query_params.get('registration_id')
         search_query = request.query_params.get('search', '').strip().lower()
+
+        registration = None
+        if reg_id:
+            registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
+            if not registration:
+                return Response({'error': f"GST Registration '{reg_id}' not found."}, status=status.HTTP_400_BAD_REQUEST)
 
         results = []
 
@@ -145,15 +154,14 @@ class ITCReconciliationListView(APIView):
             status__in=['POSTED', 'VALIDATING']
         ).select_related('party_ledger').prefetch_related('items', 'gstr2b_matches').defer('attachment_data', 'attachment_mime')
 
-        if return_period:
-            if len(return_period) == 6 and return_period.isdigit():
-                m = int(return_period[:2])
-                y = int(return_period[2:])
-                vouchers = vouchers.filter(voucher_date__year=y, voucher_date__month=m)
-            elif '-' in return_period:
-                parts = return_period.split('-')
-                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-                    vouchers = vouchers.filter(voucher_date__year=int(parts[0]), voucher_date__month=int(parts[1]))
+        norm_period = None
+        if return_period and return_period != 'ALL':
+            try:
+                p_info = GSTPeriodService.parse_return_period(return_period)
+                norm_period = p_info.normalized_period
+                vouchers = vouchers.filter(voucher_date__year=p_info.year_int, voucher_date__month=p_info.month_int)
+            except Exception:
+                pass
 
         today = timezone.now().date()
         current_fy_start_year = today.year if today.month >= 4 else today.year - 1
@@ -183,7 +191,8 @@ class ITCReconciliationListView(APIView):
             b_cgst = sum(i.cgst_amount for i in v.items.all())
             b_sgst = sum(i.sgst_amount for i in v.items.all())
             b_igst = sum(i.igst_amount for i in v.items.all())
-            b_total_tax = b_cgst + b_sgst + b_igst
+            b_cess = sum(getattr(i, 'cess_amount', 0) for i in v.items.all())
+            b_total_tax = b_cgst + b_sgst + b_igst + b_cess
 
             supplier_name = v.party_ledger.name if v.party_ledger else (v.buyer_name or 'Unknown')
             supplier_gstin = (v.party_ledger.gstin if v.party_ledger and v.party_ledger.gstin else (v.buyer_gstin or '')).upper()
@@ -202,7 +211,7 @@ class ITCReconciliationListView(APIView):
                     'invoice_number': matched_rec.invoice_number,
                     'invoice_date': matched_rec.invoice_date.isoformat(),
                     'taxable_value': float(matched_rec.taxable_value),
-                    'total_tax': float(matched_rec.cgst_amount + matched_rec.sgst_amount + matched_rec.igst_amount),
+                    'total_tax': float(matched_rec.cgst_amount + matched_rec.sgst_amount + matched_rec.igst_amount + matched_rec.cess_amount),
                     'cgst': float(matched_rec.cgst_amount),
                     'sgst': float(matched_rec.sgst_amount),
                     'igst': float(matched_rec.igst_amount),
@@ -221,7 +230,7 @@ class ITCReconciliationListView(APIView):
                 'books_tax': float(b_total_tax),
                 'books_total': float(v.total_amount),
                 'itc_match_status': eff_status,
-                'itc_held_amount': float(v.itc_held_amount),
+                'itc_held_amount': float(v.itc_held_amount or 0),
                 'itc_notes': v.itc_notes,
                 'gstr2b_record': g2b_data
             })
@@ -232,8 +241,11 @@ class ITCReconciliationListView(APIView):
                 company=company,
                 match_status='MISSING_IN_BOOKS'
             )
-            if return_period:
-                rec_qs = rec_qs.filter(import_batch__return_period=return_period)
+            if norm_period:
+                rec_qs = rec_qs.filter(return_period=norm_period)
+            if registration:
+                from django.db.models import Q
+                rec_qs = rec_qs.filter(Q(gst_registration=registration) | Q(gst_registration__isnull=True))
 
             for rec in rec_qs:
                 if search_query:
@@ -241,7 +253,7 @@ class ITCReconciliationListView(APIView):
                     if q not in rec.supplier_name.lower() and q not in rec.supplier_gstin.lower() and q not in rec.invoice_number.lower():
                         continue
 
-                rec_total_tax = rec.cgst_amount + rec.sgst_amount + rec.igst_amount
+                rec_total_tax = rec.cgst_amount + rec.sgst_amount + rec.igst_amount + rec.cess_amount
                 results.append({
                     'source': 'GSTR2B',
                     'voucher_id': None,
@@ -340,6 +352,7 @@ class ITCVendorNoticeView(APIView):
 class ITCSummaryView(APIView):
     """
     Provides aggregated risk stats: ITC at risk, Safe ITC, Held amounts, Section 16(4) counts.
+    Supports multi-GSTIN registration isolation.
     """
     permission_classes = [IsAuthenticated, CanViewGST]
 
@@ -347,8 +360,16 @@ class ITCSummaryView(APIView):
         company = get_authorized_company(request)
 
         period = request.query_params.get('return_period')
-        stats = ITCReconciliationService.get_summary_stats(company, return_period=period)
-        radar = ITCReconciliationService.get_sec16_4_expiry_radar(company)
+        reg_id = request.query_params.get('registration_id')
+
+        registration = None
+        if reg_id:
+            registration = GSTRegistration.objects.filter(id=reg_id, company=company).first()
+            if not registration:
+                return Response({'error': f"GST Registration '{reg_id}' not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+        stats = ITCReconciliationService.get_summary_stats(company, return_period=period, registration=registration)
+        radar = ITCReconciliationService.get_sec16_4_expiry_radar(company, registration=registration)
 
         return Response({
             'summary': stats,

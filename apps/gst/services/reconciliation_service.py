@@ -3,14 +3,24 @@ import logging
 from collections import defaultdict
 from decimal import Decimal
 from datetime import date, datetime, timedelta
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Set
 from django.db import transaction
 from django.utils import timezone
+from django.db.models import Q
+from rest_framework.exceptions import ValidationError
+
 from apps.companies.models import Company
 from apps.accounting.models import Voucher, VoucherItem
 from apps.accounting.services.effective_voucher_service import EffectiveVoucherService
-from apps.gst.models import CompanyGSTConfig, GSTRegistration, GSTR2BImport, GSTR2BRecord
+from apps.gst.models import (
+    CompanyGSTConfig,
+    GSTRegistration,
+    GSTR2BImport,
+    GSTR2BRecord,
+    GSTR2BSyncAttempt
+)
 from apps.gst.services.sandbox_client import SandboxGSTClient
+from apps.gst.services.period_service import GSTPeriodService, PeriodInfo
 
 logger = logging.getLogger('apps.gst.reconciliation_service')
 
@@ -25,10 +35,11 @@ def quantize_amount(val: Any) -> Decimal:
 class GSTReconciliationService:
     """
     Comprehensive 11-Category GSTR-2B vs Purchase Register Reconciliation Engine.
-    INVARIANT: ZERO alteration of purchase vouchers or accounting ledger balances.
+    Provides idempotent synchronization, period-isolated reconciliation,
+    and structured outcome contracts.
     """
 
-    TOLERANCE = Decimal('1.00')
+    TOLERANCE = Decimal('2.00')
 
     @classmethod
     def normalize_invoice_number(cls, num_str: str) -> str:
@@ -52,59 +63,24 @@ class GSTReconciliationService:
         user: Any = None
     ) -> Dict[str, Any]:
         """
-        Fetches GSTR-2B statement directly from Sandbox by Quicko:
+        Fetches GSTR-2B statement directly from Sandbox by Quicko for a single return period:
         GET /gst/compliance/tax-payer/gstrs/gstr-2b/{year}/{month}
-        And ingests the records into GSTR2BImport and GSTR2BRecord.
-        Supports MMYYYY (082026), DDMMYYYY (01082026), and YYYY-MM (2026-08).
+        And idempotently ingests the records into GSTR2BImport and GSTR2BRecord.
         """
-        # Parse return_period (e.g. "082026", "01082026", "2026-08", "2026/08") into year and month
-        raw_period = str(return_period or '').strip()
-        if '-' in raw_period or '/' in raw_period:
-            sep = '-' if '-' in raw_period else '/'
-            parts = raw_period.split(sep)
-            if len(parts) == 2:
-                if len(parts[0]) == 4:  # YYYY-MM
-                    year = parts[0]
-                    month = parts[1].zfill(2)
-                else:  # MM-YYYY
-                    month = parts[0].zfill(2)
-                    year = parts[1]
-                norm_period = f"{month}{year}"
-            elif len(parts) == 3:  # DD-MM-YYYY
-                month = parts[1].zfill(2)
-                year = parts[2]
-                norm_period = f"{month}{year}"
-            else:
-                p = raw_period.replace('-', '').replace('/', '')
-                month = p[:2]
-                year = p[2:]
-                norm_period = f"{month}{year}"
-        else:
-            p = raw_period.replace('-', '').replace('/', '')
-            if len(p) == 8:
-                # DDMMYYYY format, e.g. 01042026 -> month=04, year=2026
-                month = p[2:4]
-                year = p[4:]
-                norm_period = f"{month}{year}"
-            elif len(p) == 6:
-                # Distinguish YYYYMM (e.g. 202605) vs MMYYYY (e.g. 052026)
-                if p[:4].isdigit() and int(p[:4]) >= 2015:
-                    year = p[:4]
-                    month = p[4:].zfill(2)
-                    norm_period = f"{month}{year}"
-                else:
-                    month = p[:2]
-                    year = p[2:]
-                    norm_period = p
-            else:
-                now = timezone.now()
-                prev_month = now.month - 1 if now.month > 1 else 12
-                prev_year = now.year if now.month > 1 else now.year - 1
-                month = str(prev_month).zfill(2)
-                year = str(prev_year)
-                norm_period = f"{month}{year}"
+        if not return_period:
+            raise ValidationError("Return period is required for GSTR-2B synchronization.")
 
-        if not registration:
+        period_info = GSTPeriodService.parse_return_period(return_period)
+        norm_period = period_info.normalized_period
+        month = period_info.month
+        year = period_info.year
+
+        if registration is not None and isinstance(registration, GSTRegistration):
+            if registration.company_id != company.id:
+                raise ValidationError("GST Registration does not belong to this company.")
+            if registration.status != 'ACTIVE':
+                raise ValidationError(f"GST Registration {registration.gstin} is inactive.")
+        else:
             registration = (
                 GSTRegistration.objects.filter(company=company, is_primary=True, status='ACTIVE').first()
                 or GSTRegistration.objects.filter(company=company, status='ACTIVE').first()
@@ -120,36 +96,65 @@ class GSTReconciliationService:
         if not client.is_configured():
             return {
                 "success": False,
-                "error": "Sandbox GST API is not configured. Please supply API credentials in settings or company configuration."
+                "status": "PROVIDER_ERROR",
+                "error_category": "CONFIGURATION_MISSING",
+                "error": "Sandbox GST API is not configured. Please supply API credentials in settings.",
+                "return_period": norm_period,
+                "period_label": period_info.period_label
             }
 
         if not session_token:
             return {
                 "success": False,
-                "error": "No active GST Portal session found. Please connect your GST Portal under Settings > Government GST Portal Integration first."
+                "status": "AUTHENTICATION_REQUIRED",
+                "error_category": "SESSION_EXPIRED",
+                "error": "No active GST Portal session found. Please connect your GST Portal under Settings > Government GST Portal Integration first.",
+                "return_period": norm_period,
+                "period_label": period_info.period_label
             }
 
+        # Bounded external API call
         res = client.fetch_gstr2b(year=year, month=month, session_token=session_token, user=user)
         if not res.get("success"):
-            return res
+            raw_err = res.get("error") or "Failed to fetch GSTR-2B from GST Portal."
+            err_cat = "PROVIDER_ERROR"
+            err_msg = raw_err
+
+            if "not applicable" in raw_err.lower():
+                err_cat = "FORM_NOT_APPLICABLE"
+                err_msg = (
+                    f"GSTR-2B form is not applicable for {period_info.period_label}. "
+                    "This occurs if your business is registered under QRMP (Quarterly scheme, where GSTR-2B is generated "
+                    "only for quarter-end months: June, September, December, March) or if preceding returns are pending on the GST Portal."
+                )
+            elif "session" in raw_err.lower() or "token" in raw_err.lower() or "auth" in raw_err.lower() or "otp" in raw_err.lower():
+                err_cat = "AUTHENTICATION_REQUIRED"
+
+            return {
+                "success": False,
+                "status": "PROVIDER_ERROR",
+                "error_category": err_cat,
+                "error": err_msg,
+                "return_period": norm_period,
+                "period_label": period_info.period_label,
+                "provider_response": res
+            }
 
         data = res.get("data") or {}
-        # Ingest the JSON payload into GSTR2BImport
+
+        # Ingest idempotently into GSTR2BImport and GSTR2BRecord
         from apps.gst.services.itc_reconciliation_service import ITCReconciliationService
         import_batch = ITCReconciliationService.ingest_gstr2b_json(
             company=company,
             json_data=data,
             user=user,
             file_name=f"sandbox_gstr2b_{norm_period}.json",
-            return_period=norm_period
+            return_period=norm_period,
+            registration=registration,
+            source_info='SANDBOX_API'
         )
 
-        if registration:
-            import_batch.gst_registration = registration
-            import_batch.save(update_fields=['gst_registration'])
-            import_batch.records.update(gst_registration=registration)
-
-        # Execute reconciliation
+        # Run period-isolated 11-category reconciliation
         rec_summary = cls.reconcile_period(
             company=company,
             registration=registration,
@@ -158,9 +163,15 @@ class GSTReconciliationService:
 
         return {
             "success": True,
+            "status": "SUCCESS",
             "import_batch_id": str(import_batch.id),
             "return_period": norm_period,
+            "period_label": period_info.period_label,
+            "provider_records_count": import_batch.provider_records_count,
             "total_invoices_ingested": import_batch.total_invoices_count,
+            "records_created": import_batch.records_created,
+            "records_updated": import_batch.records_updated,
+            "records_unchanged": import_batch.records_unchanged,
             "reconciliation_summary": rec_summary
         }
 
@@ -176,71 +187,163 @@ class GSTReconciliationService:
     ) -> Dict[str, Any]:
         """
         Fetches and ingests GSTR-2B statements across multiple return periods (e.g. April to October).
-        Runs a consolidated reconciliation at the end.
+        Maintains complete period isolation, records GSTR2BSyncAttempt, and provides explicit
+        partial-success reporting conforming to enterprise API contracts.
         """
-        resolved_periods = []
-        if periods and isinstance(periods, list):
-            for p in periods:
-                clean_p = str(p or '').strip().replace('-', '').replace('/', '')
-                if len(clean_p) == 8:
-                    clean_p = clean_p[2:]
-                if clean_p and clean_p not in resolved_periods:
-                    resolved_periods.append(clean_p)
-        elif from_period and to_period:
-            fp = str(from_period).strip().replace('-', '').replace('/', '')
-            tp = str(to_period).strip().replace('-', '').replace('/', '')
-            if len(fp) == 8:
-                fp = fp[2:]
-            if len(tp) == 8:
-                tp = tp[2:]
-            if len(fp) == 6 and len(tp) == 6:
-                fm, fy = int(fp[:2]), int(fp[2:])
-                tm, ty = int(tp[:2]), int(tp[2:])
-                cur_m, cur_y = fm, fy
-                while (cur_y < ty) or (cur_y == ty and cur_m <= tm):
-                    resolved_periods.append(f"{str(cur_m).zfill(2)}{cur_y}")
-                    cur_m += 1
-                    if cur_m > 12:
-                        cur_m = 1
-                        cur_y += 1
+        period_infos = GSTPeriodService.resolve_period_range(
+            from_period=from_period,
+            to_period=to_period,
+            periods=periods
+        )
 
-        if not resolved_periods:
+        if not period_infos:
             return {
+                "status": "VALIDATION_ERROR",
                 "success": False,
-                "error": "No valid return periods specified for multi-period sync."
+                "message": "No valid return periods specified for multi-period sync.",
+                "periods_requested": [],
+                "periods_synced": [],
+                "periods_failed": [],
+                "total_periods": 0,
+                "successful_periods_count": 0,
+                "failed_periods_count": 0
             }
 
-        results = []
-        total_ingested = 0
+        if registration is not None and isinstance(registration, GSTRegistration):
+            if registration.company_id != company.id:
+                raise ValidationError("GST Registration does not belong to this company.")
+
+        range_key = f"{period_infos[0].normalized_period}-{period_infos[-1].normalized_period}"
+        sync_attempt = GSTR2BSyncAttempt.objects.create(
+            company=company,
+            gst_registration=registration,
+            return_period=range_key,
+            status='IN_PROGRESS',
+            initiated_by=user
+        )
+
+        requested_period_strings = [p.normalized_period for p in period_infos]
+        period_results = []
         success_periods = []
         failed_periods = []
 
-        for p in resolved_periods:
-            res = cls.fetch_and_ingest_from_sandbox(
+        total_provider_records = 0
+        total_unique_invoices = 0
+        records_created_total = 0
+        records_updated_total = 0
+        records_unchanged_total = 0
+
+        # Execute each period fetch independently
+        for p_info in period_infos:
+            p_str = p_info.normalized_period
+            single_res = cls.fetch_and_ingest_from_sandbox(
                 company=company,
                 registration=registration,
-                return_period=p,
+                return_period=p_str,
                 user=user
             )
-            results.append({"period": p, "result": res})
-            if res.get("success"):
-                success_periods.append(p)
-                total_ingested += res.get("total_invoices_ingested", 0)
-            else:
-                failed_periods.append({"period": p, "error": res.get("error")})
 
-        # Run final overall reconciliation across all records for the company
+            if single_res.get("success"):
+                success_periods.append(p_str)
+                invoices_ingested = single_res.get("total_invoices_ingested", 0)
+                total_unique_invoices += invoices_ingested
+                total_provider_records += single_res.get("provider_records_count", 0)
+                records_created_total += single_res.get("records_created", 0)
+                records_updated_total += single_res.get("records_updated", 0)
+                records_unchanged_total += single_res.get("records_unchanged", 0)
+
+                period_results.append({
+                    "period": p_str,
+                    "period_label": p_info.period_label,
+                    "fetch_status": "SUCCESS",
+                    "ingestion_status": "SUCCESS",
+                    "reconciliation_status": "SUCCESS",
+                    "invoice_count": invoices_ingested,
+                    "records_created": single_res.get("records_created", 0),
+                    "records_updated": single_res.get("records_updated", 0),
+                    "records_unchanged": single_res.get("records_unchanged", 0),
+                    "error_category": None,
+                    "error_message": None
+                })
+            else:
+                err_msg = single_res.get("error") or "Failed to sync return period."
+                err_cat = single_res.get("error_category") or "PROVIDER_ERROR"
+                failed_periods.append({
+                    "period": p_str,
+                    "period_label": p_info.period_label,
+                    "error": err_msg,
+                    "error_category": err_cat
+                })
+                period_results.append({
+                    "period": p_str,
+                    "period_label": p_info.period_label,
+                    "fetch_status": "FAILED",
+                    "ingestion_status": "SKIPPED",
+                    "reconciliation_status": "SKIPPED",
+                    "invoice_count": 0,
+                    "records_created": 0,
+                    "records_updated": 0,
+                    "records_unchanged": 0,
+                    "error_category": err_cat,
+                    "error_message": err_msg
+                })
+
+        # Run consolidated reconciliation across all requested periods
         rec_summary = cls.reconcile_period(
             company=company,
-            registration=registration
+            registration=registration,
+            periods=requested_period_strings,
+            start_date=period_infos[0].start_date,
+            end_date=period_infos[-1].end_date
         )
 
+        # Determine overall outcome status
+        total_p = len(period_infos)
+        success_p = len(success_periods)
+        failed_p = len(failed_periods)
+
+        if success_p == total_p:
+            overall_status = "SUCCESS"
+            overall_success = True
+            msg = f"All {total_p} return periods synchronized and reconciled successfully ({total_unique_invoices} invoices)."
+        elif success_p > 0:
+            overall_status = "PARTIAL_SUCCESS"
+            overall_success = False  # Critical: never return overall SUCCESS when periods failed
+            msg = f"Synced {success_p} of {total_p} return periods ({failed_p} failed or not applicable). Reconciled {total_unique_invoices} invoices."
+        else:
+            overall_status = "FAILED"
+            overall_success = False
+            msg = f"Failed to synchronize all {total_p} return periods from GST Portal."
+
+        sync_attempt.status = overall_status
+        sync_attempt.total_invoices_ingested = total_unique_invoices
+        sync_attempt.records_created = records_created_total
+        sync_attempt.records_updated = records_updated_total
+        sync_attempt.records_unchanged = records_unchanged_total
+        sync_attempt.error_message = msg if not overall_success else ""
+        sync_attempt.save(update_fields=[
+            'status', 'total_invoices_ingested', 'records_created',
+            'records_updated', 'records_unchanged', 'error_message'
+        ])
+
         return {
-            "success": len(success_periods) > 0,
-            "periods_requested": resolved_periods,
+            "status": overall_status,
+            "success": overall_success,
+            "message": msg,
+            "error": msg if not overall_success else None,
+            "periods_requested": requested_period_strings,
             "periods_synced": success_periods,
-            "failed_periods": failed_periods,
-            "total_invoices_ingested": total_ingested,
+            "periods_failed": [f["period"] for f in failed_periods],
+            "total_periods": total_p,
+            "successful_periods_count": success_p,
+            "failed_periods_count": failed_p,
+            "total_provider_records": total_provider_records,
+            "total_unique_invoices": total_unique_invoices,
+            "records_created": records_created_total,
+            "records_updated": records_updated_total,
+            "records_unchanged": records_unchanged_total,
+            "period_results": period_results,
+            "failed_periods_details": failed_periods,
             "reconciliation_summary": rec_summary
         }
 
@@ -250,48 +353,73 @@ class GSTReconciliationService:
         cls,
         company: Company,
         registration: Optional[GSTRegistration] = None,
-        return_period: Optional[str] = None
+        return_period: Optional[str] = None,
+        periods: Optional[List[str]] = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None
     ) -> Dict[str, Any]:
         """
         Runs comprehensive 11-category discrepancy analysis between:
         1. Buyer's Purchase Register vouchers
         2. GSTR-2B Ingested Records
+
+        INVARIANT: ZERO alteration of purchase vouchers or accounting ledger balances.
+        Updates both GSTR2BRecord.match_status and Voucher.itc_match_status in sync.
+        Preserves existing clean matches across other return periods.
         """
-        # 1. Fetch Purchase Vouchers
+        target_periods = []
+        period_start_date = start_date
+        period_end_date = end_date
+
+        if return_period and return_period != 'ALL':
+            p_info = GSTPeriodService.parse_return_period(return_period)
+            target_periods = [p_info.normalized_period]
+            period_start_date = p_info.start_date
+            period_end_date = p_info.end_date
+        elif periods:
+            resolved_p_infos = GSTPeriodService.resolve_period_range(periods=periods)
+            target_periods = [p.normalized_period for p in resolved_p_infos]
+            if resolved_p_infos:
+                period_start_date = resolved_p_infos[0].start_date
+                period_end_date = resolved_p_infos[-1].end_date
+
+        # 1. Fetch relevant GSTR-2B Records
+        rec_qs = GSTR2BRecord.objects.filter(company=company)
+        if target_periods:
+            rec_qs = rec_qs.filter(return_period__in=target_periods)
+        if registration:
+            rec_qs = rec_qs.filter(Q(gst_registration=registration) | Q(gst_registration__isnull=True))
+
+        gstr2b_records = list(rec_qs.select_related('import_batch'))
+
+        # Build lookup indices for GSTR-2B
+        records_by_exact_key: Dict[Tuple[str, str], GSTR2BRecord] = {}
+        records_by_supplier_suffix: Dict[Tuple[str, str], List[GSTR2BRecord]] = {}
+
+        for r in gstr2b_records:
+            gstin = r.supplier_gstin.upper()
+            norm = r.normalized_invoice_number
+            records_by_exact_key[(gstin, norm)] = r
+            num_match = re.search(r'(\d+)$', norm)
+            if num_match:
+                suffix = num_match.group(1).lstrip('0') or '0'
+                records_by_supplier_suffix.setdefault((gstin, suffix), []).append(r)
+
+        # 2. Fetch candidate Purchase Vouchers
         voucher_qs = Voucher.objects.filter(
             company=company,
             voucher_type__in=['PURCHASE', 'DEBIT_NOTE'],
             status__in=EffectiveVoucherService.ACTIVE_STATUSES
         ).select_related('party_ledger').prefetch_related('items').order_by('voucher_date', 'voucher_number')
 
+        if period_end_date:
+            voucher_qs = voucher_qs.filter(voucher_date__lte=period_end_date)
+
         vouchers = list(voucher_qs)
 
-        # 2. Fetch GSTR-2B Records
-        rec_qs = GSTR2BRecord.objects.filter(company=company)
-        if return_period:
-            rec_qs = rec_qs.filter(import_batch__return_period=return_period)
-        if registration:
-            from django.db.models import Q
-            rec_qs = rec_qs.filter(Q(gst_registration=registration) | Q(gst_registration__isnull=True))
+        matched_record_ids: Set[Any] = set()
+        matched_voucher_ids: Set[Any] = set()
 
-        gstr2b_records = list(rec_qs.select_related('import_batch'))
-
-        # Build lookup indices for GSTR-2B
-        records_by_exact_key = {}  # (gstin, norm_num) -> record
-        records_by_num_only = defaultdict(list)  # norm_num -> [records]
-        records_by_supplier = defaultdict(list)  # gstin -> [records]
-
-        for r in gstr2b_records:
-            gstin = r.supplier_gstin.upper()
-            norm = r.normalized_invoice_number
-            records_by_exact_key[(gstin, norm)] = r
-            records_by_num_only[norm].append(r)
-            records_by_supplier[gstin].append(r)
-
-        matched_record_ids = set()
-        matched_voucher_ids = set()
-
-        # Category Counts
         category_counts = {
             "MATCHED": 0,
             "PARTIAL_MATCH": 0,
@@ -307,197 +435,144 @@ class GSTReconciliationService:
         }
 
         records_to_update = []
+        vouchers_to_update = []
 
-        # Step A: Evaluate Each GSTR-2B Record Against Purchase Books
-        for rec in gstr2b_records:
-            # Check Ineligible ITC first
-            if not rec.itc_available:
-                rec.match_status = 'INELIGIBLE_ITC'
-                rec.mismatch_details = {
-                    "category": "INELIGIBLE_ITC",
-                    "confidence_score": 1.0,
-                    "confidence_level": "EXACT_MATCH",
-                    "statutory_itc_eligibility": "INELIGIBLE",
-                    "explanation": rec.itc_ineligible_reason or "Vendor marked as ITC Ineligible in GSTR-2B / Section 17(5)."
-                }
-                category_counts["INELIGIBLE_ITC"] += 1
-                records_to_update.append(rec)
-                continue
+        # 3. Match each candidate voucher against GSTR-2B records
+        for v in vouchers:
+            v_gstin = (v.party_ledger.gstin if v.party_ledger and v.party_ledger.gstin else (v.buyer_gstin or '')).strip().upper()
+            v_bill_no = (v.external_invoice_number or v.reference_number or v.voucher_number or '').strip()
+            v_norm = cls.normalize_invoice_number(v_bill_no)
 
-            # Candidate match search
-            best_voucher = None
-            best_match_category = 'MISSING_IN_BOOKS'
-            confidence_score = 0.0
-            confidence_level = 'NO_MATCH'
-            mismatch_explanation = "Invoice appears in GSTR-2B but no corresponding purchase voucher was found in books."
+            v_items = list(v.items.all())
+            v_txval = sum(quantize_amount(itm.taxable_amount) for itm in v_items)
+            v_igst = sum(quantize_amount(itm.igst_amount) for itm in v_items)
+            v_cgst = sum(quantize_amount(itm.cgst_amount) for itm in v_items)
+            v_sgst = sum(quantize_amount(itm.sgst_amount) for itm in v_items)
+            v_cess = sum(quantize_amount(getattr(itm, 'cess_amount', 0)) for itm in v_items)
+            v_tax = v_igst + v_cgst + v_sgst + v_cess
+            v_total = quantize_amount(v.total_amount)
 
-            r_gstin = rec.supplier_gstin.upper()
-            r_norm = rec.normalized_invoice_number
-            r_date = rec.invoice_date
-            r_txval = quantize_amount(rec.taxable_value)
-            r_igst = quantize_amount(rec.igst_amount)
-            r_cgst = quantize_amount(rec.cgst_amount)
-            r_sgst = quantize_amount(rec.sgst_amount)
-            r_tax = r_igst + r_cgst + r_sgst
-            r_total = quantize_amount(rec.invoice_value)
+            # Match attempt 1: exact key
+            target_rec = records_by_exact_key.get((v_gstin, v_norm))
 
-            diff_val = Decimal('0.00')
-            diff_txval = Decimal('0.00')
-            diff_tax = Decimal('0.00')
-            diff_days = 0
+            # Match attempt 2: suffix match
+            if not target_rec and v_gstin:
+                num_match = re.search(r'(\d+)$', v_norm)
+                if num_match:
+                    suffix = num_match.group(1).lstrip('0') or '0'
+                    candidates = records_by_supplier_suffix.get((v_gstin, suffix), [])
+                    for cand in candidates:
+                        if cand.id not in matched_record_ids:
+                            target_rec = cand
+                            break
 
-            # Try exact match on (supplier_gstin, normalized_invoice_number)
-            for v in vouchers:
-                if v.id in matched_voucher_ids:
-                    continue
+            if target_rec:
+                matched_record_ids.add(target_rec.id)
+                matched_voucher_ids.add(v.id)
+                target_rec.matched_voucher = v
 
-                v_gstin = (v.party_ledger.gstin if v.party_ledger and v.party_ledger.gstin else (v.buyer_gstin or '')).strip().upper()
-                v_bill_no = (v.external_invoice_number or v.reference_number or v.voucher_number or '').strip()
-                v_norm = cls.normalize_invoice_number(v_bill_no)
+                r_txval = quantize_amount(target_rec.taxable_value)
+                r_tax = quantize_amount(target_rec.igst_amount + target_rec.cgst_amount + target_rec.sgst_amount + target_rec.cess_amount)
+                r_total = quantize_amount(target_rec.invoice_value)
 
-                v_items = list(v.items.all())
-                v_txval = sum(quantize_amount(itm.taxable_amount) for itm in v_items)
-                v_igst = sum(quantize_amount(itm.igst_amount) for itm in v_items)
-                v_cgst = sum(quantize_amount(itm.cgst_amount) for itm in v_items)
-                v_sgst = sum(quantize_amount(itm.sgst_amount) for itm in v_items)
-                v_tax = v_igst + v_cgst + v_sgst
-                v_total = quantize_amount(v.total_amount)
+                diff_val = abs(v_total - r_total)
+                diff_txval = abs(v_txval - r_txval)
+                diff_tax = abs(v_tax - r_tax)
+                diff_days = abs((v.voucher_date - target_rec.invoice_date).days) if v.voucher_date and target_rec.invoice_date else 0
 
-                # 1. Exact Key Match
-                if v_norm == r_norm and v_gstin == r_gstin:
-                    best_voucher = v
-                    diff_val = abs(v_total - r_total)
-                    diff_txval = abs(v_txval - r_txval)
-                    diff_tax = abs(v_tax - r_tax)
-                    diff_days = abs((v.voucher_date - r_date).days) if v.voucher_date and r_date else 0
+                mismatches = []
+                if diff_txval > cls.TOLERANCE:
+                    mismatches.append(f"Taxable value mismatch: Books ₹{v_txval:,.2f} vs 2B ₹{r_txval:,.2f} (Diff ₹{diff_txval:,.2f})")
+                if diff_tax > cls.TOLERANCE:
+                    mismatches.append(f"Tax amount mismatch: Books ₹{v_tax:,.2f} vs 2B ₹{r_tax:,.2f} (Diff ₹{diff_tax:,.2f})")
+                if (v_igst > Decimal('0.00') and target_rec.cgst_amount > Decimal('0.00')) or (v_cgst > Decimal('0.00') and target_rec.igst_amount > Decimal('0.00')):
+                    mismatches.append("Tax head mismatch (Inter-state IGST vs Intra-state CGST/SGST)")
 
-                    diff_breakdown = abs(v_igst - r_igst) > cls.TOLERANCE or abs(v_cgst - r_cgst) > cls.TOLERANCE or abs(v_sgst - r_sgst) > cls.TOLERANCE
-                    if diff_breakdown:
-                        best_match_category = 'TAX_MISMATCH'
-                        confidence_score = 0.65
-                        confidence_level = 'AMBIGUOUS'
-                        mismatch_explanation = f"Tax breakdown mismatch: Books has IGST={v_igst}, CGST/SGST={v_cgst}; 2B has IGST={r_igst}, CGST/SGST={r_cgst}."
-                    elif diff_val <= cls.TOLERANCE and diff_txval <= cls.TOLERANCE and diff_tax <= cls.TOLERANCE:
-                        if diff_days <= 3:
-                            best_match_category = 'MATCHED'
-                            confidence_score = 1.00
-                            confidence_level = 'EXACT_MATCH'
-                            mismatch_explanation = "Exact match on GSTIN, invoice number, amounts, and date (difference <= 3 days)."
-                        elif diff_days <= 15:
-                            best_match_category = 'MATCHED'
-                            confidence_score = 0.85
-                            confidence_level = 'HIGH_CONFIDENCE'
-                            mismatch_explanation = f"High-confidence match: GSTIN and invoice number match with date difference of {diff_days} days."
-                        else:
-                            # 30-day date difference does not silently establish a match!
-                            best_match_category = 'DATE_MISMATCH'
-                            confidence_score = 0.40
-                            confidence_level = 'MISMATCH'
-                            mismatch_explanation = f"Invoice date discrepancy: Books={v.voucher_date}, 2B={r_date} ({diff_days} days difference)."
-                    elif diff_txval > cls.TOLERANCE or diff_tax > cls.TOLERANCE:
-                        best_match_category = 'PARTIAL_MATCH'
-                        confidence_score = 0.50
-                        confidence_level = 'MISMATCH'
-                        mismatch_explanation = f"Value mismatch: Taxable diff=₹{diff_txval}, Tax diff=₹{diff_tax}."
-                    else:
-                        best_match_category = 'MISMATCHED'
-                        confidence_score = 0.30
-                        confidence_level = 'MISMATCH'
-                        mismatch_explanation = f"General discrepancy: Total diff=₹{diff_val}."
-                    break
-
-                # 2. Number match but GSTIN differs
-                elif v_norm == r_norm and abs(v_total - r_total) <= cls.TOLERANCE:
-                    best_voucher = v
-                    best_match_category = 'GSTIN_MISMATCH'
-                    confidence_score = 0.40
-                    confidence_level = 'MISMATCH'
-                    mismatch_explanation = f"Invoice number '{v_bill_no}' matches, but supplier GSTIN differs: Books={v_gstin}, 2B={r_gstin}."
-                    break
-
-                # 3. Fuzzy Number Match (formatting variation)
-                elif v_gstin == r_gstin and abs(v_total - r_total) <= cls.TOLERANCE:
-                    clean_v_num = re.sub(r'\D', '', v_bill_no)
-                    clean_r_num = re.sub(r'\D', '', rec.invoice_number)
-                    if clean_v_num and clean_r_num and (clean_v_num.endswith(clean_r_num) or clean_r_num.endswith(clean_v_num)):
-                        best_voucher = v
-                        best_match_category = 'DOC_NUM_MISMATCH'
-                        confidence_score = 0.60
-                        confidence_level = 'AMBIGUOUS'
-                        mismatch_explanation = f"Formatting variation in invoice number: Books='{v_bill_no}', 2B='{rec.invoice_number}'."
-                        break
-
-            # Statutory ITC Eligibility evaluation (Section 16, Section 17(5))
-            if not rec.itc_available:
-                statutory_eligibility = 'INELIGIBLE'
-                statutory_reason = rec.itc_ineligible_reason or "Supplier marked as ITC Ineligible in GSTR-2B"
-            elif best_match_category == 'MATCHED':
-                v_ineligible = getattr(best_voucher, 'is_itc_ineligible', False) or getattr(best_voucher, 'itc_match_status', '') == 'INELIGIBLE'
-                if v_ineligible:
-                    statutory_eligibility = 'BLOCKED_SEC17_5'
-                    statutory_reason = "Blocked credit under CGST Section 17(5) marked in accounting books."
+                if not target_rec.itc_available:
+                    target_rec.match_status = 'INELIGIBLE_ITC'
+                    category_counts['INELIGIBLE_ITC'] += 1
+                    v.itc_match_status = 'INELIGIBLE'
+                    v.itc_notes = target_rec.itc_ineligible_reason or "Supplier marked as ITC Ineligible in GSTR-2B / Section 17(5)."
+                elif mismatches:
+                    target_rec.match_status = 'MISMATCHED'
+                    category_counts['MISMATCHED'] += 1
+                    v.itc_match_status = 'MISMATCHED'
+                    v.itc_notes = " | ".join(mismatches)
                 else:
-                    statutory_eligibility = 'ELIGIBLE'
-                    statutory_reason = "Statutory conditions met: available in GSTR-2B and matched with tax invoice in purchase books."
-            elif best_voucher:
-                statutory_eligibility = 'REVIEW_REQUIRED'
-                statutory_reason = f"Candidate voucher found with discrepancies ({best_match_category}). Manual review required."
+                    target_rec.match_status = 'MATCHED'
+                    category_counts['MATCHED'] += 1
+                    v.itc_match_status = 'MATCHED'
+                    v.itc_notes = f"Reconciled successfully with GSTR-2B ({target_rec.return_period})."
+                    if v.itc_held_amount > Decimal('0.00') and not (v.itc_notes or '').startswith('MANUAL_HOLD'):
+                        v.itc_held_amount = Decimal('0.00')
+
+                target_rec.mismatch_details = {
+                    "category": target_rec.match_status,
+                    "confidence_score": 1.0 if not mismatches else 0.65,
+                    "confidence_level": "EXACT_MATCH" if not mismatches else "AMBIGUOUS",
+                    "explanation": v.itc_notes,
+                    "days_difference": diff_days,
+                    "book_voucher_number": v.voucher_number,
+                    "book_date": str(v.voucher_date),
+                    "book_total": float(v_total),
+                    "gstr2b_total": float(r_total),
+                    "taxable_diff": float(diff_txval),
+                    "tax_diff": float(diff_tax)
+                }
+
+                records_to_update.append(target_rec)
+                vouchers_to_update.append(v)
             else:
-                statutory_eligibility = 'REVIEW_REQUIRED'
-                statutory_reason = "Missing purchase invoice in books. Statutory ITC eligibility cannot be claimed without tax invoice (Section 16(2)(a))."
+                # PERIOD ISOLATION:
+                # Only mark voucher as MISSING_IN_2B if its voucher_date is within the reconciled window!
+                # Do NOT mark vouchers from outside the reconciled period window as missing.
+                # Do NOT overwrite a voucher that was ALREADY MATCHED in another return period.
+                in_period_window = True
+                if period_start_date and v.voucher_date and v.voucher_date < period_start_date:
+                    in_period_window = False
+                if period_end_date and v.voucher_date and v.voucher_date > period_end_date:
+                    in_period_window = False
 
-            # Update GSTR-2B Record
-            rec.match_status = best_match_category
-            rec.matched_voucher = best_voucher
-            rec.mismatch_details = {
-                "category": best_match_category,
-                "confidence_score": confidence_score,
-                "confidence_level": confidence_level,
-                "statutory_itc_eligibility": statutory_eligibility,
-                "statutory_reason": statutory_reason,
-                "explanation": mismatch_explanation,
-                "days_difference": diff_days,
-                "book_voucher_number": best_voucher.voucher_number if best_voucher else None,
-                "book_date": str(best_voucher.voucher_date) if best_voucher else None,
-                "book_total": float(best_voucher.total_amount) if best_voucher else None,
-                "gstr2b_total": float(r_total),
-                "taxable_diff": float(diff_txval),
-                "tax_diff": float(diff_tax)
-            }
+                if in_period_window and v.itc_match_status != 'MATCHED':
+                    v.itc_match_status = 'MISSING_IN_2B'
+                    v.itc_notes = 'Invoice not found in GSTR-2B for reconciled period(s). Vendor has not filed GSTR-1.'
+                    if (v.itc_held_amount is None or v.itc_held_amount == Decimal('0.00')) and v_tax > Decimal('0.00'):
+                        v.itc_held_amount = v_tax
+                    vouchers_to_update.append(v)
+                    category_counts["MISSING_IN_2B"] += 1
 
-            if best_voucher:
-                matched_voucher_ids.add(best_voucher.id)
-                matched_record_ids.add(rec.id)
+        # 4. Mark unmatched GSTR-2B records as MISSING_IN_BOOKS
+        for r in gstr2b_records:
+            if r.id not in matched_record_ids:
+                if r.match_status != 'MISSING_IN_BOOKS' or r.matched_voucher is not None:
+                    r.match_status = 'MISSING_IN_BOOKS'
+                    r.matched_voucher = None
+                    records_to_update.append(r)
+                category_counts["MISSING_IN_BOOKS"] += 1
 
-            category_counts[best_match_category] += 1
-            records_to_update.append(rec)
+        # 5. Bulk updates
+        if records_to_update:
+            GSTR2BRecord.objects.bulk_update(records_to_update, ['match_status', 'matched_voucher', 'mismatch_details'], batch_size=500)
 
-        GSTR2BRecord.objects.bulk_update(records_to_update, ['match_status', 'matched_voucher', 'mismatch_details'], batch_size=500)
+        if vouchers_to_update:
+            Voucher.objects.bulk_update(vouchers_to_update, ['itc_match_status', 'itc_held_amount', 'itc_notes'], batch_size=500)
 
-        # Step B: Identify Purchase Vouchers Missing in GSTR-2B
-        unmatched_purchase_vouchers = [v for v in vouchers if v.id not in matched_voucher_ids]
-        category_counts["MISSING_IN_2B"] = len(unmatched_purchase_vouchers)
-
-        # Totals calculation
         total_2b_records = len(gstr2b_records)
-        total_2b_itc = sum(quantize_amount(r.igst_amount + r.cgst_amount + r.sgst_amount) for r in gstr2b_records if r.itc_available)
+        total_2b_itc = sum(quantize_amount(r.igst_amount + r.cgst_amount + r.sgst_amount + r.cess_amount) for r in gstr2b_records if r.itc_available)
         matched_itc = sum(
-            quantize_amount(r.igst_amount + r.cgst_amount + r.sgst_amount)
+            quantize_amount(r.igst_amount + r.cgst_amount + r.sgst_amount + r.cess_amount)
             for r in gstr2b_records
             if r.match_status == 'MATCHED' and r.itc_available
         )
         at_risk_itc = total_2b_itc - matched_itc
 
         return {
-            "period": return_period or "ALL",
+            "reconciled_at": timezone.now().isoformat(),
+            "return_period": return_period or (periods[0] if periods and len(periods) == 1 else 'MULTI_PERIOD'),
+            "target_periods": target_periods,
             "total_gstr2b_records": total_2b_records,
-            "total_purchase_vouchers": len(vouchers),
-            "matched_count": category_counts["MATCHED"],
-            "category_breakdown": category_counts,
-            "financial_metrics": {
-                "total_gstr2b_itc": float(total_2b_itc),
-                "matched_itc": float(matched_itc),
-                "at_risk_itc": float(at_risk_itc),
-                "reconciliation_percentage": float((matched_itc / total_2b_itc * 100).quantize(Decimal('0.1'))) if total_2b_itc > 0 else 100.0
-            }
+            "total_gstr2b_itc": float(total_2b_itc),
+            "matched_itc": float(matched_itc),
+            "at_risk_itc": float(at_risk_itc),
+            "category_counts": category_counts
         }

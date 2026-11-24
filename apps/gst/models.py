@@ -358,6 +358,11 @@ class GSTR2BImport(models.Model):
     total_invoices_count = models.PositiveIntegerField(default=0)
     total_taxable_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
     total_itc_available = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    provider_records_count = models.PositiveIntegerField(default=0)
+    records_created = models.PositiveIntegerField(default=0)
+    records_updated = models.PositiveIntegerField(default=0)
+    records_unchanged = models.PositiveIntegerField(default=0)
+    source_info = models.CharField(max_length=100, blank=True, default='')
     
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PROCESSED')
     error_log = models.TextField(blank=True, default='')
@@ -402,6 +407,10 @@ class GSTR2BRecord(models.Model):
     
     supplier_gstin = models.CharField(max_length=15, db_index=True)
     supplier_name = models.CharField(max_length=255, blank=True, default='')
+    return_period = models.CharField(max_length=10, db_index=True, blank=True, default='')
+    document_type = models.CharField(max_length=10, default='B2B', db_index=True)  # B2B, B2BA, CDNR, CDNRA
+    original_document_number = models.CharField(max_length=100, blank=True, default='')
+    original_document_date = models.DateField(null=True, blank=True)
     invoice_number = models.CharField(max_length=100, db_index=True)
     normalized_invoice_number = models.CharField(max_length=100, db_index=True)
     invoice_type = models.CharField(max_length=10, default='R')  # Regular, Deemed, SEZ, etc.
@@ -457,10 +466,62 @@ class GSTR2BRecord(models.Model):
         indexes = [
             models.Index(fields=['company', 'supplier_gstin', 'normalized_invoice_number']),
             models.Index(fields=['company', 'match_status']),
+            models.Index(fields=['company', 'return_period']),
+            models.Index(fields=['company', 'gst_registration', 'return_period']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['company', 'gst_registration', 'return_period', 'supplier_gstin', 'normalized_invoice_number', 'document_type', 'original_document_number'],
+                name='unique_gstr2b_logical_doc_with_reg',
+                condition=models.Q(gst_registration__isnull=False)
+            ),
+            models.UniqueConstraint(
+                fields=['company', 'return_period', 'supplier_gstin', 'normalized_invoice_number', 'document_type', 'original_document_number'],
+                name='unique_gstr2b_logical_doc_null_reg',
+                condition=models.Q(gst_registration__isnull=True)
+            ),
         ]
 
     def __str__(self):
         return f"{self.supplier_gstin} - {self.invoice_number} (₹{self.invoice_value}) - {self.match_status}"
+
+
+class GSTR2BSyncAttempt(models.Model):
+    STATUS_CHOICES = (
+        ('PENDING', 'Pending'),
+        ('IN_PROGRESS', 'In Progress'),
+        ('SUCCESS', 'Success'),
+        ('PARTIAL_SUCCESS', 'Partial Success'),
+        ('FAILED', 'Failed'),
+    )
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='gstr2b_sync_attempts')
+    gst_registration = models.ForeignKey(
+        GSTRegistration,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='gstr2b_sync_attempts'
+    )
+    return_period = models.CharField(max_length=10, db_index=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='IN_PROGRESS')
+    total_invoices_ingested = models.PositiveIntegerField(default=0)
+    records_created = models.PositiveIntegerField(default=0)
+    records_updated = models.PositiveIntegerField(default=0)
+    records_unchanged = models.PositiveIntegerField(default=0)
+    error_message = models.TextField(blank=True, default='')
+    initiated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['company', 'return_period', 'status']),
+        ]
+
+    def __str__(self):
+        return f"Sync {self.company.name} - {self.return_period} ({self.status})"
 
 
 class SupplierGSTR3BFilingRecord(models.Model):

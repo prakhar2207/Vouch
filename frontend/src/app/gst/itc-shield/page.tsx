@@ -28,8 +28,10 @@ import {
   Info,
   Clock,
   ChevronRight,
-  X
+  X,
+  RotateCcw
 } from "lucide-react";
+import { gstApi, GSTRegistration } from "@/lib/api/gst";
 
 interface SummaryStats {
   itc_at_risk: number;
@@ -86,6 +88,16 @@ interface ReconciliationItem {
   } | null;
 }
 
+interface PeriodSyncResult {
+  period: string;
+  status: "SUCCESS" | "FAILED" | "PENDING";
+  invoices_ingested?: number;
+  invoices_reconciled?: number;
+  error_code?: string;
+  error_message?: string;
+  is_form_not_applicable?: boolean;
+}
+
 export default function VendorITCRiskShieldPage() {
   const router = useRouter();
   const { activeCompany, companyId: activeCompanyId } = useCompany();
@@ -103,6 +115,10 @@ export default function VendorITCRiskShieldPage() {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [selectedPeriod, setSelectedPeriod] = useState<string>("");
 
+  // Multi-GSTIN Registrations
+  const [registrations, setRegistrations] = useState<GSTRegistration[]>([]);
+  const [selectedRegistrationId, setSelectedRegistrationId] = useState<string>("");
+
   // Modals
   const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
   const [syncMode, setSyncMode] = useState<"range" | "single">("range");
@@ -112,6 +128,11 @@ export default function VendorITCRiskShieldPage() {
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncSuccess, setSyncSuccess] = useState<string | null>(null);
+
+  // Sync Results Breakdown
+  const [periodResults, setPeriodResults] = useState<PeriodSyncResult[]>([]);
+  const [failedPeriods, setFailedPeriods] = useState<string[]>([]);
+  const [overallSyncStatus, setOverallSyncStatus] = useState<"SUCCESS" | "PARTIAL_SUCCESS" | "FAILED" | null>(null);
 
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isExpiryModalOpen, setIsExpiryModalOpen] = useState(false);
@@ -131,42 +152,78 @@ export default function VendorITCRiskShieldPage() {
   const [noticeData, setNoticeData] = useState<any>(null);
   const [loadingNotice, setLoadingNotice] = useState(false);
 
+  // Helper to format period string e.g. 042026 -> 042026 (Apr 2026)
+  const formatPeriodLabel = (p: string) => {
+    if (!p || p.length !== 6) return p;
+    const monthNum = parseInt(p.substring(0, 2), 10);
+    const year = p.substring(2);
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const mName = months[monthNum - 1] || p.substring(0, 2);
+    return `${p} (${mName} ${year})`;
+  };
+
+  // Fetch registrations on load
+  useEffect(() => {
+    if (!companyId) return;
+    gstApi.getRegistrations(companyId)
+      .then((data) => {
+        const list = Array.isArray(data) ? data : [];
+        setRegistrations(list);
+        const primary = list.find((r) => r.is_primary);
+        if (primary) {
+          setSelectedRegistrationId(primary.id);
+        } else if (list.length > 0) {
+          setSelectedRegistrationId(list[0].id);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to load GST registrations:", err);
+      });
+  }, [companyId]);
+
   // Fetch summary & radar
   const fetchSummaryAndRadar = useCallback(async () => {
     if (!companyId) return;
     try {
+      const params: any = {};
+      if (selectedPeriod) params.return_period = selectedPeriod;
+      if (selectedRegistrationId) params.registration_id = selectedRegistrationId;
+
       const res = await api.get('/api/v1/gst/itc/summary/', {
         headers: {
           "X-Company-ID": companyId,
         },
-        params: selectedPeriod ? { return_period: selectedPeriod } : {},
+        params,
       });
       setSummary(res.data.summary);
       setExpiryRadar(res.data.expiry_radar);
     } catch (err) {
       console.error("Failed to load ITC summary:", err);
     }
-  }, [companyId, selectedPeriod]);
+  }, [companyId, selectedPeriod, selectedRegistrationId]);
 
   // Fetch reconciliation table
   const fetchItems = useCallback(async () => {
     if (!companyId) return;
     try {
+      const params: any = {
+        status: statusFilter,
+        search: searchQuery,
+      };
+      if (selectedPeriod) params.return_period = selectedPeriod;
+      if (selectedRegistrationId) params.registration_id = selectedRegistrationId;
+
       const res = await api.get('/api/v1/gst/itc/reconciliation/', {
         headers: {
           "X-Company-ID": companyId,
         },
-        params: {
-          status: statusFilter,
-          return_period: selectedPeriod,
-          search: searchQuery,
-        },
+        params,
       });
       setItems(res.data.results || []);
     } catch (err) {
       console.error("Failed to fetch reconciliation records:", err);
     }
-  }, [companyId, statusFilter, selectedPeriod, searchQuery]);
+  }, [companyId, statusFilter, selectedPeriod, selectedRegistrationId, searchQuery]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -203,6 +260,9 @@ export default function VendorITCRiskShieldPage() {
     if (uploadPeriod) {
       formData.append("return_period", uploadPeriod);
     }
+    if (selectedRegistrationId) {
+      formData.append("registration_id", selectedRegistrationId);
+    }
 
     try {
       await api.post('/api/v1/gst/itc/upload-2b/', formData, {
@@ -223,14 +283,16 @@ export default function VendorITCRiskShieldPage() {
   };
 
   // Direct Portal Sync Handler
-  const handleSyncSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSyncSubmit = async (e?: React.FormEvent, retryPeriods?: string[]) => {
+    if (e) e.preventDefault();
     setSyncing(true);
     setSyncError(null);
     setSyncSuccess(null);
 
     let payload: any = {};
-    if (syncMode === "range") {
+    if (retryPeriods && retryPeriods.length > 0) {
+      payload = { periods: retryPeriods };
+    } else if (syncMode === "range") {
       payload = {
         from_period: syncFromPeriod,
         to_period: syncToPeriod,
@@ -245,29 +307,56 @@ export default function VendorITCRiskShieldPage() {
       payload = { period: cleanPeriod };
     }
 
+    if (selectedRegistrationId) {
+      payload.registration_id = selectedRegistrationId;
+    }
+
     try {
       const res = await api.post(
         `/api/v1/gst/reconciliation/gstr2b/sync/${companyId}/`,
         payload,
         { headers: { "X-Company-ID": companyId } }
       );
-      if (res.data?.success) {
-        const count = res.data.total_invoices_ingested ?? 0;
-        const syncedCount = res.data.periods_synced?.length;
-        const msg = syncedCount
-          ? `Synced ${syncedCount} months successfully! Ingested ${count} GSTR-2B invoices.`
-          : `Synced successfully! Ingested ${count} GSTR-2B invoices.`;
+      const data = res.data;
+      const pResults: PeriodSyncResult[] = data.period_results || [];
+      setPeriodResults(pResults);
+      const failed = data.periods_failed || [];
+      setFailedPeriods(failed);
+      const status = data.status || (data.success ? "SUCCESS" : "FAILED");
+      setOverallSyncStatus(status);
+
+      if (status === "SUCCESS") {
+        const count = data.total_invoices_ingested ?? data.invoices_ingested ?? 0;
+        const syncedCount = data.periods_synced?.length || (data.period ? 1 : 0);
+        const msg = `Synced ${syncedCount} period(s) successfully! Ingested ${count} GSTR-2B invoices.`;
         setSyncSuccess(msg);
         await handleRefresh();
-        setTimeout(() => {
-          setIsSyncModalOpen(false);
-          setSyncSuccess(null);
-        }, 2000);
+      } else if (status === "PARTIAL_SUCCESS") {
+        const syncedCount = data.periods_synced?.length || 0;
+        const count = data.total_invoices_ingested ?? 0;
+        const msg = `Partially synced: ${syncedCount} period(s) succeeded (${count} invoices ingested). ${failed.length} period(s) could not be synced.`;
+        setSyncSuccess(msg);
+        await handleRefresh();
       } else {
-        setSyncError(res.data?.error || "Failed to fetch GSTR-2B from GST Portal.");
+        setSyncError(data.error || "Failed to fetch GSTR-2B from GST Portal.");
       }
     } catch (err: any) {
-      setSyncError(err.response?.data?.error || "Failed to fetch GSTR-2B from GST Portal. Please ensure GST Portal is connected in Settings.");
+      const errData = err.response?.data;
+      if (errData?.period_results) {
+        setPeriodResults(errData.period_results);
+        setFailedPeriods(errData.periods_failed || (errData.period ? [errData.period] : []));
+      } else if (errData?.period) {
+        setPeriodResults([{
+          period: errData.period,
+          status: "FAILED",
+          error_code: errData.error_code,
+          error_message: errData.error,
+          is_form_not_applicable: errData.is_form_not_applicable || errData.error_code === "FORM_NOT_APPLICABLE",
+        }]);
+        setFailedPeriods([errData.period]);
+      }
+      setOverallSyncStatus("FAILED");
+      setSyncError(errData?.error || "Failed to fetch GSTR-2B from GST Portal. Please ensure GST Portal is connected in Settings.");
     } finally {
       setSyncing(false);
     }
@@ -357,6 +446,40 @@ export default function VendorITCRiskShieldPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
+            {/* Multi-GSTIN Registration Selector */}
+            {registrations.length > 0 && (
+              <select
+                value={selectedRegistrationId}
+                onChange={(e) => setSelectedRegistrationId(e.target.value)}
+                className="px-2.5 py-2 text-xs font-mono font-medium rounded-lg border border-border/60 bg-card hover:bg-muted/70 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary"
+                title="Filter by GST Registration (GSTIN)"
+              >
+                <option value="">All Registrations</option>
+                {registrations.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.gstin} {r.trade_name ? `(${r.trade_name})` : `(${r.legal_name})`}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {/* Return Period Selector */}
+            <select
+              value={selectedPeriod}
+              onChange={(e) => setSelectedPeriod(e.target.value)}
+              className="px-2.5 py-2 text-xs font-mono font-medium rounded-lg border border-border/60 bg-card hover:bg-muted/70 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary"
+              title="Filter by Return Period"
+            >
+              <option value="">All Periods (FY 2026–27 YTD)</option>
+              <option value="102026">102026 — Oct 2026</option>
+              <option value="092026">092026 — Sep 2026</option>
+              <option value="082026">082026 — Aug 2026</option>
+              <option value="072026">072026 — Jul 2026</option>
+              <option value="062026">062026 — Jun 2026</option>
+              <option value="052026">052026 — May 2026</option>
+              <option value="042026">042026 — Apr 2026</option>
+            </select>
+
             <button
               onClick={handleRefresh}
               disabled={refreshing}
@@ -370,6 +493,9 @@ export default function VendorITCRiskShieldPage() {
               onClick={() => {
                 setSyncError(null);
                 setSyncSuccess(null);
+                setPeriodResults([]);
+                setFailedPeriods([]);
+                setOverallSyncStatus(null);
                 setIsSyncModalOpen(true);
               }}
               className="inline-flex items-center gap-2 px-4 py-2 text-xs sm:text-sm font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-500/20 transition-all cursor-pointer"
@@ -744,7 +870,7 @@ export default function VendorITCRiskShieldPage() {
         {/* MODAL 0: SYNC FROM GST PORTAL */}
         {isSyncModalOpen && (
           <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-card border border-border/40 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-in fade-in zoom-in-95">
+            <div className="bg-card border border-border/40 rounded-2xl p-6 max-w-xl w-full max-h-[90vh] overflow-y-auto shadow-2xl space-y-4 animate-in fade-in zoom-in-95">
               <div className="flex items-center justify-between border-b border-border/40 pb-3">
                 <div className="flex items-center gap-2">
                   <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
@@ -763,6 +889,27 @@ export default function VendorITCRiskShieldPage() {
                 </button>
               </div>
 
+              {/* GSTIN Registration Selector if multiple */}
+              {registrations.length > 0 && (
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground mb-1">
+                    GST Registration (GSTIN)
+                  </label>
+                  <select
+                    value={selectedRegistrationId}
+                    onChange={(e) => setSelectedRegistrationId(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-lg border border-border/60 bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary font-mono cursor-pointer"
+                  >
+                    <option value="">All Registrations / Primary</option>
+                    {registrations.map((reg) => (
+                      <option key={reg.id} value={reg.id}>
+                        {reg.gstin} {reg.trade_name ? `(${reg.trade_name})` : `(${reg.legal_name})`} {reg.is_primary ? "★ Primary" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               {/* Sync Mode Selection Tabs */}
               <div className="grid grid-cols-2 gap-2 p-1 bg-muted/40 rounded-xl border border-border/40">
                 <button
@@ -774,9 +921,9 @@ export default function VendorITCRiskShieldPage() {
                       : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
-                  <span>Apr &ndash; Oct 2026</span>
+                  <span>FY 2026&ndash;27 YTD</span>
                   <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold">
-                    Full Year
+                    Apr &ndash; Oct
                   </span>
                 </button>
                 <button
@@ -792,7 +939,7 @@ export default function VendorITCRiskShieldPage() {
                 </button>
               </div>
 
-              <form onSubmit={handleSyncSubmit} className="space-y-4">
+              <form onSubmit={(e) => handleSyncSubmit(e)} className="space-y-4">
                 {syncMode === "range" ? (
                   <div className="space-y-3">
                     <div className="p-3 rounded-xl bg-primary/5 border border-primary/20 space-y-2">
@@ -810,7 +957,7 @@ export default function VendorITCRiskShieldPage() {
                       </p>
                       <div className="flex flex-wrap gap-1.5 pt-0.5">
                         {["Apr 26", "May 26", "Jun 26", "Jul 26", "Aug 26", "Sep 26", "Oct 26"].map((m) => (
-                          <span key={m} className="px-2 py-0.5 text-[10px] font-medium rounded-md bg-muted/80 text-foreground border border-border/40">
+                          <span key={m} className="px-2 py-0.5 text-[10px] font-medium rounded-md bg-muted/80 text-foreground border border-border/40 font-mono">
                             {m}
                           </span>
                         ))}
@@ -901,13 +1048,145 @@ export default function VendorITCRiskShieldPage() {
                   </div>
                 )}
 
+                {/* Period Results Breakdown Table */}
+                {periodResults.length > 0 && (
+                  <div className="space-y-3 pt-2">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-bold text-foreground uppercase tracking-wider">
+                        Period-by-Period Sync Status
+                      </h4>
+                      <span className="text-[11px] text-muted-foreground">
+                        {periodResults.filter(p => p.status === 'SUCCESS').length} of {periodResults.length} periods synced
+                      </span>
+                    </div>
+
+                    <div className="border border-border/50 rounded-xl overflow-hidden bg-muted/20">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-muted/60 border-b border-border/40 text-[11px] text-muted-foreground font-semibold">
+                            <th className="p-2.5">Period</th>
+                            <th className="p-2.5">GSTR-2B Invoices</th>
+                            <th className="p-2.5">Reconciled</th>
+                            <th className="p-2.5 text-right">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border/20">
+                          {periodResults.map((pr) => {
+                            const isSuccess = pr.status === "SUCCESS";
+                            const isNotApplicable =
+                              pr.error_code === "FORM_NOT_APPLICABLE" ||
+                              pr.is_form_not_applicable ||
+                              (pr.error_message && pr.error_message.toLowerCase().includes("not applicable"));
+
+                            return (
+                              <tr key={pr.period} className="hover:bg-muted/30">
+                                <td className="p-2.5 font-mono font-medium text-foreground">
+                                  {formatPeriodLabel(pr.period)}
+                                </td>
+                                <td className="p-2.5">
+                                  {isSuccess ? (
+                                    <span className="text-foreground">{pr.invoices_ingested ?? 0} invoices</span>
+                                  ) : (
+                                    <span className="text-muted-foreground">-</span>
+                                  )}
+                                </td>
+                                <td className="p-2.5">
+                                  {isSuccess ? (
+                                    <span className="text-foreground">{pr.invoices_reconciled ?? 0} bills</span>
+                                  ) : (
+                                    <span className="text-muted-foreground">-</span>
+                                  )}
+                                </td>
+                                <td className="p-2.5 text-right">
+                                  {isSuccess ? (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                                      <CheckCircle2 className="w-3 h-3" /> Synced
+                                    </span>
+                                  ) : isNotApplicable ? (
+                                    <span
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                                      title={pr.error_message || "Form not applicable (QRMP quarterly filer)"}
+                                    >
+                                      <Info className="w-3 h-3" /> QRMP (Quarterly)
+                                    </span>
+                                  ) : (
+                                    <span
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/10 text-rose-500 border border-rose-500/20"
+                                      title={pr.error_message || "Sync failed"}
+                                    >
+                                      <XCircle className="w-3 h-3" /> Failed
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* QRMP Information Banner */}
+                    {periodResults.some(
+                      (pr) =>
+                        pr.error_code === "FORM_NOT_APPLICABLE" ||
+                        pr.is_form_not_applicable ||
+                        (pr.error_message && pr.error_message.toLowerCase().includes("not applicable"))
+                    ) && (
+                      <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-800 dark:text-amber-300 space-y-1">
+                        <div className="font-bold flex items-center gap-1.5">
+                          <Info className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                          <span>QRMP Scheme Notice &mdash; Quarterly Filing</span>
+                        </div>
+                        <p className="text-[11px] leading-relaxed">
+                          Under GST rules, taxpayers under the <strong>Quarterly Return Monthly Payment (QRMP)</strong> scheme have GSTR-2B generated quarterly at quarter-end months (June, September, December, March). Months 1 and 2 (e.g., April, May, July, August) do not generate auto-drafted monthly GSTR-2B statements.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Retry Button for Failed Periods (transient/network/portal errors) */}
+                    {failedPeriods.filter((p) => {
+                      const match = periodResults.find((pr) => pr.period === p);
+                      return !(
+                        match?.error_code === "FORM_NOT_APPLICABLE" ||
+                        match?.is_form_not_applicable ||
+                        (match?.error_message && match.error_message.toLowerCase().includes("not applicable"))
+                      );
+                    }).length > 0 && (
+                      <div className="flex items-center justify-between p-2.5 rounded-xl bg-rose-500/5 border border-rose-500/20">
+                        <span className="text-[11px] text-muted-foreground">
+                          Some periods failed due to temporary network or portal errors.
+                        </span>
+                        <button
+                          type="button"
+                          disabled={syncing}
+                          onClick={() => {
+                            const retryList = failedPeriods.filter((p) => {
+                              const match = periodResults.find((pr) => pr.period === p);
+                              return !(
+                                match?.error_code === "FORM_NOT_APPLICABLE" ||
+                                match?.is_form_not_applicable ||
+                                (match?.error_message && match.error_message.toLowerCase().includes("not applicable"))
+                              );
+                            });
+                            handleSyncSubmit(undefined, retryList);
+                          }}
+                          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-600 hover:bg-amber-500 text-white flex items-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
+                        >
+                          <RotateCcw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
+                          <span>Retry Failed Periods</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="flex items-center justify-end gap-2 pt-2 border-t border-border/40">
                   <button
                     type="button"
                     onClick={() => setIsSyncModalOpen(false)}
                     className="px-4 py-2 text-xs font-medium rounded-lg text-muted-foreground hover:bg-muted/60 cursor-pointer"
                   >
-                    Cancel
+                    {periodResults.length > 0 ? "Close" : "Cancel"}
                   </button>
                   <button
                     type="submit"
@@ -919,7 +1198,7 @@ export default function VendorITCRiskShieldPage() {
                       {syncing
                         ? "Fetching from GST Portal..."
                         : syncMode === "range"
-                        ? "Sync All 7 Months (Apr – Oct)"
+                        ? "Sync Selected Periods"
                         : "Sync & Reconcile"}
                     </span>
                   </button>
