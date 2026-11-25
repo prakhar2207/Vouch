@@ -1,6 +1,7 @@
 import json
 import logging
 import uuid
+import hashlib
 from decimal import Decimal
 from datetime import date
 from django.db import transaction
@@ -17,7 +18,10 @@ from apps.companies.models import Company
 from apps.accounting.models import Voucher
 from apps.accounting.services.effective_voucher_service import EffectiveVoucherService
 from apps.accounts.permissions import get_authorized_company, user_has_company_roles, CanViewGST, CanReconcileGST
-from apps.gst.models import GSTR2BImport, GSTR2BRecord, GSTRegistration, VoucherGSTINAttributionLog
+from apps.gst.models import (
+    GSTR2BImport, GSTR2BRecord, GSTRegistration,
+    VoucherGSTINAttributionLog, VoucherAttributionOperation
+)
 from apps.gst.services.period_service import GSTPeriodService
 import io
 from apps.accounting.services.upload_security import (
@@ -450,20 +454,6 @@ class ITCVoucherAttributionAPIView(APIView):
                 'error_code': 'REASON_REQUIRED'
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Prevent duplicate correction events from retries with identical operation_ref (P0 / Round 2.4.2)
-        client_op_ref = (request.data.get('operation_ref') or '').strip()
-        if client_op_ref and VoucherGSTINAttributionLog.objects.filter(company=company, operation_ref=client_op_ref).exists():
-            existing_logs = VoucherGSTINAttributionLog.objects.filter(company=company, operation_ref=client_op_ref)
-            first_log = existing_logs.first()
-            return Response({
-                'success': True,
-                'message': f"Operation '{client_op_ref}' previously completed successfully (idempotent replay).",
-                'attributed_count': existing_logs.count(),
-                'attributed_gstin': first_log.new_gstin if first_log else '',
-                'operation_ref': client_op_ref,
-                'is_correction': is_correction
-            }, status=status.HTTP_200_OK)
-
         # Deduplicate voucher IDs preserving submission order
         clean_voucher_ids = list(dict.fromkeys(raw_ids))
 
@@ -475,10 +465,82 @@ class ITCVoucherAttributionAPIView(APIView):
         if registration.status != 'ACTIVE':
             return Response({'success': False, 'error': f"GST Registration '{registration.gstin}' is inactive.", 'error_code': 'INACTIVE_REGISTRATION'}, status=status.HTTP_400_BAD_REQUEST)
 
-        now = timezone.now()
+        # Canonical request fingerprint for durable operation-level idempotency (P0 / Round 2.4.3)
+        canonical_dict = {
+            'actor_id': str(request.user.id),
+            'attribution_source': str(source).strip().upper(),
+            'company_id': str(company.id),
+            'is_correction': bool(is_correction),
+            'reason': str(reason).strip(),
+            'registration_id': str(reg_id),
+            'voucher_ids': sorted([str(vid) for vid in clean_voucher_ids]),
+        }
+        canonical_bytes = json.dumps(canonical_dict, sort_keys=True, separators=(',', ':')).encode('utf-8')
+        request_fingerprint = hashlib.sha256(canonical_bytes).hexdigest()
+
+        client_op_ref = (request.data.get('operation_ref') or '').strip()
         operation_ref = client_op_ref or f"ATTR_{uuid.uuid4().hex[:12].upper()}"
 
+        # Fast-path idempotency replay check prior to entering atomic write transaction
+        if client_op_ref:
+            existing_op = VoucherAttributionOperation.objects.filter(
+                company=company,
+                operation_ref=client_op_ref
+            ).first()
+            if existing_op and existing_op.status != 'FAILED':
+                if existing_op.request_fingerprint != request_fingerprint:
+                    return Response({
+                        'success': False,
+                        'error': f"Operation reference conflict: Reused operation_ref '{client_op_ref}' with conflicting request parameters.",
+                        'error_code': 'OPERATION_REFERENCE_CONFLICT'
+                    }, status=status.HTTP_409_CONFLICT)
+                if existing_op.status == 'COMPLETED':
+                    return Response(existing_op.response_payload, status=status.HTTP_200_OK)
+
+        now = timezone.now()
+
         with transaction.atomic():
+            # Reserve or lock operation row for (company, operation_ref)
+            op_record, created = VoucherAttributionOperation.objects.select_for_update().get_or_create(
+                company=company,
+                operation_ref=operation_ref,
+                defaults={
+                    'request_fingerprint': request_fingerprint,
+                    'actor': request.user,
+                    'target_registration': registration,
+                    'is_correction': is_correction,
+                    'status': 'PENDING'
+                }
+            )
+
+            if not created:
+                if op_record.status != 'FAILED':
+                    # Re-validate under lock: check if fingerprints conflict
+                    if op_record.request_fingerprint != request_fingerprint:
+                        return Response({
+                            'success': False,
+                            'error': f"Operation reference conflict: Reused operation_ref '{operation_ref}' with conflicting request parameters.",
+                            'error_code': 'OPERATION_REFERENCE_CONFLICT'
+                        }, status=status.HTTP_409_CONFLICT)
+
+                    # Replay completed response if previously finished
+                    if op_record.status == 'COMPLETED':
+                        return Response(op_record.response_payload, status=status.HTTP_200_OK)
+
+                    if op_record.status == 'PENDING' and op_record.actor_id != request.user.id:
+                        return Response({
+                            'success': False,
+                            'error': f"Operation '{operation_ref}' is currently in progress by another worker.",
+                            'error_code': 'OPERATION_IN_PROGRESS'
+                        }, status=status.HTTP_409_CONFLICT)
+
+                # Reset to PENDING with current fingerprint and target
+                op_record.status = 'PENDING'
+                op_record.request_fingerprint = request_fingerprint
+                op_record.target_registration = registration
+                op_record.is_correction = is_correction
+                op_record.save(update_fields=['status', 'request_fingerprint', 'target_registration', 'is_correction'])
+
             # Acquire row-level locks on candidate vouchers
             vouchers = list(
                 Voucher.objects.select_for_update()
@@ -489,6 +551,8 @@ class ITCVoucherAttributionAPIView(APIView):
             found_ids = {str(v.id) for v in vouchers}
             missing_ids = [vid for vid in clean_voucher_ids if str(vid) not in found_ids]
             if missing_ids:
+                op_record.status = 'FAILED'
+                op_record.save(update_fields=['status'])
                 return Response({
                     'success': False,
                     'error': f"One or more voucher IDs are invalid, belong to a different company, or are not purchase vouchers: {missing_ids[:3]}.",
@@ -500,6 +564,8 @@ class ITCVoucherAttributionAPIView(APIView):
             for v in vouchers:
                 existing_gstin = (v.buyer_gstin or '').strip().upper()
                 if not is_correction and (existing_gstin or v.itc_gstin_attributed_at):
+                    op_record.status = 'FAILED'
+                    op_record.save(update_fields=['status'])
                     return Response({
                         'success': False,
                         'error': f"Voucher '{v.voucher_number}' is already attributed to GSTIN '{existing_gstin or v.buyer_gstin}'. Use the correction workflow with an explicit reason to re-attribute.",
@@ -537,18 +603,25 @@ class ITCVoucherAttributionAPIView(APIView):
 
             VoucherGSTINAttributionLog.objects.bulk_create(attribution_logs)
 
+            action_word = "corrected" if is_correction else "attributed"
+            response_data = {
+                'success': True,
+                'message': f"Successfully {action_word} {len(vouchers)} voucher(s) to GSTIN {registration.gstin}.",
+                'attributed_count': len(vouchers),
+                'attributed_gstin': registration.gstin,
+                'operation_ref': operation_ref,
+                'is_correction': is_correction
+            }
+
+            op_record.status = 'COMPLETED'
+            op_record.completed_at = now
+            op_record.response_payload = response_data
+            op_record.save(update_fields=['status', 'completed_at', 'response_payload'])
+
         # Trigger registration reconciliation after transaction commit
         ITCReconciliationService.reconcile_period(company, registration=registration)
 
-        action_word = "corrected" if is_correction else "attributed"
-        return Response({
-            'success': True,
-            'message': f"Successfully {action_word} {len(vouchers)} voucher(s) to GSTIN {registration.gstin}.",
-            'attributed_count': len(vouchers),
-            'attributed_gstin': registration.gstin,
-            'operation_ref': operation_ref,
-            'is_correction': is_correction
-        }, status=status.HTTP_200_OK)
+        return Response(response_data, status=status.HTTP_200_OK)
 
 
 class ITCVoucherAttributionCorrectionAPIView(APIView):

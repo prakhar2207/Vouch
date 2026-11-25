@@ -144,8 +144,12 @@ class GSTReconciliationService:
                 auth_st = "AUTHENTICATION_REQUIRED"
 
             is_not_app = (err_cat == "FORM_NOT_APPLICABLE")
+            # Authoritative Filing Frequency Interface (Round 2.4.3 P1):
+            # Only treat as QRMP interim skip if QRMP is conclusively verified on registration.
+            # An unverified registration with raw filing_frequency='QRMP' must NEVER receive verified QRMP treatment.
+            verified_freq = registration.get_verified_filing_frequency() if (registration and hasattr(registration, 'get_verified_filing_frequency')) else 'UNKNOWN'
             is_qrmp_not_app = bool(
-                is_not_app and is_qrmp_interim and registration and getattr(registration, 'filing_frequency', '') == 'QRMP'
+                is_not_app and is_qrmp_interim and verified_freq == 'QRMP'
             )
 
             if err_cat != "AUTHENTICATION_REQUIRED" and not is_qrmp_not_app:
@@ -165,20 +169,20 @@ class GSTReconciliationService:
 
             return {
                 "success": False,
-                "status": "NOT_APPLICABLE" if is_not_app else ("PROVIDER_ERROR" if err_cat != "AUTHENTICATION_REQUIRED" else "AUTHENTICATION_REQUIRED"),
-                "fetch_status": "NOT_APPLICABLE" if is_not_app else "REQUEST_FAILED",
+                "status": "NOT_APPLICABLE" if is_qrmp_not_app else ("PROVIDER_ERROR" if err_cat != "AUTHENTICATION_REQUIRED" else "AUTHENTICATION_REQUIRED"),
+                "fetch_status": "NOT_APPLICABLE" if is_qrmp_not_app else "REQUEST_FAILED",
                 "auth_status": auth_st,
                 "ingestion_status": "SKIPPED",
                 "reconciliation_status": "NOT_RECONCILED",
                 "error_category": err_cat,
-                "is_form_not_applicable": is_not_app,
+                "is_form_not_applicable": is_qrmp_not_app,
                 "is_qrmp_not_applicable": is_qrmp_not_app,
                 "error": err_msg,
                 "return_period": norm_period,
                 "actual_statement_period": None,
                 "period_label": period_info.period_label,
                 "gstin": registration.gstin if registration else None,
-                "filing_frequency": registration.filing_frequency if registration else 'UNKNOWN',
+                "filing_frequency": verified_freq,
                 "provider_records_count": 0,
                 "records_created": 0,
                 "records_updated": 0,
@@ -228,7 +232,7 @@ class GSTReconciliationService:
                 "return_period": norm_period,
                 "period_label": period_info.period_label,
                 "gstin": registration.gstin if registration else None,
-                "filing_frequency": registration.filing_frequency if registration else 'UNKNOWN',
+                "filing_frequency": registration.get_verified_filing_frequency() if (registration and hasattr(registration, 'get_verified_filing_frequency')) else 'UNKNOWN',
             }
 
         # Run authoritative period-isolated ITC reconciliation (DEF-01..08)
@@ -259,7 +263,7 @@ class GSTReconciliationService:
             "actual_statement_period": norm_period,
             "period_label": period_info.period_label,
             "gstin": registration.gstin if registration else None,
-            "filing_frequency": registration.filing_frequency if registration else 'UNKNOWN',
+            "filing_frequency": registration.get_verified_filing_frequency() if (registration and hasattr(registration, 'get_verified_filing_frequency')) else 'UNKNOWN',
             "provider_records_count": import_batch.provider_records_count,
             "total_invoices_ingested": import_batch.total_invoices_count,
             "records_created": import_batch.records_created,
@@ -363,7 +367,7 @@ class GSTReconciliationService:
                     "status": period_st,
                     "actual_statement_period": single_res.get("actual_statement_period", p_str),
                     "gstin": single_res.get("gstin") or (registration.gstin if registration else None),
-                    "filing_frequency": single_res.get("filing_frequency") or (registration.filing_frequency if registration else 'UNKNOWN'),
+                    "filing_frequency": single_res.get("filing_frequency") or (registration.get_verified_filing_frequency() if (registration and hasattr(registration, 'get_verified_filing_frequency')) else 'UNKNOWN'),
                     "fetch_status": "SUCCESS",
                     "ingestion_status": single_res.get("ingestion_status", "SUCCESS"),
                     "reconciliation_status": single_res.get("reconciliation_status", "SUCCESS"),
@@ -382,9 +386,10 @@ class GSTReconciliationService:
                 err_msg = single_res.get("error") or "GSTR-2B form is not applicable for this period."
                 err_cat = single_res.get("error_category") or "FORM_NOT_APPLICABLE"
                 # Only treat as non-fatal QRMP skip if registration is verified QRMP and period is M1/M2
+                verified_freq = registration.get_verified_filing_frequency() if (registration and hasattr(registration, 'get_verified_filing_frequency')) else 'UNKNOWN'
                 is_qrmp_verified_skip = bool(
                     registration
-                    and getattr(registration, 'filing_frequency', '') == 'QRMP'
+                    and verified_freq == 'QRMP'
                     and p_info.month_int in [4, 5, 7, 8, 10, 11, 1, 2]
                 )
                 target_bucket = not_applicable_periods if is_qrmp_verified_skip else failed_periods
@@ -400,7 +405,7 @@ class GSTReconciliationService:
                     "status": "NOT_APPLICABLE",
                     "actual_statement_period": None,
                     "gstin": single_res.get("gstin") or (registration.gstin if registration else None),
-                    "filing_frequency": single_res.get("filing_frequency") or (registration.filing_frequency if registration else 'UNKNOWN'),
+                    "filing_frequency": single_res.get("filing_frequency") or verified_freq,
                     "fetch_status": "NOT_APPLICABLE",
                     "ingestion_status": "SKIPPED",
                     "reconciliation_status": "SKIPPED",
@@ -430,7 +435,7 @@ class GSTReconciliationService:
                     "status": "FAILED",
                     "actual_statement_period": None,
                     "gstin": single_res.get("gstin") or (registration.gstin if registration else None),
-                    "filing_frequency": single_res.get("filing_frequency") or (registration.filing_frequency if registration else 'UNKNOWN'),
+                    "filing_frequency": single_res.get("filing_frequency") or (registration.get_verified_filing_frequency() if (registration and hasattr(registration, 'get_verified_filing_frequency')) else 'UNKNOWN'),
                     "fetch_status": "FAILED",
                     "ingestion_status": "SKIPPED",
                     "reconciliation_status": "SKIPPED",
@@ -504,7 +509,7 @@ class GSTReconciliationService:
             "message": msg,
             "error": msg if not overall_success else None,
             "gstin": registration.gstin if registration else None,
-            "filing_frequency": registration.filing_frequency if registration else 'UNKNOWN',
+            "filing_frequency": registration.get_verified_filing_frequency() if (registration and hasattr(registration, 'get_verified_filing_frequency')) else 'UNKNOWN',
             "periods_requested": requested_period_strings,
             "periods_synced": success_periods,
             "periods_not_applicable": [f["period"] for f in not_applicable_periods],

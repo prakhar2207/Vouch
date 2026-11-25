@@ -341,17 +341,42 @@ class GSTRegistration(models.Model):
         from django.utils import timezone
         return bool(self.auth_token and (not self.token_expires_at or self.token_expires_at > timezone.now()))
 
+    def get_verified_filing_frequency(self) -> str:
+        """
+        Authoritative Statutory Verification Interface (Round 2.4.3 P1):
+        Returns verified filing frequency ('MONTHLY' or 'QRMP') only if supported by
+        verified provenance (allowed source, timestamp, and authorized verifier if manual).
+        Returns 'UNKNOWN' if unverified, missing, or inactive.
+        Raw database field `filing_frequency` must never be used directly for statutory decisions.
+        """
+        if self.status != 'ACTIVE':
+            return 'UNKNOWN'
+        if not self.is_frequency_verified():
+            return 'UNKNOWN'
+        clean_freq = (self.filing_frequency or '').strip().upper()
+        if clean_freq in ['MONTHLY', 'QRMP']:
+            return clean_freq
+        return 'UNKNOWN'
+
     def is_frequency_verified(self) -> bool:
         """
-        Compliance Provenance Invariant (Round 2.4.2 P0):
+        Compliance Provenance Invariant (Round 2.4.2 P0 / Round 2.4.3 P1):
         Returns True if filing frequency has been explicitly verified via an allowed provenance source
-        and timestamped. Unverified registrations must never be presumed MONTHLY or QRMP.
+        and timestamped. For USER_MANUAL, frequency_verified_by must also be present.
+        Unverified registrations must never be presumed MONTHLY or QRMP.
         """
-        return bool(
-            self.frequency_verified_source in self.ALLOWED_FREQUENCY_SOURCES and
-            self.frequency_verified_at and
-            self.filing_frequency in ['MONTHLY', 'QRMP']
-        )
+        clean_source = (self.frequency_verified_source or '').strip().upper()
+        if clean_source == 'PORTAL_API':
+            clean_source = 'GST_PORTAL_API'
+        if clean_source not in self.ALLOWED_FREQUENCY_SOURCES:
+            return False
+        if not self.frequency_verified_at:
+            return False
+        if (self.filing_frequency or '').strip().upper() not in ['MONTHLY', 'QRMP']:
+            return False
+        if clean_source == 'USER_MANUAL' and not self.frequency_verified_by_id:
+            return False
+        return True
 
     def set_filing_frequency(self, frequency: str, source: str = 'USER_MANUAL', user=None, reason: str = '', commit: bool = True):
         clean_freq = (frequency or '').strip().upper()
@@ -362,17 +387,45 @@ class GSTRegistration(models.Model):
             clean_source = 'GST_PORTAL_API'
         if clean_source not in self.ALLOWED_FREQUENCY_SOURCES:
             raise ValidationError(f"Invalid verification source: '{source}'. Must be one of {list(self.ALLOWED_FREQUENCY_SOURCES)}.")
-        if clean_source == 'USER_MANUAL' and not user:
-            raise ValidationError("Manual filing frequency verification requires an authorized user.")
+
+        # Inactive registration guard
+        if self.status != 'ACTIVE':
+            raise ValidationError(f"Cannot verify or update filing frequency on inactive GST registration '{self.gstin}'.")
+
+        if clean_source == 'USER_MANUAL':
+            if not user or not getattr(user, 'is_authenticated', False):
+                raise ValidationError("Manual filing frequency verification requires an authenticated user.")
+
+            # Authoritative Company Access & Role Boundary Check (Round 2.4.3 P1)
+            from apps.accounts.permissions import user_has_company_roles
+            is_authorized = user_has_company_roles(user, self.company, ['ADMIN', 'OWNER', 'CA', 'ACCOUNTANT'])
+            if not is_authorized:
+                raise ValidationError(
+                    f"User '{user}' is not authorized to manually verify filing frequency for company '{self.company.name}'."
+                )
+
+        prev_freq = self.filing_frequency or 'UNKNOWN'
         self.filing_frequency = clean_freq
         self.frequency_verified_source = clean_source
         self.frequency_verified_at = timezone.now()
         self.frequency_verified_by = user
+
         if commit:
             self.save(update_fields=[
                 'filing_frequency', 'frequency_verified_source',
                 'frequency_verified_at', 'frequency_verified_by'
             ])
+            # Persist attributable audit record (Round 2.4.3 P1)
+            GSTRegistrationFrequencyAuditLog.objects.create(
+                company=self.company,
+                gst_registration=self,
+                previous_frequency=prev_freq,
+                new_frequency=clean_freq,
+                verification_source=clean_source,
+                verified_by=user,
+                verified_at=self.frequency_verified_at,
+                reason=reason or (f"Filing frequency updated to {clean_freq} via {clean_source}")
+            )
 
     def __str__(self):
         return f"{self.gstin} ({self.state_name}) - {self.company.name} [{self.status}]"
@@ -868,6 +921,78 @@ class VoucherGSTINAttributionLog(models.Model):
     def __str__(self):
         op = "CORRECTION" if self.is_correction else "ATTRIBUTION"
         return f"{op} Voucher {self.voucher_id} -> {self.new_gstin} by {self.attributed_by} at {self.attributed_at}"
+
+
+class GSTRegistrationFrequencyAuditLog(models.Model):
+    """
+    Append-only statutory audit trail of GST registration filing frequency verifications (Round 2.4.3 P1).
+    Tracks historical transitions between MONTHLY, QRMP, and UNKNOWN, recording the authorized user,
+    timestamp, provenance source, and mandatory justification.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name='gst_frequency_audit_logs', db_index=True)
+    gst_registration = models.ForeignKey(
+        GSTRegistration,
+        on_delete=models.CASCADE,
+        related_name='frequency_audit_logs',
+        db_index=True
+    )
+    previous_frequency = models.CharField(max_length=20, default='UNKNOWN')
+    new_frequency = models.CharField(max_length=20)
+    verification_source = models.CharField(max_length=50, default='USER_MANUAL')
+    verified_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    verified_at = models.DateTimeField(default=timezone.now, db_index=True)
+    reason = models.TextField(blank=True, default='')
+
+    class Meta:
+        ordering = ['-verified_at']
+        indexes = [
+            models.Index(fields=['company', 'gst_registration', '-verified_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.gst_registration.gstin}: {self.previous_frequency} -> {self.new_frequency} by {self.verified_by} at {self.verified_at}"
+
+
+class VoucherAttributionOperation(models.Model):
+    """
+    Durable operation-level idempotency record for purchase voucher GSTIN attributions and corrections (Round 2.4.3 P0).
+    Guarantees that replayed requests with identical fingerprints return the original response,
+    conflicting payloads with the same operation_ref are rejected with HTTP 409 Conflict,
+    and concurrent submissions execute exactly once.
+    """
+    STATUS_CHOICES = (
+        ('PENDING', 'Pending Execution'),
+        ('COMPLETED', 'Completed Successfully'),
+        ('FAILED', 'Execution Failed'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='attribution_operations', db_index=True)
+    operation_ref = models.CharField(max_length=100, db_index=True)
+    request_fingerprint = models.CharField(max_length=64, db_index=True)
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='attribution_operations')
+    target_registration = models.ForeignKey(GSTRegistration, on_delete=models.SET_NULL, null=True, blank=True)
+    is_correction = models.BooleanField(default=False)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING', db_index=True)
+    response_payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['company', 'operation_ref'],
+                name='unique_attribution_operation_per_company'
+            )
+        ]
+        indexes = [
+            models.Index(fields=['company', 'operation_ref']),
+            models.Index(fields=['company', 'request_fingerprint']),
+        ]
+
+    def __str__(self):
+        return f"Op {self.operation_ref} ({self.status}) for {self.company.name}"
 
 
 class SupplierGSTR3BFilingRecord(models.Model):

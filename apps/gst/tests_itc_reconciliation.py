@@ -12,7 +12,11 @@ from apps.companies.models import Company, UserCompany
 from apps.ledgers.models import LedgerGroup, Ledger
 from apps.inventory.models import Product, Warehouse
 from apps.accounting.models import Voucher, VoucherItem
-from apps.gst.models import CompanyGSTConfig, GSTR2BImport, GSTR2BRecord, GSTRegistration, VoucherGSTINAttributionLog, resolve_document_financial_effect
+from apps.gst.models import (
+    CompanyGSTConfig, GSTR2BImport, GSTR2BRecord, GSTRegistration,
+    VoucherGSTINAttributionLog, VoucherAttributionOperation,
+    GSTRegistrationFrequencyAuditLog, resolve_document_financial_effect
+)
 from apps.gst.services.itc_reconciliation_service import ITCReconciliationService
 from apps.gst.services.itc_notification_service import ITCNotificationService
 from apps.gst.services.reconciliation_service import GSTReconciliationService
@@ -2165,6 +2169,7 @@ class PostgreSQLConcurrencyCertificationTests(TransactionTestCase):
             frequency_verified_at=timezone.now(),
             is_primary=True
         )
+        UserCompany.objects.create(user=self.user, company=self.company, role='ADMIN')
 
     def test_postgresql_concurrency_barrier_certification(self):
         import threading
@@ -2579,7 +2584,606 @@ class PostgreSQLConcurrencyCertificationTests(TransactionTestCase):
             'operation_ref': op_ref
         }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
         self.assertEqual(resp2.status_code, 200)
-        self.assertIn('idempotent replay', resp2.data.get('message', '').lower())
+        self.assertEqual(resp2.data.get('operation_ref'), op_ref)
 
         count_after_call2 = VoucherGSTINAttributionLog.objects.filter(voucher=v_retry).count()
         self.assertEqual(count_after_call1, count_after_call2, "Idempotent retry must not append duplicate audit events")
+
+    def test_r243_05_concurrent_identical_operation_requests(self):
+        """
+        R243-05: Concurrent identical operation requests -> Exactly one execution; others replayed.
+        """
+        import threading
+        from django.db import connection
+
+        if connection.vendor != 'postgresql':
+            self.skipTest(f"Dedicated PostgreSQL Concurrency Certification requires real PostgreSQL engine, got '{connection.vendor}'.")
+
+        v_dup = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/R243/CONC/01',
+            voucher_date=date(2027, 3, 1),
+            total_amount=Decimal('4000.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+
+        op_ref = f"OP_R243_05_{self.company.id.hex[:6]}"
+        barrier = threading.Barrier(2)
+        results = []
+        errors = []
+
+        def worker_request():
+            from django.db import connection
+            connection.close()
+            try:
+                barrier.wait(timeout=10)
+                client = APIClient()
+                client.force_authenticate(user=self.user)
+                resp = client.post('/api/v1/gst/itc/attribute-voucher/', {
+                    'voucher_ids': [str(v_dup.id)],
+                    'registration_id': str(self.registration.id),
+                    'operation_ref': op_ref
+                }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+                results.append(resp)
+            except Exception as e:
+                errors.append(e)
+
+        t1 = threading.Thread(target=worker_request)
+        t2 = threading.Thread(target=worker_request)
+        t1.start()
+        t2.start()
+        t1.join(timeout=15)
+        t2.join(timeout=15)
+
+        self.assertEqual(len(errors), 0, f"Concurrent identical requests threw errors: {errors}")
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0].status_code, 200)
+        self.assertEqual(results[1].status_code, 200)
+        # Exactly 1 operation row
+        self.assertEqual(
+            VoucherAttributionOperation.objects.filter(company=self.company, operation_ref=op_ref, status='COMPLETED').count(),
+            1
+        )
+        # Exactly 1 attribution log row
+        self.assertEqual(
+            VoucherGSTINAttributionLog.objects.filter(voucher=v_dup).count(),
+            1
+        )
+
+    def test_r243_06_concurrent_conflicting_operation_requests(self):
+        """
+        R243-06: Concurrent conflicting operation requests with same operation_ref -> One wins; conflicting rejected with 409.
+        """
+        import threading
+        from django.db import connection
+
+        if connection.vendor != 'postgresql':
+            self.skipTest(f"Dedicated PostgreSQL Concurrency Certification requires real PostgreSQL engine, got '{connection.vendor}'.")
+
+        v_a = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/R243/CONF/01',
+            voucher_date=date(2027, 3, 2),
+            total_amount=Decimal('1000.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+        v_b = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/R243/CONF/02',
+            voucher_date=date(2027, 3, 3),
+            total_amount=Decimal('2000.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+
+        op_ref = f"OP_R243_06_{self.company.id.hex[:6]}"
+        barrier = threading.Barrier(2)
+        status_codes = []
+        errors = []
+
+        def worker_conflicting(target_v):
+            from django.db import connection
+            connection.close()
+            try:
+                barrier.wait(timeout=10)
+                client = APIClient()
+                client.force_authenticate(user=self.user)
+                resp = client.post('/api/v1/gst/itc/attribute-voucher/', {
+                    'voucher_ids': [str(target_v.id)],
+                    'registration_id': str(self.registration.id),
+                    'operation_ref': op_ref
+                }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+                status_codes.append(resp.status_code)
+            except Exception as e:
+                errors.append(e)
+
+        t1 = threading.Thread(target=worker_conflicting, args=(v_a,))
+        t2 = threading.Thread(target=worker_conflicting, args=(v_b,))
+        t1.start()
+        t2.start()
+        t1.join(timeout=15)
+        t2.join(timeout=15)
+
+        self.assertEqual(len(errors), 0, f"Thread error in conflict race: {errors}")
+        self.assertIn(200, status_codes)
+        self.assertIn(409, status_codes)
+
+    def test_r243_16_17_18_raw_sql_triggers_update_delete_rejected_insert_permitted(self):
+        """
+        R243-16, R243-17, R243-18: Raw SQL database trigger guarantees:
+        - Raw SQL INSERT is permitted.
+        - Raw SQL UPDATE is rejected by database trigger.
+        - Raw SQL DELETE is rejected by database trigger.
+        """
+        from django.db import connection, DatabaseError
+
+        if connection.vendor != 'postgresql':
+            self.skipTest("Raw SQL trigger verification requires PostgreSQL.")
+
+        v = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/TRIG/01',
+            voucher_date=date(2027, 4, 1),
+            total_amount=Decimal('1000.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+        import uuid as py_uuid
+        log_id = str(py_uuid.uuid4())
+
+        # R243-18: Direct SQL INSERT permitted
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO gst_vouchergstinattributionlog
+                (id, company_id, voucher_id, gst_registration_id, previous_gstin, new_gstin,
+                 attributed_at, attribution_source, reason, operation_ref, is_correction)
+                VALUES
+                (%s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s);
+            """, [log_id, self.company.id, v.id, self.registration.id, '', '07CHI9999C1Z5',
+                  'SQL_INSERT', 'Direct SQL insert test', 'SQL_OP_01', False])
+
+        # R243-16: Direct SQL UPDATE rejected
+        with self.assertRaises(DatabaseError) as cm_upd:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    UPDATE gst_vouchergstinattributionlog
+                    SET new_gstin = '07TAMPERED99Z1'
+                    WHERE id = %s;
+                """, [log_id])
+        self.assertIn('Statutory Audit Integrity Invariant', str(cm_upd.exception))
+
+        # R243-17: Direct SQL DELETE rejected
+        with self.assertRaises(DatabaseError) as cm_del:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    DELETE FROM gst_vouchergstinattributionlog
+                    WHERE id = %s;
+                """, [log_id])
+        self.assertIn('Statutory Audit Integrity Invariant', str(cm_del.exception))
+
+    def test_r243_19_trigger_state_and_rollback_policy(self):
+        """
+        R243-19: PostgreSQL database trigger verification & rollback governance policy:
+        - Trigger exists in PostgreSQL catalog.
+        - Rollback guard raises RuntimeError unless ALLOW_AUDIT_TRIGGER_ROLLBACK=true.
+        """
+        import os
+        import importlib
+        from django.db import connection
+        mig_0027 = importlib.import_module('apps.gst.migrations.0027_attribution_operation_and_frequency_audit')
+        guard_trigger_rollback = mig_0027.guard_trigger_rollback
+
+        if connection.vendor != 'postgresql':
+            self.skipTest("Trigger catalog query requires PostgreSQL.")
+
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT trigger_name
+                FROM information_schema.triggers
+                WHERE event_object_table = 'gst_vouchergstinattributionlog'
+                  AND trigger_name = 'trg_prevent_attribution_log_mutation';
+            """)
+            row = cursor.fetchone()
+            self.assertIsNotNone(row, "Immutability trigger trg_prevent_attribution_log_mutation must exist in PostgreSQL catalog")
+
+        # Verify rollback guard raises RuntimeError by default
+        old_val = os.environ.get('ALLOW_AUDIT_TRIGGER_ROLLBACK')
+        try:
+            if 'ALLOW_AUDIT_TRIGGER_ROLLBACK' in os.environ:
+                del os.environ['ALLOW_AUDIT_TRIGGER_ROLLBACK']
+            with self.assertRaises(RuntimeError) as cm:
+                guard_trigger_rollback(None, connection.schema_editor())
+            self.assertIn('Statutory Compliance Invariant', str(cm.exception))
+        finally:
+            if old_val is not None:
+                os.environ['ALLOW_AUDIT_TRIGGER_ROLLBACK'] = old_val
+
+
+class Round243TargetedRemediationTests(TestCase):
+    """
+    Targeted test suite for Round 2.4.3 P0 & P1 remediations:
+    - Operation-reference request-binding idempotency (R243-01..R243-04, R243-07..R243-08)
+    - Centralized filing frequency verification (R243-09..R243-12)
+    - Manual frequency verification authorization (R243-13..R243-15)
+    """
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email='auditor_243@precision.com',
+            password='TestPassword123!'
+        )
+        self.client.force_authenticate(user=self.user)
+
+        self.company = Company.objects.create(
+            name='Precision Instruments Ltd',
+            legal_name='Precision Instruments Ltd',
+            gstin='07PREC9999P1Z1',
+            state_code='07'
+        )
+        UserCompany.objects.create(user=self.user, company=self.company, role='OWNER')
+
+        self.registration = GSTRegistration.objects.create(
+            company=self.company,
+            gstin='07PREC9999P1Z1',
+            legal_name='Precision Instruments Ltd',
+            state_code='07',
+            status='ACTIVE',
+            filing_frequency='MONTHLY',
+            frequency_verified_source='GST_PORTAL_API',
+            frequency_verified_at=timezone.now(),
+            is_primary=True
+        )
+
+        self.reg_branch = GSTRegistration.objects.create(
+            company=self.company,
+            gstin='07BRANCH999B1Z2',
+            legal_name='Precision Branch Unit',
+            state_code='07',
+            status='ACTIVE',
+            filing_frequency='MONTHLY',
+            frequency_verified_source='GST_PORTAL_API',
+            frequency_verified_at=timezone.now()
+        )
+
+        self.vendor_group = LedgerGroup.objects.create(
+            company=self.company,
+            name='Sundry Creditors',
+            nature='LIABILITY'
+        )
+        self.vendor_ledger = Ledger.objects.create(
+            company=self.company,
+            group=self.vendor_group,
+            name='Apex Steel Supplies',
+            gstin='07SUPP8888S1Z9'
+        )
+
+    def test_r243_01_reuse_operation_ref_identical_request_replayed(self):
+        """
+        R243-01: Replaying identical operation returns original response without appending duplicate audit logs.
+        """
+        v = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/243/01',
+            voucher_date=date(2026, 8, 1),
+            total_amount=Decimal('1000.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+        op_ref = 'OP_R243_01_TEST'
+        payload = {
+            'voucher_ids': [str(v.id)],
+            'registration_id': str(self.registration.id),
+            'operation_ref': op_ref
+        }
+
+        resp1 = self.client.post('/api/v1/gst/itc/attribute-voucher/', payload, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp1.status_code, 200)
+        self.assertEqual(resp1.data['attributed_count'], 1)
+
+        # Call 2: Identical payload and operation_ref
+        resp2 = self.client.post('/api/v1/gst/itc/attribute-voucher/', payload, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp2.status_code, 200)
+        self.assertEqual(resp2.data, resp1.data)
+
+        # Exactly 1 operation row and 1 audit log row
+        self.assertEqual(VoucherAttributionOperation.objects.filter(company=self.company, operation_ref=op_ref).count(), 1)
+        self.assertEqual(VoucherGSTINAttributionLog.objects.filter(voucher=v).count(), 1)
+
+    def test_r243_02_reuse_operation_ref_different_vouchers_conflict(self):
+        """
+        R243-02: Reusing operation_ref with different voucher IDs is rejected with HTTP 409 Conflict.
+        """
+        v1 = Voucher.objects.create(company=self.company, voucher_type='PURCHASE', voucher_number='PUR/243/02A', voucher_date=date(2026, 8, 1), total_amount=Decimal('1000.00'), created_by=self.user, status='POSTED')
+        v2 = Voucher.objects.create(company=self.company, voucher_type='PURCHASE', voucher_number='PUR/243/02B', voucher_date=date(2026, 8, 2), total_amount=Decimal('2000.00'), created_by=self.user, status='POSTED')
+
+        op_ref = 'OP_R243_02_TEST'
+        resp1 = self.client.post('/api/v1/gst/itc/attribute-voucher/', {'voucher_ids': [str(v1.id)], 'registration_id': str(self.registration.id), 'operation_ref': op_ref}, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp1.status_code, 200)
+
+        # Conflicting request: different voucher
+        resp2 = self.client.post('/api/v1/gst/itc/attribute-voucher/', {'voucher_ids': [str(v2.id)], 'registration_id': str(self.registration.id), 'operation_ref': op_ref}, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp2.status_code, 409)
+        self.assertEqual(resp2.data.get('error_code'), 'OPERATION_REFERENCE_CONFLICT')
+
+    def test_r243_03_reuse_operation_ref_different_registration_conflict(self):
+        """
+        R243-03: Reusing operation_ref with different registration is rejected with HTTP 409 Conflict.
+        """
+        v = Voucher.objects.create(company=self.company, voucher_type='PURCHASE', voucher_number='PUR/243/03', voucher_date=date(2026, 8, 3), total_amount=Decimal('1000.00'), created_by=self.user, status='POSTED')
+        op_ref = 'OP_R243_03_TEST'
+
+        resp1 = self.client.post('/api/v1/gst/itc/attribute-voucher/', {'voucher_ids': [str(v.id)], 'registration_id': str(self.registration.id), 'operation_ref': op_ref}, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp1.status_code, 200)
+
+        # Conflicting request: different target registration
+        resp2 = self.client.post('/api/v1/gst/itc/correct-attribution/', {'voucher_ids': [str(v.id)], 'registration_id': str(self.reg_branch.id), 'reason': 'Moving to branch registration unit', 'operation_ref': op_ref}, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp2.status_code, 409)
+        self.assertEqual(resp2.data.get('error_code'), 'OPERATION_REFERENCE_CONFLICT')
+
+    def test_r243_04_reuse_operation_ref_different_correction_mode_conflict(self):
+        """
+        R243-04: Reusing operation_ref with different correction mode is rejected with HTTP 409 Conflict.
+        """
+        v = Voucher.objects.create(company=self.company, voucher_type='PURCHASE', voucher_number='PUR/243/04', voucher_date=date(2026, 8, 4), total_amount=Decimal('1000.00'), created_by=self.user, status='POSTED')
+        op_ref = 'OP_R243_04_TEST'
+
+        resp1 = self.client.post('/api/v1/gst/itc/attribute-voucher/', {'voucher_ids': [str(v.id)], 'registration_id': str(self.registration.id), 'operation_ref': op_ref}, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp1.status_code, 200)
+
+        # Conflicting request: is_correction=True via correct-attribution endpoint
+        resp2 = self.client.post('/api/v1/gst/itc/correct-attribution/', {'voucher_ids': [str(v.id)], 'registration_id': str(self.registration.id), 'reason': 'Valid correction reason on same voucher', 'operation_ref': op_ref}, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp2.status_code, 409)
+        self.assertEqual(resp2.data.get('error_code'), 'OPERATION_REFERENCE_CONFLICT')
+
+    def test_r243_07_retry_after_transaction_failure(self):
+        """
+        R243-07: First request fails (invalid voucher); retry with valid payload is permitted.
+        """
+        other_comp = Company.objects.create(name='Other Tenant', legal_name='Other Tenant Ltd', gstin='07OTH9999O1Z1', state_code='07')
+        foreign_v = Voucher.objects.create(company=other_comp, voucher_type='PURCHASE', voucher_number='PUR/FOR/01', voucher_date=date(2026, 8, 5), total_amount=Decimal('500.00'), created_by=self.user, status='POSTED')
+        valid_v = Voucher.objects.create(company=self.company, voucher_type='PURCHASE', voucher_number='PUR/VAL/01', voucher_date=date(2026, 8, 6), total_amount=Decimal('500.00'), created_by=self.user, status='POSTED')
+
+        op_ref = 'OP_R243_07_FAIL_THEN_RETRY'
+
+        # Attempt 1: Target includes foreign voucher -> 400 Bad Request
+        resp1 = self.client.post('/api/v1/gst/itc/attribute-voucher/', {
+            'voucher_ids': [str(foreign_v.id)],
+            'registration_id': str(self.registration.id),
+            'operation_ref': op_ref
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp1.status_code, 400)
+        self.assertEqual(resp1.data.get('error_code'), 'CROSS_TENANT_OR_INVALID_VOUCHERS')
+
+        # Attempt 2: Target valid voucher with same operation_ref -> Allowed to retry and succeed
+        resp2 = self.client.post('/api/v1/gst/itc/attribute-voucher/', {
+            'voucher_ids': [str(valid_v.id)],
+            'registration_id': str(self.registration.id),
+            'operation_ref': op_ref
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp2.status_code, 200)
+        self.assertEqual(resp2.data['attributed_count'], 1)
+
+    def test_r243_08_cross_tenant_operation_reference_lookup(self):
+        """
+        R243-08: Cross-tenant operation-reference lookup is strictly isolated by company.
+        Company B cannot see Company A's operation or replay its results.
+        """
+        user_b = User.objects.create_user(email='user_b@othercorp.com', password='Password123!')
+        comp_b = Company.objects.create(name='Tenant B Corp', legal_name='Tenant B Corp', gstin='07TENB9999B1Z8', state_code='07')
+        UserCompany.objects.create(user=user_b, company=comp_b, role='OWNER')
+        reg_b = GSTRegistration.objects.create(company=comp_b, gstin='07TENB9999B1Z8', legal_name='Tenant B Corp', state_code='07', status='ACTIVE', filing_frequency='MONTHLY', frequency_verified_source='GST_PORTAL_API', frequency_verified_at=timezone.now())
+
+        v_a = Voucher.objects.create(company=self.company, voucher_type='PURCHASE', voucher_number='PUR/243/08A', voucher_date=date(2026, 8, 7), total_amount=Decimal('1000.00'), created_by=self.user, status='POSTED')
+        v_b = Voucher.objects.create(company=comp_b, voucher_type='PURCHASE', voucher_number='PUR/243/08B', voucher_date=date(2026, 8, 8), total_amount=Decimal('2000.00'), created_by=user_b, status='POSTED')
+
+        shared_op_ref = 'OP_TENANT_ISOLATION_REF'
+
+        # Tenant A completes operation
+        resp_a = self.client.post('/api/v1/gst/itc/attribute-voucher/', {'voucher_ids': [str(v_a.id)], 'registration_id': str(self.registration.id), 'operation_ref': shared_op_ref}, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp_a.status_code, 200)
+
+        # Tenant B uses same op_ref on their own company -> Must execute for Tenant B independently
+        client_b = APIClient()
+        client_b.force_authenticate(user=user_b)
+        resp_b = client_b.post('/api/v1/gst/itc/attribute-voucher/', {'voucher_ids': [str(v_b.id)], 'registration_id': str(reg_b.id), 'operation_ref': shared_op_ref}, format='json', HTTP_X_COMPANY_ID=str(comp_b.id))
+        self.assertEqual(resp_b.status_code, 200)
+        self.assertEqual(resp_b.data['attributed_gstin'], reg_b.gstin)
+
+        # Exactly 1 op record for Comp A and 1 op record for Comp B
+        self.assertEqual(VoucherAttributionOperation.objects.filter(company=self.company, operation_ref=shared_op_ref).count(), 1)
+        self.assertEqual(VoucherAttributionOperation.objects.filter(company=comp_b, operation_ref=shared_op_ref).count(), 1)
+
+    @patch('apps.gst.services.reconciliation_service.SandboxGSTClient')
+    def test_r243_09_verified_qrmp_provider_interim_period(self, mock_client_cls):
+        """
+        R243-09: Verified QRMP registration on interim month returns is_qrmp_not_applicable=True, no REQUEST_FAILED row.
+        """
+        reg_qrmp = GSTRegistration.objects.create(
+            company=self.company,
+            gstin='07QRMP9999Q1Z5',
+            legal_name='Precision QRMP Unit',
+            state_code='07',
+            status='ACTIVE',
+            filing_frequency='QRMP',
+            frequency_verified_source='GST_PORTAL_API',
+            frequency_verified_at=timezone.now(),
+            auth_token='dummy-auth-token-qrmp'
+        )
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.is_configured.return_value = True
+        mock_client.fetch_gstr2b.return_value = {
+            'success': False,
+            'status_code': 400,
+            'error': 'GSTR2B form is not applicable for this taxpayer period.',
+            'error_category': 'FORM_NOT_APPLICABLE'
+        }
+
+        res = GSTReconciliationService.fetch_and_ingest_from_sandbox(
+            company=self.company,
+            return_period='042026',
+            registration=reg_qrmp,
+            user=self.user
+        )
+        self.assertTrue(res['is_qrmp_not_applicable'])
+        self.assertEqual(res['status'], 'NOT_APPLICABLE')
+        # Does not create REQUEST_FAILED batch
+        self.assertFalse(GSTR2BImport.objects.filter(company=self.company, gst_registration=reg_qrmp, return_period='042026', status='REQUEST_FAILED').exists())
+
+    @patch('apps.gst.services.reconciliation_service.SandboxGSTClient')
+    def test_r243_10_unverified_raw_qrmp_provider_response_not_treated_as_verified(self, mock_client_cls):
+        """
+        R243-10: Unverified registration with raw filing_frequency='QRMP' is NOT treated as verified QRMP.
+        Creates a REQUEST_FAILED import batch instead of non-fatal QRMP skip.
+        """
+        reg_unverified_qrmp = GSTRegistration.objects.create(
+            company=self.company,
+            gstin='07UNVQRMP99U1Z7',
+            legal_name='Unverified QRMP Unit',
+            state_code='07',
+            status='ACTIVE',
+            filing_frequency='QRMP',
+            frequency_verified_source='',
+            frequency_verified_at=None,
+            auth_token='dummy-auth-token-unv'
+        )
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.is_configured.return_value = True
+        mock_client.fetch_gstr2b.return_value = {
+            'success': False,
+            'status_code': 400,
+            'error': 'GSTR2B form is not applicable for this taxpayer period.',
+            'error_category': 'FORM_NOT_APPLICABLE'
+        }
+
+        res = GSTReconciliationService.fetch_and_ingest_from_sandbox(
+            company=self.company,
+            return_period='042026',
+            registration=reg_unverified_qrmp,
+            user=self.user
+        )
+        self.assertFalse(res['is_qrmp_not_applicable'])
+        self.assertEqual(res['fetch_status'], 'REQUEST_FAILED')
+        self.assertTrue(GSTR2BImport.objects.filter(company=self.company, gst_registration=reg_unverified_qrmp, return_period='042026', status='REQUEST_FAILED').exists())
+
+    def test_r243_11_unverified_raw_monthly_not_treated_as_verified(self):
+        """
+        R243-11: Unverified registration with raw filing_frequency='MONTHLY' resolves to UNKNOWN.
+        """
+        reg_unv_monthly = GSTRegistration.objects.create(
+            company=self.company,
+            gstin='07UNVMON99M1Z3',
+            legal_name='Unverified Monthly Unit',
+            state_code='07',
+            status='ACTIVE',
+            filing_frequency='MONTHLY',
+            frequency_verified_source='',
+            frequency_verified_at=None
+        )
+        self.assertEqual(reg_unv_monthly.get_verified_filing_frequency(), 'UNKNOWN')
+        stmt_res = GSTPeriodService.resolve_gstr2b_statement_period(date(2026, 4, 15), recipient_registration=reg_unv_monthly)
+        self.assertEqual(stmt_res.recipient_filing_frequency, 'UNKNOWN')
+        self.assertEqual(stmt_res.period_resolution_status, 'REVIEW_REQUIRED')
+
+    @patch('apps.gst.services.reconciliation_service.SandboxGSTClient')
+    def test_r243_12_provider_error_no_frequency_mutation(self, mock_client_cls):
+        """
+        R243-12: Provider error does not mutate registration frequency or verification provenance.
+        """
+        self.registration.auth_token = 'dummy-token'
+        self.registration.save(update_fields=['auth_token'])
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.is_configured.return_value = True
+        mock_client.fetch_gstr2b.return_value = {
+            'success': False,
+            'status_code': 500,
+            'error': 'Internal GSTN Gateway Server Error',
+            'error_category': 'PROVIDER_ERROR'
+        }
+
+        freq_before = self.registration.filing_frequency
+        src_before = self.registration.frequency_verified_source
+
+        GSTReconciliationService.fetch_and_ingest_from_sandbox(
+            company=self.company,
+            return_period='052026',
+            registration=self.registration,
+            user=self.user
+        )
+
+        self.registration.refresh_from_db()
+        self.assertEqual(self.registration.filing_frequency, freq_before)
+        self.assertEqual(self.registration.frequency_verified_source, src_before)
+
+    def test_r243_13_authorized_manual_verification_accepted_and_audited(self):
+        """
+        R243-13: Authorized compliance user (OWNER/ADMIN) can verify frequency and creates audit log.
+        """
+        reason_text = "Board resolution passed on 2026-08-01 adopting QRMP filing scheme."
+        self.registration.set_filing_frequency(
+            frequency='QRMP',
+            source='USER_MANUAL',
+            user=self.user,
+            reason=reason_text
+        )
+        self.registration.refresh_from_db()
+        self.assertEqual(self.registration.filing_frequency, 'QRMP')
+        self.assertEqual(self.registration.get_verified_filing_frequency(), 'QRMP')
+
+        audit_log = GSTRegistrationFrequencyAuditLog.objects.filter(gst_registration=self.registration).first()
+        self.assertIsNotNone(audit_log)
+        self.assertEqual(audit_log.verified_by, self.user)
+        self.assertEqual(audit_log.previous_frequency, 'MONTHLY')
+        self.assertEqual(audit_log.new_frequency, 'QRMP')
+        self.assertEqual(audit_log.reason, reason_text)
+
+    def test_r243_14_unauthorized_manual_verification_rejected(self):
+        """
+        R243-14: User without compliance role (e.g. VIEWER) cannot manually verify filing frequency.
+        """
+        viewer_user = User.objects.create_user(email='viewer@precision.com', password='ViewerPass123!')
+        UserCompany.objects.create(user=viewer_user, company=self.company, role='VIEWER')
+
+        freq_before = self.registration.filing_frequency
+
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        with self.assertRaises((DRFValidationError, DjangoValidationError)) as cm:
+            self.registration.set_filing_frequency(
+                frequency='QRMP',
+                source='USER_MANUAL',
+                user=viewer_user,
+                reason='Unauthorized viewer attempting change'
+            )
+        self.assertIn('not authorized', str(cm.exception).lower())
+
+        self.registration.refresh_from_db()
+        self.assertEqual(self.registration.filing_frequency, freq_before)
+
+    def test_r243_15_cross_company_manual_verification_rejected(self):
+        """
+        R243-15: User belonging to another company cannot verify filing frequency.
+        """
+        comp_foreign = Company.objects.create(name='Foreign Co Ltd', legal_name='Foreign Co Ltd', gstin='07FOR9999F1Z9', state_code='07')
+        foreign_user = User.objects.create_user(email='foreign_admin@foreignco.com', password='ForeignPass123!')
+        UserCompany.objects.create(user=foreign_user, company=comp_foreign, role='OWNER')
+
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        with self.assertRaises((DRFValidationError, DjangoValidationError)) as cm:
+            self.registration.set_filing_frequency(
+                frequency='QRMP',
+                source='USER_MANUAL',
+                user=foreign_user,
+                reason='Cross company user attempt'
+            )
+        self.assertIn('not authorized', str(cm.exception).lower())

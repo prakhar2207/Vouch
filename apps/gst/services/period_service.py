@@ -404,21 +404,15 @@ class GSTPeriodService:
         evidence = 'FILING_FREQUENCY_UNKNOWN'
 
         if recipient_registration is not None:
-            # Check canonical verification on registration
-            is_reg_verified = False
-            if hasattr(recipient_registration, 'is_frequency_verified'):
-                is_reg_verified = recipient_registration.is_frequency_verified()
-            else:
-                reg_freq_val = (getattr(recipient_registration, 'filing_frequency', None) or '').strip().upper()
-                src = (getattr(recipient_registration, 'frequency_verified_source', None) or '').strip().upper()
-                at = getattr(recipient_registration, 'frequency_verified_at', None)
-                by = getattr(recipient_registration, 'frequency_verified_by_id', None) or getattr(recipient_registration, 'frequency_verified_by', None)
-                if reg_freq_val in ['MONTHLY', 'QRMP'] and at and src in ['GST_PORTAL_API', 'RETURN_STATUS_API', 'USER_MANUAL']:
-                    if src != 'USER_MANUAL' or by:
-                        is_reg_verified = True
+            # Check canonical verification interface on registration (Round 2.4.3 P1)
+            verified_f = 'UNKNOWN'
+            if hasattr(recipient_registration, 'get_verified_filing_frequency'):
+                verified_f = recipient_registration.get_verified_filing_frequency()
+            elif hasattr(recipient_registration, 'is_frequency_verified') and recipient_registration.is_frequency_verified():
+                verified_f = (getattr(recipient_registration, 'filing_frequency', None) or '').strip().upper()
 
-            if is_reg_verified:
-                freq = (getattr(recipient_registration, 'filing_frequency', None) or '').strip().upper()
+            if verified_f in ['MONTHLY', 'QRMP']:
+                freq = verified_f
                 evidence = 'REGISTRATION_FREQUENCY_VERIFIED'
             else:
                 # Unverified registration cannot be bypassed by an explicit filing_frequency argument
