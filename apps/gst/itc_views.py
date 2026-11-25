@@ -465,9 +465,8 @@ class ITCVoucherAttributionAPIView(APIView):
         if registration.status != 'ACTIVE':
             return Response({'success': False, 'error': f"GST Registration '{registration.gstin}' is inactive.", 'error_code': 'INACTIVE_REGISTRATION'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Canonical request fingerprint for durable operation-level idempotency (P0 / Round 2.4.3)
+        # Canonical request fingerprint for durable operation-level idempotency (P0 / Round 2.4.3 & 2.4.4)
         canonical_dict = {
-            'actor_id': str(request.user.id),
             'attribution_source': str(source).strip().upper(),
             'company_id': str(company.id),
             'is_correction': bool(is_correction),
@@ -487,15 +486,30 @@ class ITCVoucherAttributionAPIView(APIView):
                 company=company,
                 operation_ref=client_op_ref
             ).first()
-            if existing_op and existing_op.status != 'FAILED':
+            if existing_op:
+                # 1. Permanently bound fingerprint invariant:
+                # Reusing an operation reference with conflicting parameters must return 409
+                # regardless of whether the existing record is PENDING, COMPLETED, or FAILED.
                 if existing_op.request_fingerprint != request_fingerprint:
                     return Response({
                         'success': False,
                         'error': f"Operation reference conflict: Reused operation_ref '{client_op_ref}' with conflicting request parameters.",
                         'error_code': 'OPERATION_REFERENCE_CONFLICT'
                     }, status=status.HTTP_409_CONFLICT)
+
+                # 2. Permanent actor invariant:
+                if existing_op.actor_id and existing_op.actor_id != request.user.id:
+                    return Response({
+                        'success': False,
+                        'error': f"Operation reference conflict: Reused operation_ref '{client_op_ref}' was initiated by another user.",
+                        'error_code': 'OPERATION_ACTOR_MISMATCH'
+                    }, status=status.HTTP_409_CONFLICT)
+
+                # 3. Fast-path replay if previously completed
                 if existing_op.status == 'COMPLETED':
-                    return Response(existing_op.response_payload, status=status.HTTP_200_OK)
+                    replayed_payload = dict(existing_op.response_payload or {})
+                    replayed_payload['is_idempotent_replay'] = True
+                    return Response(replayed_payload, status=status.HTTP_200_OK)
 
         now = timezone.now()
 
@@ -514,32 +528,32 @@ class ITCVoucherAttributionAPIView(APIView):
             )
 
             if not created:
-                if op_record.status != 'FAILED':
-                    # Re-validate under lock: check if fingerprints conflict
-                    if op_record.request_fingerprint != request_fingerprint:
-                        return Response({
-                            'success': False,
-                            'error': f"Operation reference conflict: Reused operation_ref '{operation_ref}' with conflicting request parameters.",
-                            'error_code': 'OPERATION_REFERENCE_CONFLICT'
-                        }, status=status.HTTP_409_CONFLICT)
+                # 1. Permanently bound fingerprint invariant:
+                if op_record.request_fingerprint != request_fingerprint:
+                    return Response({
+                        'success': False,
+                        'error': f"Operation reference conflict: Reused operation_ref '{operation_ref}' with conflicting request parameters.",
+                        'error_code': 'OPERATION_REFERENCE_CONFLICT'
+                    }, status=status.HTTP_409_CONFLICT)
 
-                    # Replay completed response if previously finished
-                    if op_record.status == 'COMPLETED':
-                        return Response(op_record.response_payload, status=status.HTTP_200_OK)
+                # 2. Permanent actor invariant:
+                if op_record.actor_id and op_record.actor_id != request.user.id:
+                    return Response({
+                        'success': False,
+                        'error': f"Operation reference conflict: Reused operation_ref '{operation_ref}' was initiated by another user.",
+                        'error_code': 'OPERATION_ACTOR_MISMATCH'
+                    }, status=status.HTTP_409_CONFLICT)
 
-                    if op_record.status == 'PENDING' and op_record.actor_id != request.user.id:
-                        return Response({
-                            'success': False,
-                            'error': f"Operation '{operation_ref}' is currently in progress by another worker.",
-                            'error_code': 'OPERATION_IN_PROGRESS'
-                        }, status=status.HTTP_409_CONFLICT)
+                # 3. Already completed -> replay cached response with is_idempotent_replay=True
+                if op_record.status == 'COMPLETED':
+                    replayed_payload = dict(op_record.response_payload or {})
+                    replayed_payload['is_idempotent_replay'] = True
+                    return Response(replayed_payload, status=status.HTTP_200_OK)
 
-                # Reset to PENDING with current fingerprint and target
+                # 4. If status is PENDING or FAILED, reset status to PENDING for re-execution.
+                # Permanent fields (request_fingerprint, actor, target_registration, is_correction) are never mutated!
                 op_record.status = 'PENDING'
-                op_record.request_fingerprint = request_fingerprint
-                op_record.target_registration = registration
-                op_record.is_correction = is_correction
-                op_record.save(update_fields=['status', 'request_fingerprint', 'target_registration', 'is_correction'])
+                op_record.save(update_fields=['status'])
 
             # Acquire row-level locks on candidate vouchers
             vouchers = list(
@@ -606,11 +620,16 @@ class ITCVoucherAttributionAPIView(APIView):
             action_word = "corrected" if is_correction else "attributed"
             response_data = {
                 'success': True,
+                'attribution_status': 'CORRECTED' if is_correction else 'ATTRIBUTED',
+                'reconciliation_status': 'PENDING',
+                'reconciliation_summary': None,
+                'reconciliation_error': None,
                 'message': f"Successfully {action_word} {len(vouchers)} voucher(s) to GSTIN {registration.gstin}.",
                 'attributed_count': len(vouchers),
                 'attributed_gstin': registration.gstin,
                 'operation_ref': operation_ref,
-                'is_correction': is_correction
+                'is_correction': is_correction,
+                'is_idempotent_replay': False
             }
 
             op_record.status = 'COMPLETED'
@@ -618,8 +637,28 @@ class ITCVoucherAttributionAPIView(APIView):
             op_record.response_payload = response_data
             op_record.save(update_fields=['status', 'completed_at', 'response_payload'])
 
-        # Trigger registration reconciliation after transaction commit
-        ITCReconciliationService.reconcile_period(company, registration=registration)
+        # Outside atomic transaction: decoupled reconciliation execution (Round 2.4.4 P1)
+        # Attribution is already durably committed. Reconciliation failures do NOT roll back attribution.
+        rec_status = 'NOT_RUN'
+        rec_summary = None
+        rec_error = None
+        try:
+            rec_summary = ITCReconciliationService.reconcile_period(company, registration=registration)
+            rec_status = 'RECONCILED'
+        except Exception as e:
+            logger.exception(f"Post-attribution reconciliation failed for registration {registration.gstin}: {e}")
+            rec_status = 'RECONCILIATION_FAILED'
+            rec_error = str(e)
+
+        # Update response and durable operation record with reconciliation outcome
+        response_data['reconciliation_status'] = rec_status
+        response_data['reconciliation_summary'] = rec_summary
+        response_data['reconciliation_error'] = rec_error
+
+        # Update cached payload so future replays accurately reflect reconciliation status
+        VoucherAttributionOperation.objects.filter(
+            id=op_record.id
+        ).update(response_payload=response_data)
 
         return Response(response_data, status=status.HTTP_200_OK)
 

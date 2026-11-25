@@ -405,27 +405,46 @@ class GSTRegistration(models.Model):
                 )
 
         prev_freq = self.filing_frequency or 'UNKNOWN'
-        self.filing_frequency = clean_freq
-        self.frequency_verified_source = clean_source
-        self.frequency_verified_at = timezone.now()
-        self.frequency_verified_by = user
+        prev_source = self.frequency_verified_source
+        prev_at = self.frequency_verified_at
+        prev_by = self.frequency_verified_by
+        now = timezone.now()
 
         if commit:
-            self.save(update_fields=[
-                'filing_frequency', 'frequency_verified_source',
-                'frequency_verified_at', 'frequency_verified_by'
-            ])
-            # Persist attributable audit record (Round 2.4.3 P1)
-            GSTRegistrationFrequencyAuditLog.objects.create(
-                company=self.company,
-                gst_registration=self,
-                previous_frequency=prev_freq,
-                new_frequency=clean_freq,
-                verification_source=clean_source,
-                verified_by=user,
-                verified_at=self.frequency_verified_at,
-                reason=reason or (f"Filing frequency updated to {clean_freq} via {clean_source}")
-            )
+            from django.db import transaction
+            try:
+                with transaction.atomic():
+                    self.filing_frequency = clean_freq
+                    self.frequency_verified_source = clean_source
+                    self.frequency_verified_at = now
+                    self.frequency_verified_by = user
+                    self.save(update_fields=[
+                        'filing_frequency', 'frequency_verified_source',
+                        'frequency_verified_at', 'frequency_verified_by'
+                    ])
+                    # Persist attributable audit record (Round 2.4.3 P1 & Round 2.4.4 Atomic Guarantee)
+                    GSTRegistrationFrequencyAuditLog.objects.create(
+                        company=self.company,
+                        gst_registration=self,
+                        previous_frequency=prev_freq,
+                        new_frequency=clean_freq,
+                        verification_source=clean_source,
+                        verified_by=user,
+                        verified_at=now,
+                        reason=reason or (f"Filing frequency updated to {clean_freq} via {clean_source}")
+                    )
+            except Exception:
+                # Restore in-memory attributes on rollback so the object stays consistent with DB
+                self.filing_frequency = prev_freq
+                self.frequency_verified_source = prev_source
+                self.frequency_verified_at = prev_at
+                self.frequency_verified_by = prev_by
+                raise
+        else:
+            self.filing_frequency = clean_freq
+            self.frequency_verified_source = clean_source
+            self.frequency_verified_at = now
+            self.frequency_verified_by = user
 
     def __str__(self):
         return f"{self.gstin} ({self.state_name}) - {self.company.name} [{self.status}]"
@@ -928,27 +947,42 @@ class GSTRegistrationFrequencyAuditLog(models.Model):
     Append-only statutory audit trail of GST registration filing frequency verifications (Round 2.4.3 P1).
     Tracks historical transitions between MONTHLY, QRMP, and UNKNOWN, recording the authorized user,
     timestamp, provenance source, and mandatory justification.
+    Protected at database and ORM levels against mutation or deletion (Round 2.4.4 P1).
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name='gst_frequency_audit_logs', db_index=True)
     gst_registration = models.ForeignKey(
         GSTRegistration,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name='frequency_audit_logs',
         db_index=True
     )
     previous_frequency = models.CharField(max_length=20, default='UNKNOWN')
     new_frequency = models.CharField(max_length=20)
     verification_source = models.CharField(max_length=50, default='USER_MANUAL')
-    verified_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    verified_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True)
     verified_at = models.DateTimeField(default=timezone.now, db_index=True)
     reason = models.TextField(blank=True, default='')
+
+    objects = ImmutableAuditManager()
 
     class Meta:
         ordering = ['-verified_at']
         indexes = [
             models.Index(fields=['company', 'gst_registration', '-verified_at']),
         ]
+
+    def save(self, *args, **kwargs):
+        if self.pk and not self._state.adding:
+            raise ValidationError(
+                "Statutory Frequency Audit Invariant: Existing frequency audit log records are immutable and cannot be updated."
+            )
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError(
+            "Statutory Frequency Audit Invariant: GSTRegistrationFrequencyAuditLog records are permanent and immutable. Deletion is prohibited."
+        )
 
     def __str__(self):
         return f"{self.gst_registration.gstin}: {self.previous_frequency} -> {self.new_frequency} by {self.verified_by} at {self.verified_at}"

@@ -2170,6 +2170,11 @@ class PostgreSQLConcurrencyCertificationTests(TransactionTestCase):
             is_primary=True
         )
         UserCompany.objects.create(user=self.user, company=self.company, role='ADMIN')
+        self.user2 = User.objects.create_user(
+            email='concurrency_admin2@chi.com',
+            password='TestPassword123!'
+        )
+        UserCompany.objects.create(user=self.user2, company=self.company, role='ADMIN')
 
     def test_postgresql_concurrency_barrier_certification(self):
         import threading
@@ -2804,6 +2809,326 @@ class PostgreSQLConcurrencyCertificationTests(TransactionTestCase):
             if old_val is not None:
                 os.environ['ALLOW_AUDIT_TRIGGER_ROLLBACK'] = old_val
 
+    def test_r244_pg_01_different_actors_same_op_ref_concurrent_rejected(self):
+        """
+        R244-PG-01: Two concurrent requests with different actors in same company using same operation_ref:
+        Exactly one succeeds (200), other rejected with 409 (OPERATION_ACTOR_MISMATCH).
+        """
+        import threading
+        from django.db import connection
+
+        if connection.vendor != 'postgresql':
+            self.skipTest("Requires real PostgreSQL.")
+
+        v = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/R244/ACT/01',
+            voucher_date=date(2027, 5, 10),
+            total_amount=Decimal('1000.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+        op_ref = f"OP_R244_ACT_{self.company.id.hex[:6]}"
+        barrier = threading.Barrier(2)
+        status_codes = []
+        errors = []
+
+        def worker_actor(user_obj):
+            from django.db import connection
+            connection.close()
+            try:
+                barrier.wait(timeout=10)
+                client = APIClient()
+                client.force_authenticate(user=user_obj)
+                resp = client.post('/api/v1/gst/itc/attribute-voucher/', {
+                    'voucher_ids': [str(v.id)],
+                    'registration_id': str(self.registration.id),
+                    'operation_ref': op_ref
+                }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+                status_codes.append(resp.status_code)
+            except Exception as e:
+                errors.append(e)
+
+        t1 = threading.Thread(target=worker_actor, args=(self.user,))
+        t2 = threading.Thread(target=worker_actor, args=(self.user2,))
+        t1.start()
+        t2.start()
+        t1.join(timeout=15)
+        t2.join(timeout=15)
+
+        self.assertEqual(len(errors), 0, f"Thread errors: {errors}")
+        self.assertIn(200, status_codes)
+        self.assertIn(409, status_codes)
+        self.assertEqual(VoucherGSTINAttributionLog.objects.filter(voucher=v).count(), 1)
+
+    def test_r244_pg_02_tx1_succeeds_while_tx2_waits_replayed(self):
+        """
+        R244-PG-02: Thread 1 holds lock in transaction, Thread 2 waits on select_for_update.
+        Thread 1 commits. Thread 2 discovers status COMPLETED, returns replayed 200 with is_idempotent_replay=True.
+        """
+        import threading
+        from django.db import connection, transaction
+
+        if connection.vendor != 'postgresql':
+            self.skipTest("Requires real PostgreSQL.")
+
+        v = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/PG244/WAIT/01',
+            voucher_date=date(2027, 5, 11),
+            total_amount=Decimal('1000.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+        op_ref = f"OP_R244_WAIT_{self.company.id.hex[:6]}"
+        t1_entered = threading.Event()
+        t1_can_commit = threading.Event()
+        results = []
+        errors = []
+
+        import hashlib, json
+        canonical_dict = {
+            'attribution_source': 'MANUAL_USER_ATTRIBUTION',
+            'company_id': str(self.company.id),
+            'is_correction': False,
+            'reason': '',
+            'registration_id': str(self.registration.id),
+            'voucher_ids': [str(v.id)],
+        }
+        canonical_bytes = json.dumps(canonical_dict, sort_keys=True, separators=(',', ':')).encode('utf-8')
+        fp = hashlib.sha256(canonical_bytes).hexdigest()
+
+        def worker1():
+            from django.db import connection
+            connection.close()
+            try:
+                with transaction.atomic():
+                    op_rec, _ = VoucherAttributionOperation.objects.select_for_update().get_or_create(
+                        company=self.company,
+                        operation_ref=op_ref,
+                        defaults={
+                            'request_fingerprint': fp,
+                            'actor': self.user,
+                            'status': 'PENDING'
+                        }
+                    )
+                    t1_entered.set()
+                    t1_can_commit.wait(timeout=10)
+                    v.buyer_gstin = self.registration.gstin
+                    v.save()
+                    op_rec.status = 'COMPLETED'
+                    op_rec.response_payload = {
+                        'success': True,
+                        'message': 'Thread 1 completed',
+                        'operation_ref': op_ref,
+                        'attributed_count': 1
+                    }
+                    op_rec.save()
+            except Exception as e:
+                errors.append(e)
+
+        def worker2():
+            from django.db import connection
+            connection.close()
+            try:
+                t1_entered.wait(timeout=10)
+                threading.Timer(0.5, t1_can_commit.set).start()
+                client = APIClient()
+                client.force_authenticate(user=self.user)
+                resp = client.post('/api/v1/gst/itc/attribute-voucher/', {
+                    'voucher_ids': [str(v.id)],
+                    'registration_id': str(self.registration.id),
+                    'operation_ref': op_ref
+                }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+                results.append(resp)
+            except Exception as e:
+                errors.append(e)
+
+        t1 = threading.Thread(target=worker1)
+        t2 = threading.Thread(target=worker2)
+        t1.start()
+        t2.start()
+        t1.join(timeout=15)
+        t2.join(timeout=15)
+
+        self.assertEqual(len(errors), 0, f"Errors in wait race: {errors}")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].status_code, 200)
+        self.assertTrue(results[0].data.get('is_idempotent_replay'))
+
+    def test_r244_pg_03_tx1_fails_while_tx2_waits_reexecutes(self):
+        """
+        R244-PG-03: Thread 1 starts transaction, marks FAILED, and commits.
+        Thread 2 was waiting on select_for_update with same payload.
+        Thread 2 acquires lock, re-executes with same payload, and succeeds (200).
+        """
+        import threading
+        from django.db import connection, transaction
+
+        if connection.vendor != 'postgresql':
+            self.skipTest("Requires real PostgreSQL.")
+
+        v = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/PG244/FAILWAIT/01',
+            voucher_date=date(2027, 5, 12),
+            total_amount=Decimal('2000.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+        op_ref = f"OP_R244_FAILWAIT_{self.company.id.hex[:6]}"
+        t1_entered = threading.Event()
+        t1_can_finish = threading.Event()
+        results = []
+        errors = []
+
+        import hashlib, json
+        canonical_dict = {
+            'attribution_source': 'MANUAL_USER_ATTRIBUTION',
+            'company_id': str(self.company.id),
+            'is_correction': False,
+            'reason': '',
+            'registration_id': str(self.registration.id),
+            'voucher_ids': [str(v.id)],
+        }
+        canonical_bytes = json.dumps(canonical_dict, sort_keys=True, separators=(',', ':')).encode('utf-8')
+        fp = hashlib.sha256(canonical_bytes).hexdigest()
+
+        def worker1():
+            from django.db import connection
+            connection.close()
+            try:
+                with transaction.atomic():
+                    op_rec, _ = VoucherAttributionOperation.objects.select_for_update().get_or_create(
+                        company=self.company,
+                        operation_ref=op_ref,
+                        defaults={
+                            'request_fingerprint': fp,
+                            'actor': self.user,
+                            'status': 'PENDING'
+                        }
+                    )
+                    t1_entered.set()
+                    t1_can_finish.wait(timeout=10)
+                    op_rec.status = 'FAILED'
+                    op_rec.save()
+            except Exception as e:
+                errors.append(e)
+
+        def worker2():
+            from django.db import connection
+            connection.close()
+            try:
+                t1_entered.wait(timeout=10)
+                threading.Timer(0.5, t1_can_finish.set).start()
+                client = APIClient()
+                client.force_authenticate(user=self.user)
+                resp = client.post('/api/v1/gst/itc/attribute-voucher/', {
+                    'voucher_ids': [str(v.id)],
+                    'registration_id': str(self.registration.id),
+                    'operation_ref': op_ref
+                }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+                results.append(resp)
+            except Exception as e:
+                errors.append(e)
+
+        t1 = threading.Thread(target=worker1)
+        t2 = threading.Thread(target=worker2)
+        t1.start()
+        t2.start()
+        t1.join(timeout=15)
+        t2.join(timeout=15)
+
+        self.assertEqual(len(errors), 0, f"Errors in fail wait race: {errors}")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].status_code, 200)
+        self.assertEqual(results[0].data['attributed_count'], 1)
+        self.assertEqual(VoucherGSTINAttributionLog.objects.filter(voucher=v).count(), 1)
+
+    def test_r244_pg_04_frequency_audit_raw_sql_triggers_update_delete_rejected(self):
+        """
+        R244-PG-04: PostgreSQL raw SQL database triggers on gst_gstregistrationfrequencyauditlog:
+        - Raw SQL INSERT is permitted.
+        - Raw SQL UPDATE is rejected by database trigger trg_prevent_frequency_audit_tampering.
+        - Raw SQL DELETE is rejected by database trigger trg_prevent_frequency_audit_tampering.
+        """
+        from django.db import connection, DatabaseError
+
+        if connection.vendor != 'postgresql':
+            self.skipTest("Raw SQL trigger verification requires PostgreSQL.")
+
+        import uuid as py_uuid
+        log_id = str(py_uuid.uuid4())
+
+        # Direct SQL INSERT permitted
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO gst_gstregistrationfrequencyauditlog
+                (id, company_id, gst_registration_id, previous_frequency, new_frequency,
+                 verification_source, verified_by_id, verified_at, reason)
+                VALUES
+                (%s, %s, %s, %s, %s, %s, %s, NOW(), %s);
+            """, [log_id, self.company.id, self.registration.id, 'MONTHLY', 'QRMP',
+                  'USER_MANUAL', self.user.id, 'Direct SQL insert test'])
+
+        # Direct SQL UPDATE rejected
+        with self.assertRaises(DatabaseError) as cm_upd:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    UPDATE gst_gstregistrationfrequencyauditlog
+                    SET new_frequency = 'TAMPERED'
+                    WHERE id = %s;
+                """, [log_id])
+        self.assertIn('Statutory Audit Integrity Invariant', str(cm_upd.exception))
+
+        # Direct SQL DELETE rejected
+        with self.assertRaises(DatabaseError) as cm_del:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    DELETE FROM gst_gstregistrationfrequencyauditlog
+                    WHERE id = %s;
+                """, [log_id])
+        self.assertIn('Statutory Audit Integrity Invariant', str(cm_del.exception))
+
+    def test_r244_pg_05_frequency_audit_trigger_catalog_and_rollback_guard(self):
+        """
+        R244-PG-05: Migration 0028 trigger catalog verification & rollback governance policy:
+        - Trigger trg_prevent_frequency_audit_tampering exists in PostgreSQL catalog.
+        - Rollback guard raises RuntimeError unless ALLOW_AUDIT_TRIGGER_ROLLBACK=true.
+        """
+        import os
+        import importlib
+        from django.db import connection
+        mig_0028 = importlib.import_module('apps.gst.migrations.0028_frequency_audit_trigger_and_safeguards')
+        guard_frequency_trigger_rollback = mig_0028.guard_frequency_trigger_rollback
+
+        if connection.vendor != 'postgresql':
+            self.skipTest("Trigger catalog query requires PostgreSQL.")
+
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT trigger_name
+                FROM information_schema.triggers
+                WHERE event_object_table = 'gst_gstregistrationfrequencyauditlog'
+                  AND trigger_name = 'trg_prevent_frequency_audit_tampering';
+            """)
+            row = cursor.fetchone()
+            self.assertIsNotNone(row, "Immutability trigger trg_prevent_frequency_audit_tampering must exist in PostgreSQL catalog")
+
+        old_val = os.environ.get('ALLOW_AUDIT_TRIGGER_ROLLBACK')
+        try:
+            if 'ALLOW_AUDIT_TRIGGER_ROLLBACK' in os.environ:
+                del os.environ['ALLOW_AUDIT_TRIGGER_ROLLBACK']
+            with self.assertRaises(RuntimeError) as cm:
+                guard_frequency_trigger_rollback(None, connection.schema_editor())
+            self.assertIn('Statutory Compliance Invariant', str(cm.exception))
+        finally:
+            if old_val is not None:
+                os.environ['ALLOW_AUDIT_TRIGGER_ROLLBACK'] = old_val
+
 
 class Round243TargetedRemediationTests(TestCase):
     """
@@ -2890,7 +3215,8 @@ class Round243TargetedRemediationTests(TestCase):
         # Call 2: Identical payload and operation_ref
         resp2 = self.client.post('/api/v1/gst/itc/attribute-voucher/', payload, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
         self.assertEqual(resp2.status_code, 200)
-        self.assertEqual(resp2.data, resp1.data)
+        self.assertTrue(resp2.data.get('is_idempotent_replay'))
+        self.assertEqual(resp2.data['attributed_count'], 1)
 
         # Exactly 1 operation row and 1 audit log row
         self.assertEqual(VoucherAttributionOperation.objects.filter(company=self.company, operation_ref=op_ref).count(), 1)
@@ -2944,7 +3270,8 @@ class Round243TargetedRemediationTests(TestCase):
 
     def test_r243_07_retry_after_transaction_failure(self):
         """
-        R243-07: First request fails (invalid voucher); retry with valid payload is permitted.
+        R243-07: First request fails (invalid voucher); retry with changed payload is REJECTED with 409 Conflict.
+        Operation reference is permanently bound to original request; changed request must use new operation_ref.
         """
         other_comp = Company.objects.create(name='Other Tenant', legal_name='Other Tenant Ltd', gstin='07OTH9999O1Z1', state_code='07')
         foreign_v = Voucher.objects.create(company=other_comp, voucher_type='PURCHASE', voucher_number='PUR/FOR/01', voucher_date=date(2026, 8, 5), total_amount=Decimal('500.00'), created_by=self.user, status='POSTED')
@@ -2961,14 +3288,24 @@ class Round243TargetedRemediationTests(TestCase):
         self.assertEqual(resp1.status_code, 400)
         self.assertEqual(resp1.data.get('error_code'), 'CROSS_TENANT_OR_INVALID_VOUCHERS')
 
-        # Attempt 2: Target valid voucher with same operation_ref -> Allowed to retry and succeed
+        # Attempt 2: Target valid voucher with SAME operation_ref -> Rejected with 409 Conflict because fingerprint changed
         resp2 = self.client.post('/api/v1/gst/itc/attribute-voucher/', {
             'voucher_ids': [str(valid_v.id)],
             'registration_id': str(self.registration.id),
             'operation_ref': op_ref
         }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
-        self.assertEqual(resp2.status_code, 200)
-        self.assertEqual(resp2.data['attributed_count'], 1)
+        self.assertEqual(resp2.status_code, 409)
+        self.assertEqual(resp2.data.get('error_code'), 'OPERATION_REFERENCE_CONFLICT')
+
+        # Attempt 3: Changed request must use a NEW operation_ref
+        new_op_ref = 'OP_R243_07_NEW_REF'
+        resp3 = self.client.post('/api/v1/gst/itc/attribute-voucher/', {
+            'voucher_ids': [str(valid_v.id)],
+            'registration_id': str(self.registration.id),
+            'operation_ref': new_op_ref
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp3.status_code, 200)
+        self.assertEqual(resp3.data['attributed_count'], 1)
 
     def test_r243_08_cross_tenant_operation_reference_lookup(self):
         """
@@ -3187,3 +3524,311 @@ class Round243TargetedRemediationTests(TestCase):
                 reason='Cross company user attempt'
             )
         self.assertIn('not authorized', str(cm.exception).lower())
+
+
+class Round244TargetedRemediationTests(TestCase):
+    """
+    Round 2.4.4 Targeted Verification Suite:
+    - P0: Permanent request-bound operation_ref (failed op changed payload rejected with 409)
+    - P0: Failed operation same-payload retry succeeds safely
+    - P0: Cross-actor operation reference reuse rejected with 409
+    - P1: Atomic frequency update and audit insertion (audit failure rolls back registration)
+    - P1: GSTRegistrationFrequencyAuditLog ORM immutability (save, delete, update blocked)
+    - P1: Frequency audit foreign key PROTECT prevents registration deletion
+    - P1: Attribution success decoupled from reconciliation failure (HTTP 200, attribution durably committed)
+    - P2: is_idempotent_replay: true in replay responses
+    """
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email='auditor_244@precision.com',
+            password='TestPassword123!'
+        )
+        self.client.force_authenticate(user=self.user)
+
+        self.company = Company.objects.create(
+            name='Apex Precision Ltd',
+            legal_name='Apex Precision Ltd',
+            gstin='07APEX9999P1Z1',
+            state_code='07'
+        )
+        UserCompany.objects.create(user=self.user, company=self.company, role='OWNER')
+
+        self.registration = GSTRegistration.objects.create(
+            company=self.company,
+            gstin='07APEX9999P1Z1',
+            legal_name='Apex Precision Ltd',
+            state_code='07',
+            status='ACTIVE',
+            filing_frequency='MONTHLY',
+            frequency_verified_source='GST_PORTAL_API',
+            frequency_verified_at=timezone.now(),
+            is_primary=True
+        )
+
+        self.user2 = User.objects.create_user(
+            email='second_auditor_244@precision.com',
+            password='TestPassword123!'
+        )
+        UserCompany.objects.create(user=self.user2, company=self.company, role='ADMIN')
+
+    def test_r244_01_failed_op_changed_payload_rejected_with_409(self):
+        """
+        R244-01: An operation reference is permanently bound to its original request fingerprint.
+        Reusing an operation reference that previously FAILED with a different payload MUST return 409 Conflict.
+        """
+        other_comp = Company.objects.create(name='Other Co', legal_name='Other Co Ltd', gstin='07OTH9999O1Z9', state_code='07')
+        foreign_v = Voucher.objects.create(company=other_comp, voucher_type='PURCHASE', voucher_number='PUR/F1/01', voucher_date=date(2026, 9, 1), total_amount=Decimal('500.00'), created_by=self.user, status='POSTED')
+        valid_v = Voucher.objects.create(company=self.company, voucher_type='PURCHASE', voucher_number='PUR/V1/01', voucher_date=date(2026, 9, 2), total_amount=Decimal('500.00'), created_by=self.user, status='POSTED')
+
+        op_ref = 'OP_R244_PERM_BINDING_01'
+
+        # Attempt 1: Foreign voucher -> fails with 400, operation marked FAILED
+        resp1 = self.client.post('/api/v1/gst/itc/attribute-voucher/', {
+            'voucher_ids': [str(foreign_v.id)],
+            'registration_id': str(self.registration.id),
+            'operation_ref': op_ref
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp1.status_code, 400)
+
+        op_record = VoucherAttributionOperation.objects.get(company=self.company, operation_ref=op_ref)
+        self.assertEqual(op_record.status, 'FAILED')
+
+        # Attempt 2: Same op_ref with DIFFERENT voucher (valid_v) -> REJECTED with 409 Conflict
+        resp2 = self.client.post('/api/v1/gst/itc/attribute-voucher/', {
+            'voucher_ids': [str(valid_v.id)],
+            'registration_id': str(self.registration.id),
+            'operation_ref': op_ref
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp2.status_code, 409)
+        self.assertEqual(resp2.data.get('error_code'), 'OPERATION_REFERENCE_CONFLICT')
+
+        # Attempt 3: Changed request with NEW operation reference succeeds
+        resp3 = self.client.post('/api/v1/gst/itc/attribute-voucher/', {
+            'voucher_ids': [str(valid_v.id)],
+            'registration_id': str(self.registration.id),
+            'operation_ref': 'OP_R244_NEW_REF_01'
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp3.status_code, 200)
+
+    def test_r244_02_failed_op_same_payload_retry_reexecutes_safely(self):
+        """
+        R244-02: A retry using the SAME fingerprint safely re-executes after a failed transaction.
+        """
+        v = Voucher.objects.create(company=self.company, voucher_type='PURCHASE', voucher_number='PUR/V2/01', voucher_date=date(2026, 9, 3), total_amount=Decimal('800.00'), created_by=self.user, status='POSTED')
+        op_ref = 'OP_R244_SAME_RETRY_02'
+
+        # Seed an operation in FAILED state with the exact fingerprint of this request
+        import hashlib, json
+        canonical_dict = {
+            'attribution_source': 'MANUAL_USER_ATTRIBUTION',
+            'company_id': str(self.company.id),
+            'is_correction': False,
+            'reason': '',
+            'registration_id': str(self.registration.id),
+            'voucher_ids': [str(v.id)],
+        }
+        canonical_bytes = json.dumps(canonical_dict, sort_keys=True, separators=(',', ':')).encode('utf-8')
+        fp = hashlib.sha256(canonical_bytes).hexdigest()
+
+        VoucherAttributionOperation.objects.create(
+            company=self.company,
+            operation_ref=op_ref,
+            request_fingerprint=fp,
+            actor=self.user,
+            target_registration=self.registration,
+            status='FAILED'
+        )
+
+        # Retry with SAME operation_ref and SAME payload -> re-executes and succeeds
+        resp = self.client.post('/api/v1/gst/itc/attribute-voucher/', {
+            'voucher_ids': [str(v.id)],
+            'registration_id': str(self.registration.id),
+            'operation_ref': op_ref
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['attributed_count'], 1)
+        op_rec = VoucherAttributionOperation.objects.get(company=self.company, operation_ref=op_ref)
+        self.assertEqual(op_rec.status, 'COMPLETED')
+        self.assertEqual(VoucherGSTINAttributionLog.objects.filter(voucher=v).count(), 1)
+
+    def test_r244_03_different_actor_same_op_ref_same_payload_rejected_with_409(self):
+        """
+        R244-03: Another actor using an existing operation_ref (even with same payload) is rejected with 409.
+        """
+        v = Voucher.objects.create(company=self.company, voucher_type='PURCHASE', voucher_number='PUR/V3/01', voucher_date=date(2026, 9, 4), total_amount=Decimal('1200.00'), created_by=self.user, status='POSTED')
+        op_ref = 'OP_R244_ACTOR_BIND_03'
+
+        # User 1 successfully executes
+        resp1 = self.client.post('/api/v1/gst/itc/attribute-voucher/', {
+            'voucher_ids': [str(v.id)],
+            'registration_id': str(self.registration.id),
+            'operation_ref': op_ref
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp1.status_code, 200)
+
+        # User 2 attempts to use same operation_ref
+        client2 = APIClient()
+        client2.force_authenticate(user=self.user2)
+        resp2 = client2.post('/api/v1/gst/itc/attribute-voucher/', {
+            'voucher_ids': [str(v.id)],
+            'registration_id': str(self.registration.id),
+            'operation_ref': op_ref
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp2.status_code, 409)
+        self.assertEqual(resp2.data.get('error_code'), 'OPERATION_ACTOR_MISMATCH')
+
+    @patch('apps.gst.models.GSTRegistrationFrequencyAuditLog.objects.create')
+    def test_r244_04_atomic_frequency_update_audit_log_failure_rollback(self, mock_create):
+        """
+        R244-04: If frequency audit log insertion fails, registration update must roll back.
+        Original in-memory attributes and database state must remain unchanged.
+        """
+        mock_create.side_effect = RuntimeError("Simulated audit disk write failure")
+        freq_before = self.registration.filing_frequency
+        src_before = self.registration.frequency_verified_source
+
+        with self.assertRaises(RuntimeError):
+            self.registration.set_filing_frequency(
+                frequency='QRMP',
+                source='USER_MANUAL',
+                user=self.user,
+                reason='Atomic failure test'
+            )
+
+        # In-memory attributes restored
+        self.assertEqual(self.registration.filing_frequency, freq_before)
+        self.assertEqual(self.registration.frequency_verified_source, src_before)
+
+        # Database state unaffected
+        self.registration.refresh_from_db()
+        self.assertEqual(self.registration.filing_frequency, freq_before)
+        self.assertEqual(self.registration.frequency_verified_source, src_before)
+
+    def test_r244_05_frequency_audit_orm_immutability(self):
+        """
+        R244-05: GSTRegistrationFrequencyAuditLog records are immutable at ORM and QuerySet levels.
+        """
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        log = GSTRegistrationFrequencyAuditLog.objects.create(
+            company=self.company,
+            gst_registration=self.registration,
+            previous_frequency='MONTHLY',
+            new_frequency='QRMP',
+            verification_source='USER_MANUAL',
+            verified_by=self.user,
+            reason='Audit immutability test'
+        )
+
+        # ORM save mutation blocked
+        log.new_frequency = 'MONTHLY'
+        with self.assertRaises(DjangoValidationError):
+            log.save()
+
+        # ORM delete blocked
+        with self.assertRaises(DjangoValidationError):
+            log.delete()
+
+        # QuerySet update blocked
+        with self.assertRaises(DjangoValidationError):
+            GSTRegistrationFrequencyAuditLog.objects.filter(id=log.id).update(new_frequency='MONTHLY')
+
+        # QuerySet delete blocked
+        with self.assertRaises(DjangoValidationError):
+            GSTRegistrationFrequencyAuditLog.objects.filter(id=log.id).delete()
+
+    def test_r244_06_frequency_audit_fk_protect_prevents_registration_deletion(self):
+        """
+        R244-06: Foreign key on_delete=PROTECT prevents deleting GSTRegistration while audit logs exist.
+        """
+        from django.db.models import ProtectedError
+        GSTRegistrationFrequencyAuditLog.objects.create(
+            company=self.company,
+            gst_registration=self.registration,
+            previous_frequency='MONTHLY',
+            new_frequency='QRMP',
+            verification_source='USER_MANUAL',
+            verified_by=self.user,
+            reason='Protect test'
+        )
+
+        with self.assertRaises(ProtectedError):
+            self.registration.delete()
+
+    @patch('apps.gst.services.itc_reconciliation_service.ITCReconciliationService.reconcile_period')
+    def test_r244_07_attribution_success_with_reconciliation_failure_decoupled(self, mock_rec):
+        """
+        R244-07: Attribution commits independently and durably even if post-attribution reconciliation fails.
+        API returns HTTP 200 with attribution_status='ATTRIBUTED' and reconciliation_status='RECONCILIATION_FAILED'.
+        """
+        mock_rec.side_effect = RuntimeError("Simulated reconciliation engine timeout")
+
+        v = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/R244/DECOUPLE/01',
+            voucher_date=date(2026, 9, 10),
+            total_amount=Decimal('1500.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+        op_ref = 'OP_R244_DECOUPLE_01'
+
+        resp = self.client.post('/api/v1/gst/itc/attribute-voucher/', {
+            'voucher_ids': [str(v.id)],
+            'registration_id': str(self.registration.id),
+            'operation_ref': op_ref
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['attribution_status'], 'ATTRIBUTED')
+        self.assertEqual(resp.data['reconciliation_status'], 'RECONCILIATION_FAILED')
+        self.assertIn('Simulated reconciliation engine timeout', resp.data['reconciliation_error'])
+
+        # Attribution durably committed in database
+        v.refresh_from_db()
+        self.assertEqual(v.buyer_gstin, self.registration.gstin)
+        self.assertEqual(VoucherGSTINAttributionLog.objects.filter(voucher=v).count(), 1)
+
+        # Operation record marked COMPLETED (attribution completed)
+        op_rec = VoucherAttributionOperation.objects.get(company=self.company, operation_ref=op_ref)
+        self.assertEqual(op_rec.status, 'COMPLETED')
+
+        # Idempotent replay returns cached response with is_idempotent_replay=True
+        resp2 = self.client.post('/api/v1/gst/itc/attribute-voucher/', {
+            'voucher_ids': [str(v.id)],
+            'registration_id': str(self.registration.id),
+            'operation_ref': op_ref
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp2.status_code, 200)
+        self.assertTrue(resp2.data.get('is_idempotent_replay'))
+        self.assertEqual(VoucherGSTINAttributionLog.objects.filter(voucher=v).count(), 1)
+
+    def test_r244_08_replayed_response_has_is_idempotent_replay_true(self):
+        """
+        R244-08: Replayed response includes is_idempotent_replay=True matching API documentation.
+        """
+        v = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/R244/REPLAY/01',
+            voucher_date=date(2026, 9, 11),
+            total_amount=Decimal('2000.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+        op_ref = 'OP_R244_REPLAY_01'
+        payload = {
+            'voucher_ids': [str(v.id)],
+            'registration_id': str(self.registration.id),
+            'operation_ref': op_ref
+        }
+
+        resp1 = self.client.post('/api/v1/gst/itc/attribute-voucher/', payload, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp1.status_code, 200)
+        self.assertFalse(resp1.data.get('is_idempotent_replay'))
+
+        resp2 = self.client.post('/api/v1/gst/itc/attribute-voucher/', payload, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp2.status_code, 200)
+        self.assertTrue(resp2.data.get('is_idempotent_replay'))
