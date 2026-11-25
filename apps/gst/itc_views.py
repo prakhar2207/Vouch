@@ -487,7 +487,16 @@ class ITCVoucherAttributionAPIView(APIView):
                 operation_ref=client_op_ref
             ).first()
             if existing_op:
-                # 1. Permanently bound fingerprint invariant:
+                # 1. Historical actor governance invariant (Round 2.4.6 P2)
+                # Unrecoverable provenance cannot be claimed or replayed regardless of fingerprint
+                if existing_op.actor_identity_status == 'HISTORICAL_UNRECOVERABLE':
+                    return Response({
+                        'success': False,
+                        'error': f"Operation reference '{client_op_ref}' has unrecoverable historical provenance and cannot be replayed or claimed.",
+                        'error_code': 'OPERATION_ACTOR_UNRECOVERABLE'
+                    }, status=status.HTTP_409_CONFLICT)
+
+                # 2. Permanently bound fingerprint invariant:
                 # Reusing an operation reference with conflicting parameters must return 409
                 # regardless of whether the existing record is PENDING, COMPLETED, or FAILED.
                 if existing_op.request_fingerprint != request_fingerprint:
@@ -497,7 +506,7 @@ class ITCVoucherAttributionAPIView(APIView):
                         'error_code': 'OPERATION_REFERENCE_CONFLICT'
                     }, status=status.HTTP_409_CONFLICT)
 
-                # 2. Permanent actor invariant (Round 2.4.4 & Round 2.4.5 P1)
+                # 3. Permanent actor invariant (Round 2.4.4 & Round 2.4.5)
                 bound_actor_id = existing_op.actor_user_id or (str(existing_op.actor_id) if existing_op.actor_id else None)
                 if bound_actor_id and bound_actor_id != str(request.user.id):
                     return Response({
@@ -516,7 +525,7 @@ class ITCVoucherAttributionAPIView(APIView):
                             replayed_payload['reconciliation_status'] = 'RECONCILED'
                             replayed_payload['reconciliation_summary'] = rec_job.summary_result
                             replayed_payload['reconciliation_error'] = None
-                        elif rec_job.status == 'FAILED':
+                        elif rec_job.status == 'FAILED' or rec_job.last_error:
                             replayed_payload['reconciliation_status'] = 'RECONCILIATION_FAILED'
                             replayed_payload['reconciliation_error'] = rec_job.last_error
                         elif rec_job.status in ['PENDING', 'PROCESSING']:
@@ -543,7 +552,15 @@ class ITCVoucherAttributionAPIView(APIView):
             )
 
             if not created:
-                # 1. Permanently bound fingerprint invariant:
+                # 1. Historical actor governance invariant (Round 2.4.6 P2)
+                if op_record.actor_identity_status == 'HISTORICAL_UNRECOVERABLE':
+                    return Response({
+                        'success': False,
+                        'error': f"Operation reference '{operation_ref}' has unrecoverable historical provenance and cannot be replayed or claimed.",
+                        'error_code': 'OPERATION_ACTOR_UNRECOVERABLE'
+                    }, status=status.HTTP_409_CONFLICT)
+
+                # 2. Permanently bound fingerprint invariant:
                 if op_record.request_fingerprint != request_fingerprint:
                     return Response({
                         'success': False,
@@ -551,7 +568,7 @@ class ITCVoucherAttributionAPIView(APIView):
                         'error_code': 'OPERATION_REFERENCE_CONFLICT'
                     }, status=status.HTTP_409_CONFLICT)
 
-                # 2. Permanent actor invariant (Round 2.4.4 & Round 2.4.5 P1)
+                # 3. Permanent actor invariant (Round 2.4.4 & Round 2.4.5)
                 bound_actor_id = op_record.actor_user_id or (str(op_record.actor_id) if op_record.actor_id else None)
                 if bound_actor_id and bound_actor_id != str(request.user.id):
                     return Response({
@@ -570,7 +587,7 @@ class ITCVoucherAttributionAPIView(APIView):
                             replayed_payload['reconciliation_status'] = 'RECONCILED'
                             replayed_payload['reconciliation_summary'] = rec_job.summary_result
                             replayed_payload['reconciliation_error'] = None
-                        elif rec_job.status == 'FAILED':
+                        elif rec_job.status == 'FAILED' or rec_job.last_error:
                             replayed_payload['reconciliation_status'] = 'RECONCILIATION_FAILED'
                             replayed_payload['reconciliation_error'] = rec_job.last_error
                         elif rec_job.status in ['PENDING', 'PROCESSING']:
@@ -682,7 +699,7 @@ class ITCVoucherAttributionAPIView(APIView):
             response_data['reconciliation_status'] = 'RECONCILED'
             response_data['reconciliation_summary'] = executed_job.summary_result
             response_data['reconciliation_error'] = None
-        elif executed_job and executed_job.status == 'FAILED':
+        elif executed_job and (executed_job.status == 'FAILED' or executed_job.last_error):
             response_data['reconciliation_status'] = 'RECONCILIATION_FAILED'
             response_data['reconciliation_summary'] = None
             response_data['reconciliation_error'] = executed_job.last_error

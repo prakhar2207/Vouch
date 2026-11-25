@@ -289,7 +289,7 @@ class GSTPortalService:
                 reg.taxpayer_username = username
             reg.save(update_fields=['auth_token', 'token_expires_at', 'taxpayer_username', 'updated_at'])
 
-        if (reg and reg.is_primary and total_regs <= 1) or (not reg and total_regs == 0 and taxpayer_gstin == (company.gstin or '').strip().upper()):
+        if not gstin or (reg and reg.is_primary) or total_regs <= 1 or (taxpayer_gstin and taxpayer_gstin == (company.gstin or '').strip().upper()):
             config.auth_token = token
             config.token_expires_at = expires_at
             if username:
@@ -310,7 +310,7 @@ class GSTPortalService:
             reg.token_expires_at = None
             reg.save(update_fields=['auth_token', 'token_expires_at', 'updated_at'])
 
-        if (reg and reg.is_primary and total_regs <= 1) or (not reg and total_regs == 0) or (taxpayer_gstin == (company.gstin or '').strip().upper() and total_regs <= 1):
+        if not gstin or (reg and reg.is_primary) or total_regs <= 1 or (taxpayer_gstin and taxpayer_gstin == (company.gstin or '').strip().upper()):
             config.auth_token = ''
             config.token_expires_at = None
             config.save(update_fields=['auth_token', 'token_expires_at', 'updated_at'])
@@ -501,11 +501,11 @@ class GSTPortalService:
                 config.provider = 'SANDBOX_CO_IN'
                 config.save(update_fields=['provider', 'updated_at'])
             sb_res = client.request_portal_otp(gstin=taxpayer_gstin, username=portal_username)
+            cid = sb_res.get('correlation_id') or txn_id
             if not sb_res.get('success'):
                 # On dispatch failure, release cooldown so user can retry immediately
                 cache.delete(cooldown_key)
                 raw_err = sb_res.get('error') or ''
-                cid = sb_res.get('correlation_id') or txn_id
                 logger.error(
                     f"[GSTPortalService] OTP request failed for company={company.id} "
                     f"gstin={taxpayer_gstin} correlation_id={cid}: {raw_err}"
@@ -522,28 +522,27 @@ class GSTPortalService:
                 }
 
             # Bind challenge state securely in cache with 10-minute expiry
-            chal_key = f"gst_chal_{txn_id}"
-            att_key = f"gst_chal_att_{txn_id}"
-            cache.set(
-                chal_key,
-                {
-                    "txn_id": txn_id,
-                    "company_id": str(company.id),
-                    "gstin": taxpayer_gstin,
-                    "username": portal_username,
-                    "user_id": str(user.id) if user and getattr(user, 'is_authenticated', False) else None,
-                    "created_at": time.time(),
-                    "expires_at": time.time() + 600,
-                },
-                timeout=600
-            )
-            cache.set(att_key, 0, timeout=600)
+            eff_txn_id = cid or txn_id
+            chal_data = {
+                "txn_id": eff_txn_id,
+                "company_id": str(company.id),
+                "gstin": taxpayer_gstin,
+                "username": portal_username,
+                "user_id": str(user.id) if user and getattr(user, 'is_authenticated', False) else None,
+                "created_at": time.time(),
+                "expires_at": time.time() + 600,
+            }
+            cache.set(f"gst_chal_{eff_txn_id}", chal_data, timeout=600)
+            cache.set(f"gst_chal_att_{eff_txn_id}", 0, timeout=600)
+            if txn_id != eff_txn_id:
+                cache.set(f"gst_chal_{txn_id}", chal_data, timeout=600)
+                cache.set(f"gst_chal_att_{txn_id}", 0, timeout=600)
 
             return {
                 "success": True,
                 "gstin": taxpayer_gstin,
                 "username": portal_username,
-                "txn_id": txn_id,
+                "txn_id": eff_txn_id,
                 "cooldown_seconds": 30,
                 "message": "A verification OTP has been sent to your registered GST Portal mobile and email."
             }
@@ -967,6 +966,7 @@ class GSTPortalService:
             return {
                 "success": True,
                 "is_connected": True,
+                "auth_token": auth_token,
                 "token_expires_at": expires_at.strftime('%Y-%m-%d %H:%M:%S'),
                 "message": "Your GST Portal account has been connected successfully."
             }

@@ -806,6 +806,8 @@ class SandboxGSTIntegrationTests(TestCase):
         Verifies that /api/v1/gst/portal/disconnect/ securely revokes
         the active GST portal session token and resets expiration.
         """
+        self.user.is_staff = True
+        self.user.save(update_fields=['is_staff'])
         uc = UserCompany.objects.get(user=self.user, company=self.company)
         uc.role = 'ADMIN'
         uc.save()
@@ -831,6 +833,8 @@ class SandboxGSTIntegrationTests(TestCase):
         Verifies that CompanyGSTConfig API correctly exposes and updates
         dedicated Sandbox.co.in credentials and provider settings.
         """
+        self.user.is_staff = True
+        self.user.save(update_fields=['is_staff'])
         uc = UserCompany.objects.get(user=self.user, company=self.company)
         uc.role = 'ADMIN'
         uc.save()
@@ -907,6 +911,8 @@ class SandboxGSTIntegrationTests(TestCase):
         """
         Verifies /api/v1/gst/config/<company_id>/test-connection/ endpoint.
         """
+        self.user.is_staff = True
+        self.user.save(update_fields=['is_staff'])
         uc = UserCompany.objects.get(user=self.user, company=self.company)
         uc.role = 'ADMIN'
         uc.save()

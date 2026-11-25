@@ -317,6 +317,11 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': 60.0,  # Sweeps every 60 seconds
         'options': {'expires': 55.0},
     },
+    'auto-recover-itc-reconciliation-jobs': {
+        'task': 'apps.gst.tasks.recover_itc_reconciliation_jobs_task',
+        'schedule': 60.0,  # Sweeps every 60 seconds for interrupted or pending reconciliation jobs (Round 2.4.6 P1)
+        'options': {'expires': 55.0},
+    },
 }
 
 # Off-site Disaster Recovery & Cloud Storage Settings

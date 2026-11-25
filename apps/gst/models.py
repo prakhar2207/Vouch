@@ -428,9 +428,12 @@ class GSTRegistration(models.Model):
         prev_by = self.frequency_verified_by
         now = timezone.now()
 
-        from django.db import transaction
+        from django.db import transaction, connection
         try:
             with transaction.atomic():
+                if connection.vendor == 'postgresql':
+                    with connection.cursor() as cursor:
+                        cursor.execute("SET LOCAL vouch.allow_frequency_mutation = 'true';")
                 self._allow_frequency_save = True
                 try:
                     self.filing_frequency = clean_freq
@@ -1025,6 +1028,15 @@ class VoucherAttributionOperation(models.Model):
     actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='attribution_operations')
     actor_user_id = models.CharField(max_length=64, blank=True, default='', db_index=True)
     actor_username = models.CharField(max_length=150, blank=True, default='')
+    actor_identity_status = models.CharField(
+        max_length=30,
+        choices=[
+            ('VERIFIED', 'Verified Actor Identity'),
+            ('HISTORICAL_UNRECOVERABLE', 'Historical Unrecoverable Identity')
+        ],
+        default='VERIFIED',
+        db_index=True
+    )
     target_registration = models.ForeignKey(GSTRegistration, on_delete=models.SET_NULL, null=True, blank=True)
     is_correction = models.BooleanField(default=False)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING', db_index=True)
@@ -1087,6 +1099,12 @@ class ITCReconciliationJob(models.Model):
     last_attempt_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     
+    # Worker Exclusivity & Lease Governance (Round 2.4.6 P1)
+    claimed_by = models.CharField(max_length=100, blank=True, default='')
+    claim_token = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    claim_expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    generation = models.PositiveIntegerField(default=0)
+    
     error_classification = models.CharField(max_length=100, blank=True, default='')
     last_error = models.TextField(blank=True, default='')
     summary_result = models.JSONField(default=dict, blank=True)
@@ -1099,11 +1117,11 @@ class ITCReconciliationJob(models.Model):
         indexes = [
             models.Index(fields=['company', 'status', 'created_at']),
             models.Index(fields=['status', 'last_attempt_at']),
+            models.Index(fields=['status', 'claim_expires_at']),
         ]
 
     def __str__(self):
-        return f"ReconciliationJob {self.id} for {self.operation_ref} ({self.status}) [attempts={self.attempt_count}]"
-        return f"Op {self.operation_ref} ({self.status}) for {self.company.name}"
+        return f"ReconciliationJob {self.id} for {self.operation_ref} ({self.status}) [gen={self.generation}, attempts={self.attempt_count}]"
 
 
 class SupplierGSTR3BFilingRecord(models.Model):

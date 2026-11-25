@@ -112,9 +112,19 @@ class CompanyGSTConfigAPIView(APIView):
             config.save(update_fields=['provider', 'updated_at'])
 
         is_connected = bool(config.auth_token and (not config.token_expires_at or config.token_expires_at > timezone.now()))
+        has_key = bool(config.sandbox_api_key or config.api_key)
+        has_secret = bool(config.sandbox_api_secret or config.api_secret)
+        raw_key = config.sandbox_api_key or config.api_key or ''
+        masked_key = f"{raw_key[:4]}****" if len(raw_key) > 4 else ("****" if raw_key else "")
+
         return Response({
             "success": True,
             "config": {
+                "provider": config.provider,
+                "is_sandbox": config.is_sandbox,
+                "has_sandbox_api_key": has_key,
+                "has_sandbox_api_secret": has_secret,
+                "sandbox_api_key": masked_key,
                 "is_portal_connected": is_connected,
                 "token_expires_at": config.token_expires_at.strftime('%Y-%m-%d %H:%M:%S') if config.token_expires_at else None,
                 "portal_username": config.eway_username or "",

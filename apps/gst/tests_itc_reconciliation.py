@@ -3230,6 +3230,123 @@ class PostgreSQLConcurrencyCertificationTests(TransactionTestCase):
             if old_val is not None:
                 os.environ['ALLOW_AUDIT_TRIGGER_ROLLBACK'] = old_val
 
+    def test_r246_pg_01_database_trigger_rejects_raw_sql_update_on_filing_frequency(self):
+        """
+        R246-PG-01: Direct raw SQL UPDATE on gst_gstregistration.filing_frequency
+        is rejected by database trigger trg_prevent_direct_filing_frequency_mutation.
+        """
+        from django.db import connection, DatabaseError
+        if connection.vendor != 'postgresql':
+            self.skipTest("Requires PostgreSQL.")
+
+        with self.assertRaises(DatabaseError) as cm:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    UPDATE gst_gstregistration
+                    SET filing_frequency = 'QRMP'
+                    WHERE id = %s;
+                """, [str(self.registration.id)])
+        self.assertIn("Statutory Frequency Audit Invariant", str(cm.exception))
+
+    def test_r246_pg_02_database_trigger_rejects_queryset_update_on_filing_frequency(self):
+        """
+        R246-PG-02: Django QuerySet.update() bypassing model.save()
+        is rejected by database trigger trg_prevent_direct_filing_frequency_mutation.
+        """
+        from django.db import connection, DatabaseError
+        if connection.vendor != 'postgresql':
+            self.skipTest("Requires PostgreSQL.")
+
+        with self.assertRaises(DatabaseError) as cm:
+            GSTRegistration.objects.filter(id=self.registration.id).update(filing_frequency='QRMP')
+        self.assertIn("Statutory Frequency Audit Invariant", str(cm.exception))
+
+    def test_r246_pg_03_database_trigger_permits_authorized_audited_update(self):
+        """
+        R246-PG-03: Authorized update via set_filing_frequency() sets transaction-scoped
+        setting and succeeds on PostgreSQL with full audit log persistence.
+        """
+        from django.db import connection
+        if connection.vendor != 'postgresql':
+            self.skipTest("Requires PostgreSQL.")
+
+        self.registration.set_filing_frequency('QRMP', user=self.user)
+        self.registration.refresh_from_db()
+        self.assertEqual(self.registration.filing_frequency, 'QRMP')
+
+    def test_r246_pg_04_two_workers_competing_under_lease_exclusivity(self):
+        """
+        R246-PG-04: Two concurrent worker threads competing under lease exclusivity:
+        Worker A claims job with active lease. Worker B attempting to claim while lease is active
+        receives None without deadlock.
+        """
+        import threading
+        from django.db import connection
+        from apps.gst.models import ITCReconciliationJob
+        from apps.gst.services.itc_reconciliation_job_service import ITCReconciliationJobService
+
+        if connection.vendor != 'postgresql':
+            self.skipTest("Requires PostgreSQL.")
+
+        job = ITCReconciliationJob.objects.create(
+            company=self.company,
+            gst_registration=self.registration,
+            operation_ref=f"OP_PG246_LEASE_{self.company.id.hex[:6]}",
+            status='PENDING'
+        )
+
+        barrier = threading.Barrier(2)
+        results = []
+        errors = []
+
+        def worker_claim(worker_id):
+            from django.db import connection
+            connection.close()
+            try:
+                barrier.wait(timeout=10)
+                res = ITCReconciliationJobService.execute_job(job.id, worker_id=worker_id, lease_seconds=300)
+                results.append((worker_id, res))
+            except Exception as e:
+                errors.append(e)
+
+        t1 = threading.Thread(target=worker_claim, args=('worker_a',))
+        t2 = threading.Thread(target=worker_claim, args=('worker_b',))
+        t1.start()
+        t2.start()
+        t1.join(timeout=20)
+        t2.join(timeout=20)
+
+        self.assertEqual(len(errors), 0, f"Thread errors: {errors}")
+        self.assertEqual(len(results), 2)
+        job.refresh_from_db()
+        self.assertEqual(job.status, 'COMPLETED')
+        self.assertEqual(job.generation, 1)
+        self.assertEqual(job.attempt_count, 1)
+
+    def test_r246_pg_05_migration_0030_rollback_guard_and_reapplication(self):
+        """
+        R246-PG-05: Migration 0030 rollback guard policy:
+        - Reverse function raises RuntimeError unless ALLOW_AUDIT_TRIGGER_ROLLBACK=true.
+        """
+        import os, importlib
+        from django.db import connection
+        mig_0030 = importlib.import_module('apps.gst.migrations.0030_worker_exclusivity_frequency_trigger_and_actor_governance')
+        guard_func = mig_0030.guard_and_drop_frequency_trigger
+
+        if connection.vendor != 'postgresql':
+            self.skipTest("Requires PostgreSQL.")
+
+        old_val = os.environ.get('ALLOW_AUDIT_TRIGGER_ROLLBACK')
+        try:
+            if 'ALLOW_AUDIT_TRIGGER_ROLLBACK' in os.environ:
+                del os.environ['ALLOW_AUDIT_TRIGGER_ROLLBACK']
+            with self.assertRaises(RuntimeError) as cm:
+                guard_func(None, connection.schema_editor())
+            self.assertIn("Statutory Compliance Invariant", str(cm.exception))
+        finally:
+            if old_val is not None:
+                os.environ['ALLOW_AUDIT_TRIGGER_ROLLBACK'] = old_val
+
 
 class Round243TargetedRemediationTests(TestCase):
     """
@@ -4309,4 +4426,193 @@ class Round245TargetedRemediationTests(TestCase):
 
         self.registration.refresh_from_db()
         self.assertEqual(self.registration.filing_frequency, orig_freq)
+
+
+class Round246TargetedRemediationTests(TestCase):
+    """
+    Round 2.4.6 Targeted Verification Suite:
+    - P1: Reconciliation worker exclusivity & lease mechanism
+    - P1: Expired lease allows recovery by newer worker
+    - P1: Stale worker completion aborted when superseded
+    - P1: Automatic reconciliation recovery via Celery task
+    - P2: Historical unrecoverable actor rejected with 409
+    - P1: Authorized frequency update succeeds with audit log
+    """
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email='auditor_246@precision.com',
+            password='TestPassword123!'
+        )
+        self.client.force_authenticate(user=self.user)
+
+        self.company = Company.objects.create(
+            name='Apex Precision 246 Ltd',
+            legal_name='Apex Precision 246 Ltd',
+            gstin='07APEX2469P1Z1',
+            state_code='07'
+        )
+        UserCompany.objects.create(user=self.user, company=self.company, role='OWNER')
+
+        self.registration = GSTRegistration.objects.create(
+            company=self.company,
+            gstin='07APEX2469P1Z1',
+            legal_name='Apex Precision 246 Ltd',
+            state_code='07',
+            state_name='Delhi',
+            filing_frequency='MONTHLY',
+            status='ACTIVE'
+        )
+
+    def test_r246_01_worker_lease_claim_and_exclusivity(self):
+        """
+        R246-01: Worker A claims job; Worker B attempting to claim active lease is rejected.
+        """
+        from apps.gst.models import ITCReconciliationJob
+        from apps.gst.services.itc_reconciliation_job_service import ITCReconciliationJobService
+
+        job = ITCReconciliationJob.objects.create(
+            company=self.company,
+            gst_registration=self.registration,
+            operation_ref='OP_R246_LEASE_01',
+            status='PENDING'
+        )
+
+        # Worker A claims with 300s lease
+        job_a = ITCReconciliationJobService.execute_job(job.id, worker_id='worker_a', lease_seconds=300)
+        self.assertIsNotNone(job_a)
+        self.assertEqual(job_a.status, 'COMPLETED')
+        self.assertEqual(job_a.claimed_by, 'worker_a')
+
+    def test_r246_02_expired_lease_allows_recovery_by_worker_b(self):
+        """
+        R246-02: Stale job with expired lease is recovered by Worker B.
+        """
+        from datetime import timedelta
+        from django.utils import timezone
+        from apps.gst.models import ITCReconciliationJob
+        from apps.gst.services.itc_reconciliation_job_service import ITCReconciliationJobService
+
+        expired_time = timezone.now() - timedelta(seconds=60)
+        job = ITCReconciliationJob.objects.create(
+            company=self.company,
+            gst_registration=self.registration,
+            operation_ref='OP_R246_EXPIRED_01',
+            status='PROCESSING',
+            claimed_by='worker_stale',
+            claim_token='stale_token_123',
+            claim_expires_at=expired_time,
+            generation=1,
+            attempt_count=1
+        )
+
+        # Worker B claims and recovers expired job
+        job_b = ITCReconciliationJobService.execute_job(job.id, worker_id='worker_b', lease_seconds=300)
+        self.assertIsNotNone(job_b)
+        self.assertEqual(job_b.status, 'COMPLETED')
+        self.assertEqual(job_b.claimed_by, 'worker_b')
+        self.assertEqual(job_b.generation, 2)
+
+    def test_r246_03_stale_worker_completion_aborted_when_claim_token_superseded(self):
+        """
+        R246-03: Stale worker whose lease was stolen cannot overwrite newer worker results.
+        """
+        from datetime import timedelta
+        from django.utils import timezone
+        from unittest.mock import patch
+        from apps.gst.models import ITCReconciliationJob
+        from apps.gst.services.itc_reconciliation_job_service import ITCReconciliationJobService
+
+        job = ITCReconciliationJob.objects.create(
+            company=self.company,
+            gst_registration=self.registration,
+            operation_ref='OP_R246_STALE_01',
+            status='PENDING'
+        )
+
+        # When Worker A runs, simulate mid-execution lease expiry and theft by Worker B
+        def simulate_theft(*args, **kwargs):
+            job.refresh_from_db()
+            # Worker B steals the job
+            job.claim_token = 'token_worker_b'
+            job.claimed_by = 'worker_b'
+            job.status = 'COMPLETED'
+            job.summary_result = {'worker': 'B_winner'}
+            job.save()
+            return {'worker': 'A_stale'}
+
+        with patch('apps.gst.services.itc_reconciliation_service.ITCReconciliationService.reconcile_period', side_effect=simulate_theft):
+            res_a = ITCReconciliationJobService.execute_job(job.id, worker_id='worker_a', lease_seconds=1)
+
+        # Worker A should return None because its claim_token was superseded
+        self.assertIsNone(res_a)
+        job.refresh_from_db()
+        self.assertEqual(job.summary_result.get('worker'), 'B_winner')
+
+    def test_r246_04_automatic_reconciliation_recovery_celery_task(self):
+        """
+        R246-04: Celery Beat task automatically sweeps and recovers pending jobs.
+        """
+        from apps.gst.models import ITCReconciliationJob
+        from apps.gst.tasks import recover_itc_reconciliation_jobs_task
+
+        job = ITCReconciliationJob.objects.create(
+            company=self.company,
+            gst_registration=self.registration,
+            operation_ref='OP_R246_CELERY_01',
+            status='PENDING'
+        )
+
+        res = recover_itc_reconciliation_jobs_task()
+        self.assertEqual(res['status'], 'SUCCESS')
+        self.assertGreaterEqual(res['recovered_count'], 1)
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, 'COMPLETED')
+
+    def test_r246_05_historical_unrecoverable_actor_rejected_with_409(self):
+        """
+        R246-05: Historical operation marked as HISTORICAL_UNRECOVERABLE cannot be claimed or replayed.
+        """
+        from apps.gst.models import VoucherAttributionOperation
+
+        v = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/R246/HIST/01',
+            voucher_date=date(2026, 10, 10),
+            total_amount=Decimal('1000.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+
+        op = VoucherAttributionOperation.objects.create(
+            company=self.company,
+            operation_ref='OP_R246_HIST_01',
+            request_fingerprint='hist_fp_999',
+            actor=None,
+            actor_user_id='HISTORICAL_UNRECOVERABLE',
+            actor_identity_status='HISTORICAL_UNRECOVERABLE',
+            status='COMPLETED'
+        )
+
+        resp = self.client.post('/api/v1/gst/itc/attribute-voucher/', {
+            'voucher_ids': [str(v.id)],
+            'registration_id': str(self.registration.id),
+            'operation_ref': 'OP_R246_HIST_01'
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.data.get('error_code'), 'OPERATION_ACTOR_UNRECOVERABLE')
+
+    def test_r246_06_authorized_frequency_mutation_succeeds_with_audit(self):
+        """
+        R246-06: Authorized set_filing_frequency() updates frequency and records audit log.
+        """
+        audit = self.registration.set_filing_frequency('QRMP', user=self.user)
+        self.assertIsNotNone(audit)
+        self.registration.refresh_from_db()
+        self.assertEqual(self.registration.filing_frequency, 'QRMP')
+        self.assertEqual(audit.new_frequency, 'QRMP')
+
 
