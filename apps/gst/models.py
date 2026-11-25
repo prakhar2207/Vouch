@@ -337,6 +337,19 @@ class GSTRegistration(models.Model):
             )
         ]
 
+    def save(self, *args, **kwargs):
+        # Prevent direct un-audited mutation of filing_frequency on existing registrations (Round 2.4.5 P1)
+        update_fields = kwargs.get('update_fields')
+        should_check_freq = (update_fields is None) or ('filing_frequency' in update_fields)
+        if self.pk and not self._state.adding and should_check_freq and not getattr(self, '_allow_frequency_save', False):
+            orig = GSTRegistration.objects.filter(pk=self.pk).values('filing_frequency').first()
+            if orig and orig['filing_frequency'] != self.filing_frequency:
+                raise ValidationError(
+                    f"Direct modification of filing_frequency on GSTRegistration '{self.gstin}' is prohibited. "
+                    "All filing frequency changes must be audited via set_filing_frequency()."
+                )
+        super().save(*args, **kwargs)
+
     def has_active_portal_session(self) -> bool:
         from django.utils import timezone
         return bool(self.auth_token and (not self.token_expires_at or self.token_expires_at > timezone.now()))
@@ -379,6 +392,11 @@ class GSTRegistration(models.Model):
         return True
 
     def set_filing_frequency(self, frequency: str, source: str = 'USER_MANUAL', user=None, reason: str = '', commit: bool = True):
+        if not commit:
+            raise ValidationError(
+                "Statutory Frequency Audit Invariant: commit=False is prohibited. "
+                "Filing frequency changes must be atomically persisted with audit logging."
+            )
         clean_freq = (frequency or '').strip().upper()
         if clean_freq not in ['MONTHLY', 'QRMP', 'UNKNOWN']:
             raise ValidationError(f"Invalid filing frequency: '{frequency}'. Must be MONTHLY, QRMP, or UNKNOWN.")
@@ -410,10 +428,11 @@ class GSTRegistration(models.Model):
         prev_by = self.frequency_verified_by
         now = timezone.now()
 
-        if commit:
-            from django.db import transaction
-            try:
-                with transaction.atomic():
+        from django.db import transaction
+        try:
+            with transaction.atomic():
+                self._allow_frequency_save = True
+                try:
                     self.filing_frequency = clean_freq
                     self.frequency_verified_source = clean_source
                     self.frequency_verified_at = now
@@ -423,7 +442,7 @@ class GSTRegistration(models.Model):
                         'frequency_verified_at', 'frequency_verified_by'
                     ])
                     # Persist attributable audit record (Round 2.4.3 P1 & Round 2.4.4 Atomic Guarantee)
-                    GSTRegistrationFrequencyAuditLog.objects.create(
+                    audit_entry = GSTRegistrationFrequencyAuditLog.objects.create(
                         company=self.company,
                         gst_registration=self,
                         previous_frequency=prev_freq,
@@ -433,18 +452,16 @@ class GSTRegistration(models.Model):
                         verified_at=now,
                         reason=reason or (f"Filing frequency updated to {clean_freq} via {clean_source}")
                     )
-            except Exception:
-                # Restore in-memory attributes on rollback so the object stays consistent with DB
-                self.filing_frequency = prev_freq
-                self.frequency_verified_source = prev_source
-                self.frequency_verified_at = prev_at
-                self.frequency_verified_by = prev_by
-                raise
-        else:
-            self.filing_frequency = clean_freq
-            self.frequency_verified_source = clean_source
-            self.frequency_verified_at = now
-            self.frequency_verified_by = user
+                finally:
+                    self._allow_frequency_save = False
+            return audit_entry
+        except Exception:
+            # Restore in-memory attributes on rollback so the object stays consistent with DB
+            self.filing_frequency = prev_freq
+            self.frequency_verified_source = prev_source
+            self.frequency_verified_at = prev_at
+            self.frequency_verified_by = prev_by
+            raise
 
     def __str__(self):
         return f"{self.gstin} ({self.state_name}) - {self.company.name} [{self.status}]"
@@ -1006,6 +1023,8 @@ class VoucherAttributionOperation(models.Model):
     operation_ref = models.CharField(max_length=100, db_index=True)
     request_fingerprint = models.CharField(max_length=64, db_index=True)
     actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='attribution_operations')
+    actor_user_id = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    actor_username = models.CharField(max_length=150, blank=True, default='')
     target_registration = models.ForeignKey(GSTRegistration, on_delete=models.SET_NULL, null=True, blank=True)
     is_correction = models.BooleanField(default=False)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING', db_index=True)
@@ -1023,9 +1042,67 @@ class VoucherAttributionOperation(models.Model):
         indexes = [
             models.Index(fields=['company', 'operation_ref']),
             models.Index(fields=['company', 'request_fingerprint']),
+            models.Index(fields=['company', 'actor_user_id']),
         ]
 
     def __str__(self):
+        return f"Op {self.operation_ref} ({self.status}) for {self.company.name}"
+
+
+class ITCReconciliationJob(models.Model):
+    """
+    Durable transactional work record for asynchronous post-attribution GST reconciliation (Round 2.4.5 P1).
+    Created within the same atomic database transaction as VoucherAttributionOperation.
+    Guarantees that process crashes between attribution commit and reconciliation execution
+    leave an auditable, retryable job record that can be safely processed without duplicate ledger effects.
+    """
+    STATUS_CHOICES = (
+        ('PENDING', 'Pending Execution'),
+        ('PROCESSING', 'In Progress'),
+        ('COMPLETED', 'Completed Successfully'),
+        ('FAILED', 'Permanently Failed'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='itc_reconciliation_jobs', db_index=True)
+    gst_registration = models.ForeignKey(
+        GSTRegistration,
+        on_delete=models.CASCADE,
+        related_name='itc_reconciliation_jobs',
+        db_index=True
+    )
+    operation = models.OneToOneField(
+        'VoucherAttributionOperation',
+        on_delete=models.CASCADE,
+        related_name='reconciliation_job',
+        null=True,
+        blank=True
+    )
+    operation_ref = models.CharField(max_length=100, db_index=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING', db_index=True)
+    
+    # Execution metrics and state
+    attempt_count = models.PositiveIntegerField(default=0)
+    max_attempts = models.PositiveIntegerField(default=3)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    
+    error_classification = models.CharField(max_length=100, blank=True, default='')
+    last_error = models.TextField(blank=True, default='')
+    summary_result = models.JSONField(default=dict, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['created_at']
+        indexes = [
+            models.Index(fields=['company', 'status', 'created_at']),
+            models.Index(fields=['status', 'last_attempt_at']),
+        ]
+
+    def __str__(self):
+        return f"ReconciliationJob {self.id} for {self.operation_ref} ({self.status}) [attempts={self.attempt_count}]"
         return f"Op {self.operation_ref} ({self.status}) for {self.company.name}"
 
 

@@ -497,8 +497,9 @@ class ITCVoucherAttributionAPIView(APIView):
                         'error_code': 'OPERATION_REFERENCE_CONFLICT'
                     }, status=status.HTTP_409_CONFLICT)
 
-                # 2. Permanent actor invariant:
-                if existing_op.actor_id and existing_op.actor_id != request.user.id:
+                # 2. Permanent actor invariant (Round 2.4.4 & Round 2.4.5 P1)
+                bound_actor_id = existing_op.actor_user_id or (str(existing_op.actor_id) if existing_op.actor_id else None)
+                if bound_actor_id and bound_actor_id != str(request.user.id):
                     return Response({
                         'success': False,
                         'error': f"Operation reference conflict: Reused operation_ref '{client_op_ref}' was initiated by another user.",
@@ -509,6 +510,18 @@ class ITCVoucherAttributionAPIView(APIView):
                 if existing_op.status == 'COMPLETED':
                     replayed_payload = dict(existing_op.response_payload or {})
                     replayed_payload['is_idempotent_replay'] = True
+                    rec_job = getattr(existing_op, 'reconciliation_job', None)
+                    if rec_job:
+                        if rec_job.status == 'COMPLETED':
+                            replayed_payload['reconciliation_status'] = 'RECONCILED'
+                            replayed_payload['reconciliation_summary'] = rec_job.summary_result
+                            replayed_payload['reconciliation_error'] = None
+                        elif rec_job.status == 'FAILED':
+                            replayed_payload['reconciliation_status'] = 'RECONCILIATION_FAILED'
+                            replayed_payload['reconciliation_error'] = rec_job.last_error
+                        elif rec_job.status in ['PENDING', 'PROCESSING']:
+                            replayed_payload['reconciliation_status'] = rec_job.status
+                            replayed_payload['reconciliation_summary'] = None
                     return Response(replayed_payload, status=status.HTTP_200_OK)
 
         now = timezone.now()
@@ -521,6 +534,8 @@ class ITCVoucherAttributionAPIView(APIView):
                 defaults={
                     'request_fingerprint': request_fingerprint,
                     'actor': request.user,
+                    'actor_user_id': str(request.user.id),
+                    'actor_username': getattr(request.user, 'username', None) or getattr(request.user, 'email', '') or str(request.user),
                     'target_registration': registration,
                     'is_correction': is_correction,
                     'status': 'PENDING'
@@ -536,8 +551,9 @@ class ITCVoucherAttributionAPIView(APIView):
                         'error_code': 'OPERATION_REFERENCE_CONFLICT'
                     }, status=status.HTTP_409_CONFLICT)
 
-                # 2. Permanent actor invariant:
-                if op_record.actor_id and op_record.actor_id != request.user.id:
+                # 2. Permanent actor invariant (Round 2.4.4 & Round 2.4.5 P1)
+                bound_actor_id = op_record.actor_user_id or (str(op_record.actor_id) if op_record.actor_id else None)
+                if bound_actor_id and bound_actor_id != str(request.user.id):
                     return Response({
                         'success': False,
                         'error': f"Operation reference conflict: Reused operation_ref '{operation_ref}' was initiated by another user.",
@@ -548,6 +564,18 @@ class ITCVoucherAttributionAPIView(APIView):
                 if op_record.status == 'COMPLETED':
                     replayed_payload = dict(op_record.response_payload or {})
                     replayed_payload['is_idempotent_replay'] = True
+                    rec_job = getattr(op_record, 'reconciliation_job', None)
+                    if rec_job:
+                        if rec_job.status == 'COMPLETED':
+                            replayed_payload['reconciliation_status'] = 'RECONCILED'
+                            replayed_payload['reconciliation_summary'] = rec_job.summary_result
+                            replayed_payload['reconciliation_error'] = None
+                        elif rec_job.status == 'FAILED':
+                            replayed_payload['reconciliation_status'] = 'RECONCILIATION_FAILED'
+                            replayed_payload['reconciliation_error'] = rec_job.last_error
+                        elif rec_job.status in ['PENDING', 'PROCESSING']:
+                            replayed_payload['reconciliation_status'] = rec_job.status
+                            replayed_payload['reconciliation_summary'] = None
                     return Response(replayed_payload, status=status.HTTP_200_OK)
 
                 # 4. If status is PENDING or FAILED, reset status to PENDING for re-execution.
@@ -617,11 +645,20 @@ class ITCVoucherAttributionAPIView(APIView):
 
             VoucherGSTINAttributionLog.objects.bulk_create(attribution_logs)
 
+            from apps.gst.services.itc_reconciliation_job_service import ITCReconciliationJobService
+            rec_job = ITCReconciliationJobService.create_job(
+                company=company,
+                registration=registration,
+                operation=op_record,
+                operation_ref=operation_ref
+            )
+
             action_word = "corrected" if is_correction else "attributed"
             response_data = {
                 'success': True,
                 'attribution_status': 'CORRECTED' if is_correction else 'ATTRIBUTED',
                 'reconciliation_status': 'PENDING',
+                'reconciliation_job_id': str(rec_job.id),
                 'reconciliation_summary': None,
                 'reconciliation_error': None,
                 'message': f"Successfully {action_word} {len(vouchers)} voucher(s) to GSTIN {registration.gstin}.",
@@ -637,28 +674,22 @@ class ITCVoucherAttributionAPIView(APIView):
             op_record.response_payload = response_data
             op_record.save(update_fields=['status', 'completed_at', 'response_payload'])
 
-        # Outside atomic transaction: decoupled reconciliation execution (Round 2.4.4 P1)
-        # Attribution is already durably committed. Reconciliation failures do NOT roll back attribution.
-        rec_status = 'NOT_RUN'
-        rec_summary = None
-        rec_error = None
-        try:
-            rec_summary = ITCReconciliationService.reconcile_period(company, registration=registration)
-            rec_status = 'RECONCILED'
-        except Exception as e:
-            logger.exception(f"Post-attribution reconciliation failed for registration {registration.gstin}: {e}")
-            rec_status = 'RECONCILIATION_FAILED'
-            rec_error = str(e)
-
-        # Update response and durable operation record with reconciliation outcome
-        response_data['reconciliation_status'] = rec_status
-        response_data['reconciliation_summary'] = rec_summary
-        response_data['reconciliation_error'] = rec_error
-
-        # Update cached payload so future replays accurately reflect reconciliation status
-        VoucherAttributionOperation.objects.filter(
-            id=op_record.id
-        ).update(response_payload=response_data)
+        # Outside atomic transaction: durable reconciliation recovery dispatch (Round 2.4.5 P1)
+        # Attribution is already durably committed. Reconciliation failures or process crashes
+        # leave the durable ITCReconciliationJob in database for background recovery.
+        executed_job = ITCReconciliationJobService.execute_job(rec_job.id)
+        if executed_job and executed_job.status == 'COMPLETED':
+            response_data['reconciliation_status'] = 'RECONCILED'
+            response_data['reconciliation_summary'] = executed_job.summary_result
+            response_data['reconciliation_error'] = None
+        elif executed_job and executed_job.status == 'FAILED':
+            response_data['reconciliation_status'] = 'RECONCILIATION_FAILED'
+            response_data['reconciliation_summary'] = None
+            response_data['reconciliation_error'] = executed_job.last_error
+        else:
+            response_data['reconciliation_status'] = 'PENDING'
+            response_data['reconciliation_summary'] = None
+            response_data['reconciliation_error'] = (executed_job.last_error if executed_job else None)
 
         return Response(response_data, status=status.HTTP_200_OK)
 

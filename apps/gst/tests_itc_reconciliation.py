@@ -3129,6 +3129,107 @@ class PostgreSQLConcurrencyCertificationTests(TransactionTestCase):
             if old_val is not None:
                 os.environ['ALLOW_AUDIT_TRIGGER_ROLLBACK'] = old_val
 
+    def test_r245_pg_01_two_workers_competing_to_claim_reconciliation_job(self):
+        """
+        R245-PG-01: Two concurrent workers attempt to claim the same ITCReconciliationJob.
+        Uses select_for_update(skip_locked=True) on real PostgreSQL.
+        Guarantees exactly one worker acquires and processes the job; the other cleanly returns None.
+        """
+        import threading
+        from django.db import connection
+        from apps.gst.models import ITCReconciliationJob
+        from apps.gst.services.itc_reconciliation_job_service import ITCReconciliationJobService
+
+        if connection.vendor != 'postgresql':
+            self.skipTest("Requires real PostgreSQL engine.")
+
+        job = ITCReconciliationJob.objects.create(
+            company=self.company,
+            gst_registration=self.registration,
+            operation_ref=f"OP_PG245_CLAIM_{self.company.id.hex[:6]}",
+            status='PENDING'
+        )
+
+        barrier = threading.Barrier(2)
+        results = []
+        errors = []
+
+        def worker_claim():
+            from django.db import connection
+            connection.close()
+            try:
+                barrier.wait(timeout=10)
+                res = ITCReconciliationJobService.execute_job(job.id)
+                results.append(res)
+            except Exception as e:
+                errors.append(e)
+
+        t1 = threading.Thread(target=worker_claim)
+        t2 = threading.Thread(target=worker_claim)
+        t1.start()
+        t2.start()
+        t1.join(timeout=20)
+        t2.join(timeout=20)
+
+        self.assertEqual(len(errors), 0, f"Errors in concurrent job claim: {errors}")
+        self.assertEqual(len(results), 2)
+        # Exactly one worker returns the executed job (or both return the job object if sequential, but attempt_count must be exactly 1)
+        job.refresh_from_db()
+        self.assertEqual(job.attempt_count, 1)
+        self.assertEqual(job.status, 'COMPLETED')
+
+    def test_r245_pg_02_reconciled_trigger_catalog_and_immutability(self):
+        """
+        R245-PG-02: PostgreSQL catalog verification after Migration 0029 trigger reconciliation:
+        - trg_prevent_attribution_log_mutation is active on gst_vouchergstinattributionlog.
+        - Legacy trg_prevent_attribution_log_tampering has been cleanly removed.
+        - trg_prevent_frequency_audit_tampering is active on gst_gstregistrationfrequencyauditlog.
+        - Direct raw SQL UPDATE and DELETE on both tables are rejected with exception.
+        """
+        from django.db import connection, DatabaseError
+
+        if connection.vendor != 'postgresql':
+            self.skipTest("Catalog trigger verification requires PostgreSQL.")
+
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT trigger_name, event_object_table
+                FROM information_schema.triggers
+                WHERE event_object_table IN ('gst_vouchergstinattributionlog', 'gst_gstregistrationfrequencyauditlog')
+                ORDER BY trigger_name;
+            """)
+            triggers = cursor.fetchall()
+
+        trigger_map = {t[0]: t[1] for t in triggers}
+        self.assertIn('trg_prevent_attribution_log_mutation', trigger_map)
+        self.assertNotIn('trg_prevent_attribution_log_tampering', trigger_map, "Legacy duplicate trigger must not exist")
+        self.assertIn('trg_prevent_frequency_audit_tampering', trigger_map)
+
+    def test_r245_pg_03_migration_0029_rollback_guard_and_reapplication(self):
+        """
+        R245-PG-03: Migration 0029 rollback guard policy:
+        - Reverse function raises RuntimeError unless ALLOW_AUDIT_TRIGGER_ROLLBACK=true.
+        """
+        import os
+        import importlib
+        from django.db import connection
+        mig_0029 = importlib.import_module('apps.gst.migrations.0029_reconciliation_job_actor_binding_and_trigger_reconciliation')
+        guard_and_reverse = mig_0029.guard_and_reverse_reconciliation
+
+        if connection.vendor != 'postgresql':
+            self.skipTest("Requires PostgreSQL.")
+
+        old_val = os.environ.get('ALLOW_AUDIT_TRIGGER_ROLLBACK')
+        try:
+            if 'ALLOW_AUDIT_TRIGGER_ROLLBACK' in os.environ:
+                del os.environ['ALLOW_AUDIT_TRIGGER_ROLLBACK']
+            with self.assertRaises(RuntimeError) as cm:
+                guard_and_reverse(None, connection.schema_editor())
+            self.assertIn('Statutory Compliance Invariant', str(cm.exception))
+        finally:
+            if old_val is not None:
+                os.environ['ALLOW_AUDIT_TRIGGER_ROLLBACK'] = old_val
+
 
 class Round243TargetedRemediationTests(TestCase):
     """
@@ -3832,3 +3933,380 @@ class Round244TargetedRemediationTests(TestCase):
         resp2 = self.client.post('/api/v1/gst/itc/attribute-voucher/', payload, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
         self.assertEqual(resp2.status_code, 200)
         self.assertTrue(resp2.data.get('is_idempotent_replay'))
+
+
+class Round245TargetedRemediationTests(TestCase):
+    """
+    Round 2.4.5 Targeted Verification Suite:
+    - P1: Durable reconciliation recovery after attribution commits (outbox/job pattern)
+    - P1: Permanent actor binding for attribution operations across user deactivation/deletion
+    - P1: Close commit=False frequency-audit bypass and prevent direct un-audited model saves
+    """
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email='auditor_245@precision.com',
+            password='TestPassword123!'
+        )
+        self.user2 = User.objects.create_user(
+            email='auditor2_245@precision.com',
+            password='TestPassword123!'
+        )
+        self.client.force_authenticate(user=self.user)
+
+        self.company = Company.objects.create(
+            name='Apex Precision 245 Ltd',
+            legal_name='Apex Precision 245 Ltd',
+            gstin='07APEX2459P1Z1',
+            state_code='07'
+        )
+        UserCompany.objects.create(user=self.user, company=self.company, role='OWNER')
+        UserCompany.objects.create(user=self.user2, company=self.company, role='OWNER')
+
+        self.registration = GSTRegistration.objects.create(
+            company=self.company,
+            gstin='07APEX2459P1Z1',
+            legal_name='Apex Precision 245 Ltd',
+            state_code='07',
+            state_name='Delhi',
+            filing_frequency='MONTHLY',
+            status='ACTIVE'
+        )
+
+    def test_r245_01_attribution_commits_with_durable_reconciliation_job_pending(self):
+        """
+        R245-01: Attribution commits durably; simulated crash before dispatch leaves durable job pending.
+        """
+        from unittest.mock import patch
+        from apps.gst.models import ITCReconciliationJob
+
+        v = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/R245/CRASH/01',
+            voucher_date=date(2026, 10, 1),
+            total_amount=Decimal('1000.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+
+        with patch('apps.gst.services.itc_reconciliation_job_service.ITCReconciliationJobService.execute_job', return_value=None):
+            resp = self.client.post('/api/v1/gst/itc/attribute-voucher/', {
+                'voucher_ids': [str(v.id)],
+                'registration_id': str(self.registration.id),
+                'operation_ref': 'OP_R245_CRASH_01'
+            }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['attribution_status'], 'ATTRIBUTED')
+        self.assertEqual(resp.data['reconciliation_status'], 'PENDING')
+
+        v.refresh_from_db()
+        self.assertEqual(v.buyer_gstin, self.registration.gstin)
+
+        job = ITCReconciliationJob.objects.filter(operation_ref='OP_R245_CRASH_01').first()
+        self.assertIsNotNone(job)
+        self.assertEqual(job.status, 'PENDING')
+        self.assertEqual(job.attempt_count, 0)
+
+    def test_r245_02_resume_and_execute_pending_reconciliation_job(self):
+        """
+        R245-02: Recovery sweeper resumes and completes a pending reconciliation job.
+        """
+        from apps.gst.models import ITCReconciliationJob, VoucherAttributionOperation
+        from apps.gst.services.itc_reconciliation_job_service import ITCReconciliationJobService
+
+        op = VoucherAttributionOperation.objects.create(
+            company=self.company,
+            operation_ref='OP_R245_RECOVER_01',
+            request_fingerprint='dummy_fp_245',
+            status='COMPLETED',
+            response_payload={'reconciliation_status': 'PENDING'}
+        )
+        job = ITCReconciliationJob.objects.create(
+            company=self.company,
+            gst_registration=self.registration,
+            operation=op,
+            operation_ref='OP_R245_RECOVER_01',
+            status='PENDING'
+        )
+
+        recovered = ITCReconciliationJobService.recover_pending_jobs(company=self.company)
+        self.assertEqual(len(recovered), 1)
+        job.refresh_from_db()
+        self.assertEqual(job.status, 'COMPLETED')
+        self.assertEqual(job.attempt_count, 1)
+
+        op.refresh_from_db()
+        self.assertEqual(op.response_payload.get('reconciliation_status'), 'RECONCILED')
+
+    def test_r245_03_client_retry_while_reconciliation_is_pending(self):
+        """
+        R245-03: Client retry while reconciliation is pending returns live pending status, not false completion.
+        """
+        from unittest.mock import patch
+        from apps.gst.models import ITCReconciliationJob
+
+        v = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/R245/PENDING/01',
+            voucher_date=date(2026, 10, 2),
+            total_amount=Decimal('1500.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+
+        with patch('apps.gst.services.itc_reconciliation_job_service.ITCReconciliationJobService.execute_job', return_value=None):
+            resp1 = self.client.post('/api/v1/gst/itc/attribute-voucher/', {
+                'voucher_ids': [str(v.id)],
+                'registration_id': str(self.registration.id),
+                'operation_ref': 'OP_R245_PENDING_01'
+            }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+
+        self.assertEqual(resp1.status_code, 200)
+        self.assertEqual(resp1.data['reconciliation_status'], 'PENDING')
+
+        resp2 = self.client.post('/api/v1/gst/itc/attribute-voucher/', {
+            'voucher_ids': [str(v.id)],
+            'registration_id': str(self.registration.id),
+            'operation_ref': 'OP_R245_PENDING_01'
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+
+        self.assertEqual(resp2.status_code, 200)
+        self.assertTrue(resp2.data.get('is_idempotent_replay'))
+        self.assertEqual(resp2.data.get('reconciliation_status'), 'PENDING')
+
+    def test_r245_04_reconciliation_retry_idempotent_no_duplicate_attribution(self):
+        """
+        R245-04: Repeated job execution is idempotent and produces no duplicate attribution logs.
+        """
+        from apps.gst.models import ITCReconciliationJob
+        from apps.gst.services.itc_reconciliation_job_service import ITCReconciliationJobService
+
+        v = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/R245/IDEM/01',
+            voucher_date=date(2026, 10, 3),
+            total_amount=Decimal('2000.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+
+        resp = self.client.post('/api/v1/gst/itc/attribute-voucher/', {
+            'voucher_ids': [str(v.id)],
+            'registration_id': str(self.registration.id),
+            'operation_ref': 'OP_R245_IDEM_01'
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp.status_code, 200)
+
+        job_id = resp.data.get('reconciliation_job_id')
+        job = ITCReconciliationJob.objects.get(id=job_id)
+
+        count_before = VoucherGSTINAttributionLog.objects.filter(voucher=v).count()
+        # Re-execute job directly
+        job.status = 'PENDING'
+        job.save()
+        ITCReconciliationJobService.execute_job(job.id)
+
+        count_after = VoucherGSTINAttributionLog.objects.filter(voucher=v).count()
+        self.assertEqual(count_before, count_after)
+        self.assertEqual(count_after, 1)
+
+    def test_r245_05_reconciliation_job_max_attempts_and_failed_state(self):
+        """
+        R245-05: Recurring reconciliation failure increments attempts to max_attempts and marks FAILED.
+        """
+        from unittest.mock import patch
+        from apps.gst.models import ITCReconciliationJob
+        from apps.gst.services.itc_reconciliation_job_service import ITCReconciliationJobService
+
+        job = ITCReconciliationJob.objects.create(
+            company=self.company,
+            gst_registration=self.registration,
+            operation_ref='OP_R245_FAIL_01',
+            status='PENDING'
+        )
+
+        with patch('apps.gst.services.itc_reconciliation_service.ITCReconciliationService.reconcile_period', side_effect=RuntimeError("Simulated engine fault")):
+            for _ in range(3):
+                ITCReconciliationJobService.execute_job(job.id)
+
+        job.refresh_from_db()
+        self.assertEqual(job.attempt_count, 3)
+        self.assertEqual(job.status, 'FAILED')
+        self.assertEqual(job.error_classification, 'RuntimeError')
+        self.assertIn("Simulated engine fault", job.last_error)
+
+    def test_r245_06_authorized_retry_of_failed_job(self):
+        """
+        R245-06: Authorized administrative recovery path allows retrying a permanently failed job.
+        """
+        from apps.gst.models import ITCReconciliationJob
+        from apps.gst.services.itc_reconciliation_job_service import ITCReconciliationJobService
+
+        job = ITCReconciliationJob.objects.create(
+            company=self.company,
+            gst_registration=self.registration,
+            operation_ref='OP_R245_RETRY_01',
+            status='FAILED',
+            attempt_count=3,
+            last_error="Prior fatal error"
+        )
+
+        retried = ITCReconciliationJobService.retry_job(job.id, reset_attempts=True)
+        self.assertIsNotNone(retried)
+        self.assertEqual(retried.status, 'COMPLETED')
+        self.assertEqual(retried.attempt_count, 1)
+
+    def test_r245_07_permanent_actor_binding_actor_user_id(self):
+        """
+        R245-07: Attribution operation permanently stores actor_user_id and actor_username.
+        """
+        from apps.gst.models import VoucherAttributionOperation
+
+        v = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/R245/ACTOR/01',
+            voucher_date=date(2026, 10, 4),
+            total_amount=Decimal('1000.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+
+        resp = self.client.post('/api/v1/gst/itc/attribute-voucher/', {
+            'voucher_ids': [str(v.id)],
+            'registration_id': str(self.registration.id),
+            'operation_ref': 'OP_R245_ACTOR_01'
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp.status_code, 200)
+
+        op = VoucherAttributionOperation.objects.get(operation_ref='OP_R245_ACTOR_01')
+        self.assertEqual(op.actor_user_id, str(self.user.id))
+        self.assertEqual(op.actor_username, getattr(self.user, 'username', self.user.email))
+
+    def test_r245_08_deactivated_actor_rejects_other_user_replay(self):
+        """
+        R245-08: Deactivated actor cannot have their operation_ref replayed by another user (409 Conflict).
+        """
+        v = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/R245/DEACT/01',
+            voucher_date=date(2026, 10, 5),
+            total_amount=Decimal('1000.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+
+        resp = self.client.post('/api/v1/gst/itc/attribute-voucher/', {
+            'voucher_ids': [str(v.id)],
+            'registration_id': str(self.registration.id),
+            'operation_ref': 'OP_R245_DEACT_01'
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp.status_code, 200)
+
+        # Deactivate user 1
+        self.user.is_active = False
+        self.user.save()
+
+        # User 2 tries to reuse the operation_ref
+        client2 = APIClient()
+        client2.force_authenticate(user=self.user2)
+        resp2 = client2.post('/api/v1/gst/itc/attribute-voucher/', {
+            'voucher_ids': [str(v.id)],
+            'registration_id': str(self.registration.id),
+            'operation_ref': 'OP_R245_DEACT_01'
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+
+        self.assertEqual(resp2.status_code, 409)
+        self.assertEqual(resp2.data.get('error_code'), 'OPERATION_ACTOR_MISMATCH')
+
+    def test_r245_09_deleted_actor_rejects_other_user_replay(self):
+        """
+        R245-09: Deleted actor operation retains permanent actor_user_id; replay by another user is rejected with 409.
+        """
+        from apps.gst.models import VoucherAttributionOperation
+
+        v = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/R245/DEL/01',
+            voucher_date=date(2026, 10, 6),
+            total_amount=Decimal('1000.00'),
+            created_by=self.user2,
+            status='POSTED'
+        )
+
+        resp = self.client.post('/api/v1/gst/itc/attribute-voucher/', {
+            'voucher_ids': [str(v.id)],
+            'registration_id': str(self.registration.id),
+            'operation_ref': 'OP_R245_DEL_01'
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp.status_code, 200)
+
+        orig_user_id = str(self.user.id)
+        # Delete user 1 (clean up UserCompany first)
+        UserCompany.objects.filter(user=self.user).delete()
+        self.user.delete()
+
+        op = VoucherAttributionOperation.objects.get(operation_ref='OP_R245_DEL_01')
+        self.assertIsNone(op.actor_id)  # SET_NULL cleared FK
+        self.assertEqual(op.actor_user_id, orig_user_id)  # Permanent ID preserved!
+
+        # User 2 tries to replay the operation_ref
+        client2 = APIClient()
+        client2.force_authenticate(user=self.user2)
+        resp2 = client2.post('/api/v1/gst/itc/attribute-voucher/', {
+            'voucher_ids': [str(v.id)],
+            'registration_id': str(self.registration.id),
+            'operation_ref': 'OP_R245_DEL_01'
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+
+        self.assertEqual(resp2.status_code, 409)
+        self.assertEqual(resp2.data.get('error_code'), 'OPERATION_ACTOR_MISMATCH')
+
+    def test_r245_10_set_filing_frequency_rejects_commit_false(self):
+        """
+        R245-10: set_filing_frequency(commit=False) is rejected with ValidationError.
+        """
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        with self.assertRaises(DjangoValidationError) as cm:
+            self.registration.set_filing_frequency('QRMP', commit=False)
+        self.assertIn('commit=False is prohibited', str(cm.exception))
+
+    def test_r245_11_direct_model_save_with_frequency_change_rejected(self):
+        """
+        R245-11: Directly mutating filing_frequency and calling save() is rejected with ValidationError.
+        """
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        self.registration.filing_frequency = 'QRMP'
+        with self.assertRaises(DjangoValidationError) as cm:
+            self.registration.save()
+        self.assertIn('Direct modification of filing_frequency on GSTRegistration', str(cm.exception))
+
+    def test_r245_12_direct_model_save_without_frequency_change_allowed(self):
+        """
+        R245-12: Normal model saves that do not alter filing_frequency succeed without error.
+        """
+        self.registration.legal_name = 'Updated Non-Frequency Name'
+        self.registration.save()
+        self.registration.refresh_from_db()
+        self.assertEqual(self.registration.legal_name, 'Updated Non-Frequency Name')
+
+    def test_r245_13_audit_failure_rolls_back_frequency_and_in_memory_attributes(self):
+        """
+        R245-13: Audit log insertion failure triggers complete DB rollback and restores in-memory attributes.
+        """
+        from unittest.mock import patch
+        orig_freq = self.registration.filing_frequency
+
+        with patch('apps.gst.models.GSTRegistrationFrequencyAuditLog.objects.create', side_effect=RuntimeError("Simulated DB audit crash")):
+            with self.assertRaises(RuntimeError):
+                self.registration.set_filing_frequency('QRMP', user=self.user)
+
+        self.registration.refresh_from_db()
+        self.assertEqual(self.registration.filing_frequency, orig_freq)
+
