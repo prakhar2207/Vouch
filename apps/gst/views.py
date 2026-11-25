@@ -1273,7 +1273,7 @@ class GSTR2BSyncFromSandboxAPIView(APIView):
             # Return 401 for AUTHENTICATION_REQUIRED
             # Return 400 for VALIDATION_ERROR or FAILED
             st = res.get("status")
-            if st in ["SUCCESS", "PARTIAL_SUCCESS", "NOT_APPLICABLE"] or (st is None and res.get("success")):
+            if st in ["SUCCESS", "EMPTY_SUCCESS", "PARTIAL_SUCCESS", "NOT_APPLICABLE"] or (st is None and res.get("success")):
                 status_code = status.HTTP_200_OK
             elif st == "AUTHENTICATION_REQUIRED":
                 status_code = status.HTTP_401_UNAUTHORIZED

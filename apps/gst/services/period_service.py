@@ -24,13 +24,14 @@ class StatementPeriodResolution:
     invoice_period: str                  # e.g. "042026" (MMYYYY)
     financial_year: str                  # e.g. "2026-27"
     recipient_filing_frequency: str      # 'MONTHLY', 'QRMP', 'UNKNOWN'
-    expected_statement_period: str       # e.g. "062026" for QRMP Apr-Jun, or "042026" for monthly
-    statement_generation_period: str     # e.g. "062026"
+    expected_statement_period: Optional[str] # e.g. "062026" for QRMP Apr-Jun, "042026" for monthly, None if UNKNOWN
+    statement_generation_period: Optional[str] # e.g. "062026"
     actual_statement_period: Optional[str] # Matched period from available statements
-    period_resolution_status: str        # 'RESOLVED_MONTHLY', 'RESOLVED_QRMP', 'AMBIGUOUS'
-    evidence_source: str                 # 'REGISTRATION_FREQUENCY', 'STATEMENT_METADATA', 'DEFAULT_MONTHLY'
+    period_resolution_status: str        # 'RESOLVED_MONTHLY', 'RESOLVED_QRMP', 'REVIEW_REQUIRED'
+    evidence_source: str                 # 'REGISTRATION_FREQUENCY', 'FILING_FREQUENCY_PARAM', 'FILING_FREQUENCY_UNKNOWN'
     is_qrmp_quarter_end: bool            # True if expected period is quarter end
-    quarter_label: str                   # 'Q1 (Apr-Jun)', 'Q2 (Jul-Sep)', 'Q3 (Oct-Dec)', 'Q4 (Jan-Mar)'
+    quarter_label: str                   # 'Q1 (Apr–Jun)', 'Q2 (Jul–Sep)', 'Q3 (Oct–Dec)', 'Q4 (Jan–Mar)'
+    reason: str                          # Explicit audit rationale for resolution
 
 
 @dataclass(frozen=True)
@@ -332,6 +333,27 @@ class GSTPeriodService:
             return False, f"Month {m} is an interim month of {q_label}. Under QRMP, official GSTR-2B is generated on quarter-end ({end_period})."
 
     @classmethod
+    def parse_financial_year(cls, fy_input: Any) -> Tuple[str, date, date]:
+        """
+        Validates an Indian Financial Year string (e.g. '2025-26' or '2026-27')
+        and returns (normalized_fy, start_date, end_date).
+        """
+        if not fy_input:
+            raise ValidationError("Financial year cannot be empty.")
+        s = str(fy_input).strip()
+        m = re.match(r'^(20\d{2})-(\d{2})$', s)
+        if not m:
+            raise ValidationError(f"Invalid financial year '{s}'. Expected YYYY-YY (e.g. '2025-26').")
+        start_y = int(m.group(1))
+        end_short = int(m.group(2))
+        expected_short = (start_y + 1) % 100
+        if end_short != expected_short:
+            raise ValidationError(f"Invalid sequential financial year '{s}'. Expected '{start_y}-{str(expected_short).zfill(2)}'.")
+        if start_y < MIN_SUPPORTED_YEAR or start_y > MAX_SUPPORTED_YEAR:
+            raise ValidationError(f"Financial year '{s}' is outside supported GST range.")
+        return s, date(start_y, 4, 1), date(start_y + 1, 3, 31)
+
+    @classmethod
     def resolve_gstr2b_statement_period(
         cls,
         invoice_date: Union[date, str],
@@ -341,18 +363,17 @@ class GSTPeriodService:
     ) -> StatementPeriodResolution:
         """
         Central Return-Period Resolver with QRMP Intelligence (DEF-02).
-        Maps an invoice date to its statutory GSTR-2B statement period.
+        Maps an invoice date to its statutory GSTR-2B statement period using verified configuration only.
         - Keeps invoice period and statement period strictly distinct.
-        - For QRMP recipients: Maps April/May invoices to the June statement (06YYYY),
-          July/August to September (09YYYY), October/November to December (12YYYY),
-          January/February to March (03YYYY).
-        - For Monthly recipients: Maps invoice month to the corresponding monthly statement (MMYYYY).
-        - For Unknown: Uses statement presence or defaults safely without data loss.
+        - Never infers QRMP or MONTHLY filing merely from statement presence or calendar.
+        - For verified QRMP recipients: Maps M1/M2/M3 of a quarter to quarter-end statement (06/09/12/03YYYY).
+          Also checks statement_metadata for actual IFF interim statement evidence when present.
+        - For verified MONTHLY recipients: Maps invoice month to the corresponding monthly statement (MMYYYY).
+        - For UNKNOWN filing frequency: Returns REVIEW_REQUIRED with expected_statement_period=None.
         """
         if isinstance(invoice_date, str):
             from datetime import datetime
             raw_s = invoice_date.strip()
-            # Try ISO format
             try:
                 dt = datetime.strptime(raw_s[:10], "%Y-%m-%d").date()
             except Exception:
@@ -370,51 +391,67 @@ class GSTPeriodService:
         y = dt.year
         inv_period = f"{str(m).zfill(2)}{y}"
         fy = cls.compute_financial_year(y, m)
-        q_num, q_end_m, q_label = cls.get_quarter_info(m, y)
+        _, q_end_m, q_label = cls.get_quarter_info(m, y)
         qrmp_stmt_period = f"{str(q_end_m).zfill(2)}{y}"
 
-        # Determine frequency
-        freq = (filing_frequency or '').upper()
-        evidence = 'DEFAULT_MONTHLY'
+        # Determine verified filing frequency strictly from explicit parameter or registration config
+        freq = (filing_frequency or '').strip().upper()
+        evidence = 'FILING_FREQUENCY_PARAM' if freq in ['MONTHLY', 'QRMP'] else 'FILING_FREQUENCY_UNKNOWN'
         if not freq and recipient_registration is not None:
-            freq = (getattr(recipient_registration, 'filing_frequency', None) or '').upper()
-            if freq in ['MONTHLY', 'QRMP']:
+            reg_freq = (getattr(recipient_registration, 'filing_frequency', None) or '').strip().upper()
+            if reg_freq in ['MONTHLY', 'QRMP']:
+                freq = reg_freq
                 evidence = 'REGISTRATION_FREQUENCY'
+            elif reg_freq == 'UNKNOWN':
+                freq = 'UNKNOWN'
+                evidence = 'REGISTRATION_FREQUENCY_UNKNOWN'
 
         if freq not in ['MONTHLY', 'QRMP']:
             freq = 'UNKNOWN'
 
-        # If unknown, check statement metadata
-        if freq == 'UNKNOWN' and statement_metadata is not None:
-            available_periods = set()
+        available = set()
+        if statement_metadata is not None:
             if isinstance(statement_metadata, (set, list, tuple)):
-                available_periods = set(statement_metadata)
+                available = set(statement_metadata)
             elif isinstance(statement_metadata, dict):
-                available_periods = set(statement_metadata.keys())
+                available = set(statement_metadata.keys())
 
-            if inv_period in available_periods:
-                freq = 'MONTHLY'
-                evidence = 'STATEMENT_METADATA_MONTHLY'
-            elif qrmp_stmt_period in available_periods and m != q_end_m:
-                freq = 'QRMP'
-                evidence = 'STATEMENT_METADATA_QRMP'
+        # Strict no-guessing behavior when filing frequency is UNKNOWN
+        if freq == 'UNKNOWN':
+            return StatementPeriodResolution(
+                invoice_period=inv_period,
+                financial_year=fy,
+                recipient_filing_frequency='UNKNOWN',
+                expected_statement_period=None,
+                statement_generation_period=None,
+                actual_statement_period=None,
+                period_resolution_status='REVIEW_REQUIRED',
+                evidence_source=evidence,
+                is_qrmp_quarter_end=False,
+                quarter_label=q_label,
+                reason="Recipient filing frequency is UNKNOWN; statement period cannot be assumed without verified MONTHLY or QRMP registration configuration."
+            )
 
-        # Resolve expected period
         if freq == 'QRMP':
             expected_period = qrmp_stmt_period
             res_status = 'RESOLVED_QRMP'
             is_qrmp_qe = True
+            # Quarter-end statement covers all months in the quarter; interim IFF reflection is evidence-based only
+            if expected_period in available:
+                actual_period = expected_period
+                reason = f"Verified QRMP recipient ({q_label}): mapped invoice period {inv_period} to processed quarter-end statement {expected_period}."
+            elif inv_period != expected_period and inv_period in available:
+                actual_period = inv_period
+                reason = f"Verified QRMP recipient ({q_label}): quarter-end {expected_period} pending; interim statement {inv_period} available."
+            else:
+                actual_period = None
+                reason = f"Verified QRMP recipient ({q_label}): mapped invoice period {inv_period} to expected quarter-end statement {expected_period}."
         else:
             expected_period = inv_period
             res_status = 'RESOLVED_MONTHLY'
             is_qrmp_qe = (m in [6, 9, 12, 3])
-
-        # Actual statement period if metadata available
-        actual_period = None
-        if statement_metadata is not None:
-            available = set(statement_metadata if isinstance(statement_metadata, (set, list, tuple)) else statement_metadata.keys())
-            if expected_period in available:
-                actual_period = expected_period
+            actual_period = expected_period if expected_period in available else None
+            reason = f"Verified MONTHLY recipient: mapped invoice period {inv_period} to monthly statement {expected_period}."
 
         return StatementPeriodResolution(
             invoice_period=inv_period,
@@ -426,5 +463,6 @@ class GSTPeriodService:
             period_resolution_status=res_status,
             evidence_source=evidence,
             is_qrmp_quarter_end=is_qrmp_qe,
-            quarter_label=q_label
+            quarter_label=q_label,
+            reason=reason
         )

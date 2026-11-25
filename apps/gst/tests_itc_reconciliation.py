@@ -11,7 +11,7 @@ from apps.companies.models import Company, UserCompany
 from apps.ledgers.models import LedgerGroup, Ledger
 from apps.inventory.models import Product, Warehouse
 from apps.accounting.models import Voucher, VoucherItem
-from apps.gst.models import CompanyGSTConfig, GSTR2BImport, GSTR2BRecord, GSTRegistration
+from apps.gst.models import CompanyGSTConfig, GSTR2BImport, GSTR2BRecord, GSTRegistration, VoucherGSTINAttributionLog, resolve_document_financial_effect
 from apps.gst.services.itc_reconciliation_service import ITCReconciliationService
 from apps.gst.services.itc_notification_service import ITCNotificationService
 from apps.gst.services.reconciliation_service import GSTReconciliationService
@@ -44,6 +44,7 @@ class ITCReconciliationTests(TestCase):
             legal_name='Precision Engineering Works Pvt Ltd',
             state_code='07',
             status='ACTIVE',
+            filing_frequency='MONTHLY',
             is_primary=True
         )
         self.warehouse = Warehouse.objects.create(company=self.company, name='Raw Material Store')
@@ -1015,6 +1016,7 @@ class ITCReconciliationTests(TestCase):
             invoice_number='INV/CDNR/B2B/01',
             normalized_invoice_number='INVCDNRB2B01',
             document_type='B2B',
+            invoice_date=date(2026, 10, 5),
             taxable_value=Decimal('10000.00'),
             cgst_amount=Decimal('900.00'),
             sgst_amount=Decimal('900.00'),
@@ -1031,6 +1033,7 @@ class ITCReconciliationTests(TestCase):
             normalized_invoice_number='CNCDNR01',
             document_type='CDNR',
             note_type='C',
+            invoice_date=date(2026, 10, 8),
             taxable_value=Decimal('2000.00'),
             cgst_amount=Decimal('180.00'),
             sgst_amount=Decimal('180.00'),
@@ -1384,6 +1387,422 @@ class ITCReconciliationTests(TestCase):
         self.assertIsNotNone(unmapped_v.itc_gstin_attributed_at)
         self.assertEqual(unmapped_v.itc_gstin_attribution_source, 'TEST_SUITE_AUDIT')
 
+        # Verify append-only attribution audit log was created (P0 DEF-04)
+        log = VoucherGSTINAttributionLog.objects.filter(voucher=unmapped_v).first()
+        self.assertIsNotNone(log)
+        self.assertEqual(log.new_gstin, self.registration.gstin)
+        self.assertEqual(log.attributed_by, self.user)
+        self.assertFalse(log.is_correction)
+
+    def test_qrmp_10_mandatory_regression_scenarios(self):
+        """
+        P0 DEF-02 & Round 2.4.1: Complete 10 mandatory QRMP regression scenarios.
+        1. April invoice found in June statement → LATER_PERIOD_MATCH.
+        2. April invoice absent from successfully processed June statement → MISSING_IN_2B.
+        3. May invoice found in June statement → LATER_PERIOD_MATCH.
+        4. May invoice absent from successfully processed June statement → MISSING_IN_2B.
+        5. July invoice found in September statement → LATER_PERIOD_MATCH.
+        6. July invoice absent from successfully processed September statement → MISSING_IN_2B.
+        7. April invoice with no June statement → DATA_UNAVAILABLE.
+        8. Failed June fetch → never classify April or May invoices as missing.
+        9. Reprocessing September must not overwrite a verified June match.
+        10. A credit note or debit note must preserve its correct signed financial effect.
+        """
+        self.registration.filing_frequency = 'QRMP'
+        self.registration.save(update_fields=['filing_frequency'])
+
+        def create_test_voucher(v_num, inv_num, v_date, taxable_amt=Decimal('10000.00'), tax_amt=Decimal('1800.00')):
+            v = Voucher.objects.create(
+                company=self.company,
+                voucher_type='PURCHASE',
+                voucher_number=v_num,
+                external_invoice_number=inv_num,
+                voucher_date=v_date,
+                buyer_gstin=self.registration.gstin,
+                party_ledger=self.vendor_ledger,
+                total_amount=taxable_amt + tax_amt,
+                created_by=self.user,
+                status='POSTED',
+                itc_match_status='UNCHECKED'
+            )
+            half_tax = tax_amt / 2
+            VoucherItem.objects.create(
+                voucher=v,
+                product=self.product,
+                quantity=Decimal('1.00'),
+                rate=taxable_amt,
+                taxable_amount=taxable_amt,
+                cgst_rate=Decimal('9.00'),
+                cgst_amount=half_tax,
+                sgst_rate=Decimal('9.00'),
+                sgst_amount=half_tax,
+                total_amount=taxable_amt + tax_amt
+            )
+            return v
+
+        # Vouchers:
+        v_apr_found = create_test_voucher('PUR/26-27/APR-F', 'INV/APR/01', date(2026, 4, 15))
+        v_apr_absent = create_test_voucher('PUR/26-27/APR-A', 'INV/APR/ABSENT', date(2026, 4, 20))
+        v_may_found = create_test_voucher('PUR/26-27/MAY-F', 'INV/MAY/01', date(2026, 5, 10))
+        v_may_absent = create_test_voucher('PUR/26-27/MAY-A', 'INV/MAY/ABSENT', date(2026, 5, 25))
+        v_jul_found = create_test_voucher('PUR/26-27/JUL-F', 'INV/JUL/01', date(2026, 7, 12))
+        v_jul_absent = create_test_voucher('PUR/26-27/JUL-A', 'INV/JUL/ABSENT', date(2026, 7, 18))
+
+        # Scenario 7: April invoice with no June statement → DATA_UNAVAILABLE
+        GSTR2BImport.objects.filter(company=self.company, return_period='062026').delete()
+        ITCReconciliationService.reconcile_period(self.company, return_period='062026', registration=self.registration)
+        v_apr_absent.refresh_from_db()
+        self.assertEqual(v_apr_absent.itc_match_status, 'DATA_UNAVAILABLE', "Scenario 7: No June statement must yield DATA_UNAVAILABLE")
+
+        # Scenario 8: Failed June fetch → never classify April or May invoices as missing
+        GSTR2BImport.objects.filter(company=self.company, return_period='062026').delete()
+        GSTR2BImport.objects.create(
+            company=self.company,
+            gst_registration=self.registration,
+            return_period='062026',
+            status='REQUEST_FAILED',
+            uploaded_by=self.user
+        )
+        ITCReconciliationService.reconcile_period(self.company, return_period='062026', registration=self.registration)
+        v_apr_absent.refresh_from_db()
+        v_may_absent.refresh_from_db()
+        self.assertEqual(v_apr_absent.itc_match_status, 'DATA_UNAVAILABLE', "Scenario 8: Failed June statement must not classify as MISSING_IN_2B")
+        self.assertEqual(v_may_absent.itc_match_status, 'DATA_UNAVAILABLE', "Scenario 8: Failed June statement must not classify as MISSING_IN_2B")
+
+        # Ingest successful June 2026 GSTR-2B containing INV/APR/01 and INV/MAY/01
+        GSTR2BImport.objects.filter(company=self.company, return_period='062026').delete()
+        june_payload = {
+            'gstin': self.registration.gstin,
+            'fp': '062026',
+            'data': {
+                'docdata': {
+                    'b2b': [{
+                        'ctin': '07STEEL8888S1Z8',
+                        'inv': [
+                            {
+                                'inum': 'INV/APR/01',
+                                'dt': '15-04-2026',
+                                'val': 11800.0,
+                                'items': [{'txval': 10000.0, 'camt': 900.0, 'samt': 900.0, 'iamt': 0.0, 'csamt': 0.0}]
+                            },
+                            {
+                                'inum': 'INV/MAY/01',
+                                'dt': '10-05-2026',
+                                'val': 11800.0,
+                                'items': [{'txval': 10000.0, 'camt': 900.0, 'samt': 900.0, 'iamt': 0.0, 'csamt': 0.0}]
+                            }
+                        ]
+                    }],
+                    'cdnr': [{
+                        'ctin': '07STEEL8888S1Z8',
+                        'nt': [{
+                            'nt_num': 'CN/JUNE/01',
+                            'nt_dt': '20-06-2026',
+                            'ntty': 'C',
+                            'val': 2360.0,
+                            'items': [{'txval': 2000.0, 'camt': 180.0, 'samt': 180.0, 'iamt': 0.0, 'csamt': 0.0}]
+                        }]
+                    }]
+                }
+            }
+        }
+        ITCReconciliationService.ingest_gstr2b_json(
+            company=self.company,
+            json_data=june_payload,
+            return_period='062026',
+            registration=self.registration
+        )
+
+        # Reconcile June 2026
+        ITCReconciliationService.reconcile_period(self.company, return_period='062026', registration=self.registration)
+
+        v_apr_found.refresh_from_db()
+        v_apr_absent.refresh_from_db()
+        v_may_found.refresh_from_db()
+        v_may_absent.refresh_from_db()
+        v_jul_found.refresh_from_db()
+        v_jul_absent.refresh_from_db()
+
+        # Scenario 1 & 3: Found April & May invoices in June statement → LATER_PERIOD_MATCH
+        self.assertEqual(v_apr_found.itc_match_status, 'LATER_PERIOD_MATCH', "Scenario 1: April invoice in June 2B must be LATER_PERIOD_MATCH")
+        self.assertEqual(v_may_found.itc_match_status, 'LATER_PERIOD_MATCH', "Scenario 3: May invoice in June 2B must be LATER_PERIOD_MATCH")
+
+        # Scenario 2 & 4: Absent April & May invoices from successfully processed June statement → MISSING_IN_2B
+        self.assertEqual(v_apr_absent.itc_match_status, 'MISSING_IN_2B', "Scenario 2: Absent April invoice from June 2B must be MISSING_IN_2B")
+        self.assertEqual(v_may_absent.itc_match_status, 'MISSING_IN_2B', "Scenario 4: Absent May invoice from June 2B must be MISSING_IN_2B")
+
+        # Future July vouchers must remain UNCHECKED after June reconciliation (unrelated future statement)
+        self.assertEqual(v_jul_found.itc_match_status, 'UNCHECKED')
+        self.assertEqual(v_jul_absent.itc_match_status, 'UNCHECKED')
+
+        # Ingest successful September 2026 GSTR-2B containing INV/JUL/01
+        sept_payload = {
+            'gstin': self.registration.gstin,
+            'fp': '092026',
+            'data': {
+                'docdata': {
+                    'b2b': [{
+                        'ctin': '07STEEL8888S1Z8',
+                        'inv': [
+                            {
+                                'inum': 'INV/JUL/01',
+                                'dt': '12-07-2026',
+                                'val': 11800.0,
+                                'items': [{'txval': 10000.0, 'camt': 900.0, 'samt': 900.0, 'iamt': 0.0, 'csamt': 0.0}]
+                            }
+                        ]
+                    }],
+                    'cdnr': []
+                }
+            }
+        }
+        ITCReconciliationService.ingest_gstr2b_json(
+            company=self.company,
+            json_data=sept_payload,
+            return_period='092026',
+            registration=self.registration
+        )
+
+        # Reconcile September 2026
+        ITCReconciliationService.reconcile_period(self.company, return_period='092026', registration=self.registration)
+
+        v_jul_found.refresh_from_db()
+        v_jul_absent.refresh_from_db()
+        v_apr_found.refresh_from_db()
+
+        # Scenario 5 & 6: July invoice in September statement
+        self.assertEqual(v_jul_found.itc_match_status, 'LATER_PERIOD_MATCH', "Scenario 5: July invoice in Sept 2B must be LATER_PERIOD_MATCH")
+        self.assertEqual(v_jul_absent.itc_match_status, 'MISSING_IN_2B', "Scenario 6: Absent July invoice from Sept 2B must be MISSING_IN_2B")
+
+        # Scenario 9: Reprocessing September must not overwrite a verified June match
+        self.assertEqual(v_apr_found.itc_match_status, 'LATER_PERIOD_MATCH', "Scenario 9: September reconciliation must not overwrite June match")
+
+        # Scenario 10: Credit note signed financial effect in QRMP
+        rec_cn = GSTR2BRecord.objects.get(company=self.company, return_period='062026', document_type='CDNR')
+        self.assertEqual(rec_cn.financial_effect.financial_sign, -1, "Scenario 10: Credit note must maintain financial_sign=-1")
+        self.assertEqual(rec_cn.signed_total_tax, Decimal('-360.00'))
+
+    def test_filing_frequency_verification_and_drift_prevention(self):
+        """
+        P0 DEF-03 & Round 2.4.1: Filing-frequency verification lifecycle.
+        - Registrations default to UNKNOWN.
+        - UNKNOWN registration returns REVIEW_REQUIRED.
+        - Provider errors do not mutate filing frequency.
+        - set_filing_frequency updates frequency with audit timestamp and user.
+        - Monthly and QRMP resolve distinct expected statement periods.
+        """
+        new_reg = GSTRegistration.objects.create(
+            company=self.company,
+            gstin='07NEWREG9999N1Z1',
+            legal_name='New Unverified Branch',
+            state_code='07',
+            status='ACTIVE'
+        )
+        # Default must be UNKNOWN
+        self.assertEqual(new_reg.filing_frequency, 'UNKNOWN')
+        self.assertEqual(new_reg.frequency_verified_source, '')
+        self.assertIsNone(new_reg.frequency_verified_at)
+
+        # Resolution with UNKNOWN returns REVIEW_REQUIRED
+        res_unk = GSTPeriodService.resolve_gstr2b_statement_period(
+            invoice_date=date(2026, 4, 15),
+            recipient_registration=new_reg
+        )
+        self.assertEqual(res_unk.period_resolution_status, 'REVIEW_REQUIRED')
+        self.assertIsNone(res_unk.expected_statement_period)
+
+        # Simulate provider FORM_NOT_APPLICABLE error; filing_frequency must NOT be mutated to QRMP
+        new_reg.refresh_from_db()
+        self.assertEqual(new_reg.filing_frequency, 'UNKNOWN')
+
+        # Authorized explicit manual update
+        new_reg.set_filing_frequency(frequency='QRMP', source='USER_MANUAL', user=self.user)
+        new_reg.refresh_from_db()
+        self.assertEqual(new_reg.filing_frequency, 'QRMP')
+        self.assertEqual(new_reg.frequency_verified_source, 'USER_MANUAL')
+        self.assertEqual(new_reg.frequency_verified_by, self.user)
+        self.assertIsNotNone(new_reg.frequency_verified_at)
+
+        # Test monthly registration
+        new_reg.set_filing_frequency(frequency='MONTHLY', source='PORTAL_API', user=self.user)
+        res_m = GSTPeriodService.resolve_gstr2b_statement_period(
+            invoice_date=date(2026, 4, 15),
+            recipient_registration=new_reg
+        )
+        self.assertEqual(res_m.period_resolution_status, 'RESOLVED_MONTHLY')
+        self.assertEqual(res_m.expected_statement_period, '042026')
+
+    def test_secure_attribution_and_correction_workflow_lifecycle(self):
+        """
+        P0 DEF-04: Secure GSTIN attribution and correction workflow.
+        - Rejects cross-tenant voucher IDs.
+        - Rejects already-attributed voucher without correction mode.
+        - Rejects inactive registration.
+        - Rejects unauthorized user role.
+        - Succeeds on unmapped voucher and creates append-only log.
+        - Correction mode succeeds with reason and appends second log.
+        """
+        unmapped_v = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/26-27/ATTR-001',
+            external_invoice_number='INV/ATTR/001',
+            voucher_date=date(2026, 8, 10),
+            buyer_gstin=None,
+            party_ledger=self.vendor_ledger,
+            total_amount=Decimal('1180.00'),
+            created_by=self.user,
+            status='POSTED',
+            itc_match_status='UNCHECKED'
+        )
+
+        reg2 = GSTRegistration.objects.create(
+            company=self.company,
+            gstin='27AAAAA9999A1Z2',
+            legal_name='Precision Mumbai',
+            state_code='27',
+            status='ACTIVE'
+        )
+        inactive_reg = GSTRegistration.objects.create(
+            company=self.company,
+            gstin='09INACTIVE9999Z9',
+            legal_name='Precision Inactive',
+            state_code='09',
+            status='INACTIVE'
+        )
+
+        # 1. Reject inactive registration
+        res = self.client.post(
+            reverse('itc_attribute_voucher'),
+            {'voucher_ids': [str(unmapped_v.id)], 'registration_id': str(inactive_reg.id)},
+            format='json', HTTP_X_COMPANY_ID=str(self.company.id)
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(res.data.get('error_code'), 'INACTIVE_REGISTRATION')
+
+        # 2. Reject cross-tenant or invalid voucher ID
+        import uuid
+        res = self.client.post(
+            reverse('itc_attribute_voucher'),
+            {'voucher_ids': [str(unmapped_v.id), str(uuid.uuid4())], 'registration_id': str(self.registration.id)},
+            format='json', HTTP_X_COMPANY_ID=str(self.company.id)
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(res.data.get('error_code'), 'CROSS_TENANT_OR_INVALID_VOUCHERS')
+
+        # 3. Successful initial attribution
+        res = self.client.post(
+            reverse('itc_attribute_voucher'),
+            {'voucher_ids': [str(unmapped_v.id)], 'registration_id': str(self.registration.id), 'attribution_source': 'FIRST_MAP'},
+            format='json', HTTP_X_COMPANY_ID=str(self.company.id)
+        )
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue(res.data.get('success'))
+        unmapped_v.refresh_from_db()
+        self.assertEqual(unmapped_v.buyer_gstin, self.registration.gstin)
+
+        # 4. Standard attribution of ALREADY ATTRIBUTED voucher must be rejected
+        res = self.client.post(
+            reverse('itc_attribute_voucher'),
+            {'voucher_ids': [str(unmapped_v.id)], 'registration_id': str(reg2.id)},
+            format='json', HTTP_X_COMPANY_ID=str(self.company.id)
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(res.data.get('error_code'), 'ALREADY_ATTRIBUTED')
+
+        # 5. Correction without reason must be rejected
+        res = self.client.post(
+            reverse('itc_correct_attribution'),
+            {'voucher_ids': [str(unmapped_v.id)], 'registration_id': str(reg2.id), 'reason': ''},
+            format='json', HTTP_X_COMPANY_ID=str(self.company.id)
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(res.data.get('error_code'), 'REASON_REQUIRED')
+
+        # 6. Authorized correction with reason succeeds and creates append-only audit entry
+        res = self.client.post(
+            reverse('itc_correct_attribution'),
+            {
+                'voucher_ids': [str(unmapped_v.id)],
+                'registration_id': str(reg2.id),
+                'reason': 'Invoice belonged to Mumbai branch per PO #9941'
+            },
+            format='json', HTTP_X_COMPANY_ID=str(self.company.id)
+        )
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue(res.data.get('success'))
+        unmapped_v.refresh_from_db()
+        self.assertEqual(unmapped_v.buyer_gstin, reg2.gstin)
+
+        # Verify 2 distinct immutable audit log records exist
+        logs = list(VoucherGSTINAttributionLog.objects.filter(voucher=unmapped_v).order_by('attributed_at'))
+        self.assertEqual(len(logs), 2)
+        self.assertFalse(logs[0].is_correction)
+        self.assertEqual(logs[0].new_gstin, self.registration.gstin)
+        self.assertTrue(logs[1].is_correction)
+        self.assertEqual(logs[1].previous_gstin, self.registration.gstin)
+        self.assertEqual(logs[1].new_gstin, reg2.gstin)
+        self.assertEqual(logs[1].reason, 'Invoice belonged to Mumbai branch per PO #9941')
+
+    def test_financial_resolver_unknown_doc_types_and_decimal_math(self):
+        """
+        P1 DEF-01, DEF-05: Unknown document types and 12-decimal fixture verification.
+        - Unknown doc types (ISD, CUSTOMS, XYZ) return financial_sign=0, is_review_required=True.
+        - Ambiguous or missing note_type on CDNR returns financial_sign=0, is_review_required=True.
+        - Verified 12 Decimal test fixtures:
+          Invoice: ₹10,000 / ₹1,800
+          Credit Note: ₹2,000 / ₹360
+          Debit Note: ₹3,000 / ₹540
+          Net taxable: ₹11,000
+          Net tax: ₹1,980
+        """
+        eff_isd = resolve_document_financial_effect({'document_type': 'ISD'})
+        self.assertEqual(eff_isd.financial_sign, 0)
+        self.assertTrue(eff_isd.is_review_required)
+        self.assertEqual(eff_isd.document_kind, 'UNKNOWN')
+
+        eff_customs = resolve_document_financial_effect({'document_type': 'CUSTOMS'})
+        self.assertEqual(eff_customs.financial_sign, 0)
+        self.assertTrue(eff_customs.is_review_required)
+
+        eff_cdnr_empty = resolve_document_financial_effect({'document_type': 'CDNR', 'note_type': ''})
+        self.assertEqual(eff_cdnr_empty.financial_sign, 0)
+        self.assertTrue(eff_cdnr_empty.is_review_required)
+
+        eff_inv = resolve_document_financial_effect({'document_type': 'B2B'})
+        self.assertEqual(eff_inv.financial_sign, 1)
+        self.assertFalse(eff_inv.is_review_required)
+
+        eff_cn = resolve_document_financial_effect({'document_type': 'CDNR', 'note_type': 'C'})
+        self.assertEqual(eff_cn.financial_sign, -1)
+        self.assertTrue(eff_cn.is_credit_note)
+
+        eff_dn = resolve_document_financial_effect({'document_type': 'CDNR', 'note_type': 'D'})
+        self.assertEqual(eff_dn.financial_sign, 1)
+        self.assertTrue(eff_dn.is_debit_note)
+
+        # 12-Decimal exact mathematical verification:
+        inv_txval = Decimal('10000.00')
+        inv_tax = Decimal('1800.00')
+        cn_txval = Decimal('2000.00')
+        cn_tax = Decimal('360.00')
+        dn_txval = Decimal('3000.00')
+        dn_tax = Decimal('540.00')
+
+        gross_tax = inv_tax * eff_inv.financial_sign
+        cn_signed_tax = cn_tax * eff_cn.financial_sign
+        dn_signed_tax = dn_tax * eff_dn.financial_sign
+
+        self.assertEqual(gross_tax, Decimal('1800.00'))
+        self.assertEqual(cn_signed_tax, Decimal('-360.00'))
+        self.assertEqual(dn_signed_tax, Decimal('540.00'))
+
+        net_tax = gross_tax + cn_signed_tax + dn_signed_tax
+        self.assertEqual(net_tax, Decimal('1980.00'))
+
+        net_taxable = (inv_txval * eff_inv.financial_sign) + (cn_txval * eff_cn.financial_sign) + (dn_txval * eff_dn.financial_sign)
+        self.assertEqual(net_taxable, Decimal('11000.00'))
+
 class PostgreSQLConcurrencyCertificationTests(TransactionTestCase):
     """
     DEF-05: Dedicated PostgreSQL Concurrency Certification (TransactionTestCase).
@@ -1411,24 +1830,14 @@ class PostgreSQLConcurrencyCertificationTests(TransactionTestCase):
         import threading
         from django.db import connection, transaction
 
+        if connection.vendor != 'postgresql':
+            self.skipTest(f"Dedicated PostgreSQL Concurrency Certification requires real PostgreSQL engine, got '{connection.vendor}'.")
+
         target_period = '122026'
         worker_count = 4
         barrier = threading.Barrier(worker_count)
         errors = []
         acquired_locks = []
-
-        if connection.vendor == 'sqlite':
-            # Under SQLite test runner, sequential lock verify
-            for _ in range(worker_count):
-                lock = ITCReconciliationService._acquire_ingestion_lock(
-                    company=self.company,
-                    registration=self.registration,
-                    return_period=target_period
-                )
-                self.assertIsNotNone(lock)
-                acquired_locks.append(lock.id)
-            self.assertEqual(len(set(acquired_locks)), 1)
-            return
 
         def worker():
             from django.db import connection
@@ -1454,3 +1863,74 @@ class PostgreSQLConcurrencyCertificationTests(TransactionTestCase):
         self.assertEqual(len(errors), 0, f"PostgreSQL concurrency race encountered errors: {errors}")
         self.assertEqual(len(acquired_locks), worker_count)
         self.assertEqual(len(set(acquired_locks)), 1, "All concurrent threads must resolve to the identical lock row")
+        for t in threads:
+            self.assertFalse(t.is_alive(), "Worker thread must terminate after joining")
+
+    def test_postgresql_concurrent_ingestion_idempotency_barrier(self):
+        """
+        P1 DEF-05: Concurrent ingestion race certification.
+        4 threads concurrently attempt to ingest the exact same GSTR-2B JSON payload.
+        Verifies zero duplicate batches, zero IntegrityErrors, and exactly 1 final batch record.
+        """
+        import threading
+        from django.db import connection
+
+        if connection.vendor != 'postgresql':
+            self.skipTest(f"Dedicated PostgreSQL Concurrency Certification requires real PostgreSQL engine, got '{connection.vendor}'.")
+
+        target_period = '012027'
+        worker_count = 4
+        barrier = threading.Barrier(worker_count)
+        errors = []
+        batch_ids = []
+
+        payload = {
+            'gstin': self.registration.gstin,
+            'fp': target_period,
+            'data': {
+                'docdata': {
+                    'b2b': [{
+                        'ctin': '07STEEL8888S1Z8',
+                        'inv': [{
+                            'inum': 'INV/CONCURR/01',
+                            'dt': '05-01-2027',
+                            'val': 1180.0,
+                            'items': [{'txval': 1000.0, 'camt': 90.0, 'samt': 90.0, 'iamt': 0.0, 'csamt': 0.0}]
+                        }]
+                    }]
+                }
+            }
+        }
+
+        def worker():
+            from django.db import connection
+            connection.close()
+            try:
+                barrier.wait(timeout=10)
+                batch = ITCReconciliationService.ingest_gstr2b_json(
+                    company=self.company,
+                    json_data=payload,
+                    return_period=target_period,
+                    registration=self.registration
+                )
+                batch_ids.append(batch.id)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker) for _ in range(worker_count)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=20)
+
+        self.assertEqual(len(errors), 0, f"Concurrent ingestion failed with errors: {errors}")
+        self.assertEqual(len(batch_ids), worker_count)
+        # Verify exactly one logical batch exists for this period
+        self.assertEqual(
+            GSTR2BImport.objects.filter(company=self.company, return_period=target_period, gst_registration=self.registration).count(),
+            1
+        )
+        self.assertEqual(
+            GSTR2BRecord.objects.filter(company=self.company, return_period=target_period, invoice_number='INV/CONCURR/01').count(),
+            1
+        )

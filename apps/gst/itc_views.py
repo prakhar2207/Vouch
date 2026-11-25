@@ -1,7 +1,9 @@
 import json
 import logging
+import uuid
 from decimal import Decimal
 from datetime import date
+from django.db import transaction
 from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -15,7 +17,7 @@ from apps.companies.models import Company
 from apps.accounting.models import Voucher
 from apps.accounting.services.effective_voucher_service import EffectiveVoucherService
 from apps.accounts.permissions import get_authorized_company, user_has_company_roles, CanViewGST, CanReconcileGST
-from apps.gst.models import GSTR2BImport, GSTR2BRecord, GSTRegistration
+from apps.gst.models import GSTR2BImport, GSTR2BRecord, GSTRegistration, VoucherGSTINAttributionLog
 from apps.gst.services.period_service import GSTPeriodService
 import io
 from apps.accounting.services.upload_security import (
@@ -414,9 +416,9 @@ class ITCRunReconciliationView(APIView):
 class ITCVoucherAttributionAPIView(APIView):
     """
     POST /api/v1/gst/itc/attribute-voucher/
-    Explicit GSTIN Attribution Workflow for UNMAPPED_GSTIN purchase vouchers (DEF-04).
-    Safely assigns vouchers lacking a buyer_gstin to a verified active GSTRegistration,
-    recording an immutable audit trail of who performed the attribution and when.
+    Explicit GSTIN Attribution Workflow for UNMAPPED_GSTIN purchase vouchers (P0 DEF-04, Round 2.4.1).
+    Safely assigns genuinely unmapped vouchers to an active verified GSTRegistration.
+    Enforces atomic batch processing, row-level locks, cross-tenant rejection, and append-only audit trail.
     """
     permission_classes = [IsAuthenticated, CanReconcileGST]
 
@@ -424,57 +426,122 @@ class ITCVoucherAttributionAPIView(APIView):
         company = get_authorized_company(request)
 
         if not user_has_company_roles(request.user, company, ['ADMIN', 'OWNER', 'CA', 'ACCOUNTANT']):
-            return Response({'error': 'Permission denied: Insufficient role to attribute vouchers to GSTIN.'}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {'success': False, 'error': 'Permission denied: Insufficient role to attribute vouchers to GSTIN.', 'error_code': 'FORBIDDEN'},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
-        voucher_ids = request.data.get('voucher_ids') or []
-        if isinstance(voucher_ids, str):
-            voucher_ids = [voucher_ids]
+        raw_ids = request.data.get('voucher_ids') or []
+        if isinstance(raw_ids, str):
+            raw_ids = [raw_ids]
         reg_id = request.data.get('registration_id')
+        is_correction = bool(request.data.get('is_correction', False))
+        reason = (request.data.get('reason') or '').strip()
+        source = request.data.get('attribution_source') or ('USER_CORRECTION' if is_correction else 'MANUAL_USER_ATTRIBUTION')
 
-        if not voucher_ids or not isinstance(voucher_ids, (list, tuple)):
-            return Response({'success': False, 'error': 'voucher_ids must be a non-empty list.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not raw_ids or not isinstance(raw_ids, (list, tuple)):
+            return Response({'success': False, 'error': 'voucher_ids must be a non-empty list.', 'error_code': 'INVALID_VOUCHER_IDS'}, status=status.HTTP_400_BAD_REQUEST)
         if not reg_id:
-            return Response({'success': False, 'error': 'registration_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'success': False, 'error': 'registration_id is required.', 'error_code': 'REGISTRATION_REQUIRED'}, status=status.HTTP_400_BAD_REQUEST)
+        if is_correction and not reason:
+            return Response({'success': False, 'error': 'A non-empty reason is required when correcting an existing attribution.', 'error_code': 'REASON_REQUIRED'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Deduplicate voucher IDs preserving submission order
+        clean_voucher_ids = list(dict.fromkeys(raw_ids))
 
         try:
             registration = GSTRegistration.objects.get(id=reg_id, company=company)
-        except GSTRegistration.DoesNotExist:
-            return Response({'success': False, 'error': f"GST Registration '{reg_id}' not found for this company."}, status=status.HTTP_404_NOT_FOUND)
+        except (GSTRegistration.DoesNotExist, ValueError):
+            return Response({'success': False, 'error': f"GST Registration '{reg_id}' not found for this company.", 'error_code': 'INVALID_REGISTRATION'}, status=status.HTTP_404_NOT_FOUND)
 
         if registration.status != 'ACTIVE':
-            return Response({'success': False, 'error': f"GST Registration '{registration.gstin}' is inactive."}, status=status.HTTP_400_BAD_REQUEST)
-
-        vouchers = Voucher.objects.filter(
-            id__in=voucher_ids,
-            company=company,
-            voucher_type__in=['PURCHASE', 'DEBIT_NOTE']
-        )
-        if not vouchers.exists():
-            return Response({'success': False, 'error': 'No eligible purchase vouchers found for attribution.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'success': False, 'error': f"GST Registration '{registration.gstin}' is inactive.", 'error_code': 'INACTIVE_REGISTRATION'}, status=status.HTTP_400_BAD_REQUEST)
 
         now = timezone.now()
-        source = request.data.get('attribution_source') or 'MANUAL_USER_ATTRIBUTION'
-        updated_count = 0
+        operation_ref = f"ATTR_{uuid.uuid4().hex[:12].upper()}"
 
-        for v in vouchers:
-            v.buyer_gstin = registration.gstin
-            v.itc_gstin_attributed_by = request.user
-            v.itc_gstin_attributed_at = now
-            v.itc_gstin_attribution_source = source
-            v.itc_match_status = 'UNCHECKED'
-            v.save(update_fields=[
-                'buyer_gstin', 'itc_gstin_attributed_by',
-                'itc_gstin_attributed_at', 'itc_gstin_attribution_source',
-                'itc_match_status'
-            ])
-            updated_count += 1
+        with transaction.atomic():
+            # Acquire row-level locks on candidate vouchers
+            vouchers = list(
+                Voucher.objects.select_for_update()
+                .filter(id__in=clean_voucher_ids, company=company, voucher_type__in=['PURCHASE', 'DEBIT_NOTE'])
+            )
 
-        # Re-trigger reconciliation for the newly mapped registration
+            # Strict batch completeness check: every requested voucher ID must belong to this company
+            found_ids = {str(v.id) for v in vouchers}
+            missing_ids = [vid for vid in clean_voucher_ids if str(vid) not in found_ids]
+            if missing_ids:
+                return Response({
+                    'success': False,
+                    'error': f"One or more voucher IDs are invalid, belong to a different company, or are not purchase vouchers: {missing_ids[:3]}.",
+                    'error_code': 'CROSS_TENANT_OR_INVALID_VOUCHERS'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Attribution integrity validation:
+            # Under standard attribution, vouchers already assigned to another GSTIN or already attributed are rejected
+            for v in vouchers:
+                existing_gstin = (v.buyer_gstin or '').strip().upper()
+                if not is_correction and (existing_gstin or v.itc_gstin_attributed_at):
+                    return Response({
+                        'success': False,
+                        'error': f"Voucher '{v.voucher_number}' is already attributed to GSTIN '{existing_gstin or v.buyer_gstin}'. Use the correction workflow with an explicit reason to re-attribute.",
+                        'error_code': 'ALREADY_ATTRIBUTED'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+            attribution_logs = []
+            for v in vouchers:
+                prev_gstin = (v.buyer_gstin or '').strip().upper()
+                v.buyer_gstin = registration.gstin
+                v.itc_gstin_attributed_by = request.user
+                v.itc_gstin_attributed_at = now
+                v.itc_gstin_attribution_source = source
+                v.itc_match_status = 'UNCHECKED'
+                v.save(update_fields=[
+                    'buyer_gstin', 'itc_gstin_attributed_by',
+                    'itc_gstin_attributed_at', 'itc_gstin_attribution_source',
+                    'itc_match_status'
+                ])
+                attribution_logs.append(
+                    VoucherGSTINAttributionLog(
+                        company=company,
+                        voucher=v,
+                        gst_registration=registration,
+                        previous_gstin=prev_gstin,
+                        new_gstin=registration.gstin,
+                        attributed_by=request.user,
+                        attributed_at=now,
+                        attribution_source=source,
+                        reason=reason,
+                        operation_ref=operation_ref,
+                        is_correction=is_correction
+                    )
+                )
+
+            VoucherGSTINAttributionLog.objects.bulk_create(attribution_logs)
+
+        # Trigger registration reconciliation after transaction commit
         ITCReconciliationService.reconcile_period(company, registration=registration)
 
+        action_word = "corrected" if is_correction else "attributed"
         return Response({
             'success': True,
-            'message': f"Successfully attributed {updated_count} voucher(s) to GSTIN {registration.gstin}.",
-            'attributed_count': updated_count,
-            'attributed_gstin': registration.gstin
+            'message': f"Successfully {action_word} {len(vouchers)} voucher(s) to GSTIN {registration.gstin}.",
+            'attributed_count': len(vouchers),
+            'attributed_gstin': registration.gstin,
+            'operation_ref': operation_ref,
+            'is_correction': is_correction
         }, status=status.HTTP_200_OK)
+
+
+class ITCVoucherAttributionCorrectionAPIView(APIView):
+    """
+    POST /api/v1/gst/itc/correct-attribution/
+    Dedicated Attribution Correction Workflow (P0 DEF-04, Round 2.4.1).
+    Allows authorized compliance officers to re-attribute previously assigned vouchers
+    with mandatory justification audit logging.
+    """
+    permission_classes = [IsAuthenticated, CanReconcileGST]
+
+    def post(self, request, *args, **kwargs):
+        request.data['is_correction'] = True
+        return ITCVoucherAttributionAPIView().post(request, *args, **kwargs)

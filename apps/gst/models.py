@@ -72,7 +72,7 @@ def resolve_document_financial_effect(record_or_dict: Any) -> DocumentFinancialE
             )
 
     # Standard B2B / B2BA tax invoices
-    if doc_type in ['B2B', 'B2BA', 'INV', 'INVOICE', ''] and not note_type:
+    if doc_type in ['B2B', 'B2BA', 'INV', 'INVOICE'] and not note_type:
         return DocumentFinancialEffect(
             document_kind='INVOICE',
             financial_sign=1,
@@ -82,14 +82,14 @@ def resolve_document_financial_effect(record_or_dict: Any) -> DocumentFinancialE
             reason='Standard B2B tax invoice'
         )
 
-    # Fallback to standard positive invoice
+    # Unknown or unhandled document types must NOT default to positive invoices (P1 / Round 2.4.1)
     return DocumentFinancialEffect(
-        document_kind='INVOICE',
-        financial_sign=1,
+        document_kind='UNKNOWN',
+        financial_sign=0,
         is_credit_note=False,
         is_debit_note=False,
-        is_review_required=False,
-        reason='Default positive financial effect'
+        is_review_required=True,
+        reason=f"Unknown or unhandled document_type '{doc_type}'" + (f" with note_type '{note_type}'" if note_type else "")
     )
 
 
@@ -241,9 +241,23 @@ class GSTRegistration(models.Model):
     filing_frequency = models.CharField(
         max_length=20,
         choices=FILING_FREQUENCY_CHOICES,
-        default='MONTHLY',
+        default='UNKNOWN',
         db_index=True,
-        help_text="GSTR-1 / GSTR-2B compliance frequency: MONTHLY or QRMP (Quarterly)"
+        help_text="GSTR-1 / GSTR-2B compliance frequency: MONTHLY, QRMP, or UNKNOWN"
+    )
+    frequency_verified_source = models.CharField(
+        max_length=50,
+        blank=True,
+        default='',
+        help_text="Authoritative source of frequency verification (e.g. PORTAL_API, USER_MANUAL, ONBOARDING)"
+    )
+    frequency_verified_at = models.DateTimeField(null=True, blank=True)
+    frequency_verified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='frequency_verified_registrations'
     )
     registration_date = models.DateField(null=True, blank=True)
     
@@ -300,6 +314,20 @@ class GSTRegistration(models.Model):
     def has_active_portal_session(self) -> bool:
         from django.utils import timezone
         return bool(self.auth_token and (not self.token_expires_at or self.token_expires_at > timezone.now()))
+
+    def set_filing_frequency(self, frequency: str, source: str = 'USER_MANUAL', user=None, commit: bool = True):
+        clean_freq = (frequency or '').strip().upper()
+        if clean_freq not in ['MONTHLY', 'QRMP', 'UNKNOWN']:
+            raise ValidationError(f"Invalid filing frequency: '{frequency}'. Must be MONTHLY, QRMP, or UNKNOWN.")
+        self.filing_frequency = clean_freq
+        self.frequency_verified_source = source
+        self.frequency_verified_at = timezone.now()
+        self.frequency_verified_by = user
+        if commit:
+            self.save(update_fields=[
+                'filing_frequency', 'frequency_verified_source',
+                'frequency_verified_at', 'frequency_verified_by'
+            ])
 
     def __str__(self):
         return f"{self.gstin} ({self.state_name}) - {self.company.name} [{self.status}]"
@@ -591,34 +619,34 @@ class GSTR2BRecord(models.Model):
 
     @property
     def signed_taxable_value(self) -> Decimal:
-        val = Decimal(str(self.taxable_value or 0))
+        val = abs(Decimal(str(self.taxable_value or 0)))
         return val * self.financial_effect.financial_sign
 
     @property
     def signed_total_tax(self) -> Decimal:
         tax = (
-            Decimal(str(self.igst_amount or 0)) +
-            Decimal(str(self.cgst_amount or 0)) +
-            Decimal(str(self.sgst_amount or 0)) +
-            Decimal(str(self.cess_amount or 0))
+            abs(Decimal(str(self.igst_amount or 0))) +
+            abs(Decimal(str(self.cgst_amount or 0))) +
+            abs(Decimal(str(self.sgst_amount or 0))) +
+            abs(Decimal(str(self.cess_amount or 0)))
         )
         return tax * self.financial_effect.financial_sign
 
     @property
     def signed_cgst(self) -> Decimal:
-        return Decimal(str(self.cgst_amount or 0)) * self.financial_effect.financial_sign
+        return abs(Decimal(str(self.cgst_amount or 0))) * self.financial_effect.financial_sign
 
     @property
     def signed_sgst(self) -> Decimal:
-        return Decimal(str(self.sgst_amount or 0)) * self.financial_effect.financial_sign
+        return abs(Decimal(str(self.sgst_amount or 0))) * self.financial_effect.financial_sign
 
     @property
     def signed_igst(self) -> Decimal:
-        return Decimal(str(self.igst_amount or 0)) * self.financial_effect.financial_sign
+        return abs(Decimal(str(self.igst_amount or 0))) * self.financial_effect.financial_sign
 
     @property
     def signed_cess(self) -> Decimal:
-        return Decimal(str(self.cess_amount or 0)) * self.financial_effect.financial_sign
+        return abs(Decimal(str(self.cess_amount or 0))) * self.financial_effect.financial_sign
 
     class Meta:
         indexes = [
@@ -716,6 +744,43 @@ class GSTR2BIngestionLock(models.Model):
 
     def __str__(self):
         return f"Lock {self.company.name} - {self.return_period}"
+
+
+class VoucherGSTINAttributionLog(models.Model):
+    """
+    Append-only audit history for purchase voucher GSTIN attributions and corrections (Round 2.4.1 / P0 DEF-04).
+    Guarantees tamper-evident tracing of which user mapped or re-mapped a voucher to a GSTIN,
+    including the previous GSTIN, new GSTIN, authorization source, and correction reason.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='voucher_attribution_logs', db_index=True)
+    voucher = models.ForeignKey(Voucher, on_delete=models.CASCADE, related_name='attribution_audit_logs', db_index=True)
+    gst_registration = models.ForeignKey(
+        GSTRegistration,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='voucher_attribution_audit_logs'
+    )
+    previous_gstin = models.CharField(max_length=15, blank=True, default='')
+    new_gstin = models.CharField(max_length=15, db_index=True)
+    attributed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    attributed_at = models.DateTimeField(default=timezone.now, db_index=True)
+    attribution_source = models.CharField(max_length=100, default='MANUAL_USER_ATTRIBUTION')
+    reason = models.TextField(blank=True, default='')
+    operation_ref = models.CharField(max_length=100, blank=True, default='')
+    is_correction = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['-attributed_at']
+        indexes = [
+            models.Index(fields=['company', 'voucher']),
+            models.Index(fields=['company', 'new_gstin']),
+        ]
+
+    def __str__(self):
+        op = "CORRECTION" if self.is_correction else "ATTRIBUTION"
+        return f"{op} Voucher {self.voucher_id} -> {self.new_gstin} by {self.attributed_by} at {self.attributed_at}"
 
 
 class SupplierGSTR3BFilingRecord(models.Model):
