@@ -139,6 +139,13 @@ class GSTReconciliationService:
                     f"Under QRMP (Quarterly Return Monthly Payment), official GSTR-2B statements are generated "
                     f"on quarter-end months ({qe_period} for {q_lbl}), or preceding returns may be pending on the GST Portal."
                 )
+            elif any(t in raw_err.lower() for t in ["downtime", "maintenance", "enhancing the services"]):
+                err_cat = "SCHEDULED_DOWNTIME"
+                auth_st = "UNKNOWN"
+                err_msg = (
+                    "The official GST Portal (services.gst.gov.in) is currently undergoing scheduled downtime / maintenance. "
+                    "Government servers and GSTR-2B statement sync will resume once the maintenance window concludes."
+                )
             elif any(t in raw_err.lower() for t in ["privilege", "api access", "access is disabled", "access not enabled", "insufficient privilege"]):
                 err_cat = "API_ACCESS_DISABLED"
                 auth_st = "AUTHENTICATION_REQUIRED"

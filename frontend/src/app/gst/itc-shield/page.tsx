@@ -164,7 +164,7 @@ export default function VendorITCRiskShieldPage() {
   // Sync Results Breakdown
   const [periodResults, setPeriodResults] = useState<PeriodSyncResult[]>([]);
   const [failedPeriods, setFailedPeriods] = useState<string[]>([]);
-  const [overallSyncStatus, setOverallSyncStatus] = useState<"SUCCESS" | "PARTIAL_SUCCESS" | "FAILED" | "API_ACCESS_DISABLED" | "AUTHENTICATION_REQUIRED" | null>(null);
+  const [overallSyncStatus, setOverallSyncStatus] = useState<"SUCCESS" | "PARTIAL_SUCCESS" | "FAILED" | "API_ACCESS_DISABLED" | "AUTHENTICATION_REQUIRED" | "SCHEDULED_DOWNTIME" | null>(null);
 
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isExpiryModalOpen, setIsExpiryModalOpen] = useState(false);
@@ -1213,6 +1213,12 @@ export default function VendorITCRiskShieldPage() {
 
                 {syncError && (() => {
                   const errLower = syncError.toLowerCase();
+                  const isDowntimeError =
+                    overallSyncStatus === "SCHEDULED_DOWNTIME" ||
+                    errLower.includes("downtime") ||
+                    errLower.includes("maintenance") ||
+                    errLower.includes("enhancing the services");
+
                   const isPrivilegeOrApiError =
                     overallSyncStatus === "API_ACCESS_DISABLED" ||
                     errLower.includes("privilege") ||
@@ -1224,6 +1230,35 @@ export default function VendorITCRiskShieldPage() {
                     errLower.includes("session") ||
                     errLower.includes("reconnect") ||
                     errLower.includes("token");
+
+                  if (isDowntimeError) {
+                    return (
+                      <div className="p-3.5 rounded-xl bg-sky-500/10 border border-sky-500/30 text-xs text-sky-900 dark:text-sky-200 space-y-2.5">
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0 mt-0.5" />
+                          <div className="space-y-1">
+                            <div className="font-bold text-sky-800 dark:text-sky-300">
+                              Official GST Portal Scheduled Downtime
+                            </div>
+                            <p className="text-[11px] leading-relaxed text-muted-foreground">
+                              The official government GST Portal (<strong className="text-foreground">services.gst.gov.in</strong>) is currently undergoing scheduled maintenance. Return filing and GSTR-2B syncing services are temporarily offline nationwide.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="pt-1 flex items-center gap-2">
+                          <a
+                            href="https://services.gst.gov.in"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors shadow-sm"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                            <span>Check services.gst.gov.in ↗</span>
+                          </a>
+                        </div>
+                      </div>
+                    );
+                  }
 
                   if (isPrivilegeOrApiError) {
                     return (

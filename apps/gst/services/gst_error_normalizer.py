@@ -125,7 +125,15 @@ def get_structured_gst_error(
             "correlation_id": cid,
         }
 
-    # 2. Network connectivity, timeout, or external gateway 5xx outage
+    # 2. Network connectivity, timeout, or external gateway 5xx outage / Scheduled Downtime
+    if any(phrase in raw_lower for phrase in ["scheduled downtime", "downtime", "maintenance", "enhancing the services"]):
+        return {
+            "code": "SCHEDULED_DOWNTIME",
+            "message": "The official GST Portal (services.gst.gov.in) is currently undergoing scheduled maintenance/downtime. Services will resume once the government maintenance window ends.",
+            "action": "RETRY_LATER",
+            "correlation_id": cid,
+        }
+
     if (
         status_code in (502, 503, 504)
         or "timeout" in raw_lower
