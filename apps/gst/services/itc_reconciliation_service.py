@@ -1232,24 +1232,29 @@ class ITCReconciliationService:
                     statement_metadata=reg_processed_periods
                 ) if v.voucher_date else None
 
-                # Statement-period-based eligibility rule (Round 2.4.1 / P0 DEF-02):
-                # An invoice must be eligible for unmatched classification when its resolved expected statement period
+                # Statement-period-based eligibility rule (P0 DEF-02 / DEF-03 / Round 2.4.2):
+                # An invoice is eligible for unmatched classification when its resolved expected statement period
                 # equals the statement being reconciled (or is in target_periods).
-                # Do not classify invoices from unrelated or future statement periods.
+                # For UNKNOWN filing frequency (REVIEW_REQUIRED), earlier-month invoices (e.g. April, May)
+                # must NOT be excluded by calendar month start_date when reconciling quarter-end statements.
                 is_eligible_for_statement = False
                 if target_periods and stmt_res and stmt_res.expected_statement_period in target_periods:
                     is_eligible_for_statement = True
                 elif not target_periods:
                     is_eligible_for_statement = True
                 elif stmt_res and stmt_res.period_resolution_status == 'REVIEW_REQUIRED':
-                    if (not period_start_date or (v.voucher_date and v.voucher_date >= period_start_date)) and (not period_end_date or (v.voucher_date and v.voucher_date <= period_end_date)):
+                    # Do not exclude earlier-month vouchers (e.g. April, May) during quarter-end reconciliation.
+                    # Only require that the voucher date is not in the future relative to the reconciled period end.
+                    if not period_end_date or (v.voucher_date and v.voucher_date <= period_end_date):
                         is_eligible_for_statement = True
 
-                if is_eligible_for_statement and v.itc_match_status not in ['MATCHED', 'LATER_PERIOD_MATCH', 'AMENDED', 'REVIEW_REQUIRED'] and not has_manual_hold:
+                if is_eligible_for_statement and v.itc_match_status not in ['MATCHED', 'LATER_PERIOD_MATCH', 'AMENDED'] and not has_manual_hold:
                     if not stmt_res or stmt_res.period_resolution_status == 'REVIEW_REQUIRED':
-                        v.itc_match_status = 'REVIEW_REQUIRED'
-                        if not has_manual_hold:
-                            v.itc_notes = stmt_res.reason if stmt_res else "Missing voucher date; cannot resolve GSTR-2B statement period."
+                        expected_note = stmt_res.reason if stmt_res else "Missing voucher date; cannot resolve GSTR-2B statement period."
+                        if v.itc_match_status != 'REVIEW_REQUIRED' or v.itc_notes != expected_note:
+                            v.itc_match_status = 'REVIEW_REQUIRED'
+                            v.itc_notes = expected_note
+                            vouchers_to_update.append(v)
                     else:
                         expected_stmt_period = stmt_res.expected_statement_period
                         stmt_available = (expected_stmt_period in reg_processed_periods) if expected_stmt_period else False
@@ -1273,10 +1278,10 @@ class ITCReconciliationService:
                         else:
                             v.itc_match_status = 'MISSING_IN_2B'
                             if not has_manual_hold:
-                                v.itc_notes = f"Invoice not found in processed GSTR-2B ({expected_stmt_period}). Vendor has not filed GSTR-1."
+                                v.itc_notes = f"Invoice not found in the successfully processed GSTR-2B statement ({expected_stmt_period}). Supplier filing status not independently verified."
                             if (v.itc_held_amount is None or v.itc_held_amount == Decimal('0.00')) and book_total_tax > Decimal('0.00'):
                                 v.itc_held_amount = book_total_tax
-                    vouchers_to_update.append(v)
+                        vouchers_to_update.append(v)
 
         # 4. Mark unmatched GSTR-2B records
         for rec in gstr2b_records:

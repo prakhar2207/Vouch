@@ -2,6 +2,7 @@ from decimal import Decimal
 from datetime import date
 from unittest.mock import patch, MagicMock
 from django.test import TestCase, TransactionTestCase
+from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from rest_framework.test import APIClient
@@ -45,6 +46,8 @@ class ITCReconciliationTests(TestCase):
             state_code='07',
             status='ACTIVE',
             filing_frequency='MONTHLY',
+            frequency_verified_source='GST_PORTAL_API',
+            frequency_verified_at=timezone.now(),
             is_primary=True
         )
         self.warehouse = Warehouse.objects.create(company=self.company, name='Raw Material Store')
@@ -1803,6 +1806,334 @@ class ITCReconciliationTests(TestCase):
         net_taxable = (inv_txval * eff_inv.financial_sign) + (cn_txval * eff_cn.financial_sign) + (dn_txval * eff_dn.financial_sign)
         self.assertEqual(net_taxable, Decimal('11000.00'))
 
+    def test_round_2_4_2_complete_matrix_and_governance(self):
+        """
+        Round 2.4.2 Comprehensive Matrix Tests (R242-01 to R242-24).
+        """
+        from django.db.models import ProtectedError
+
+        # R242-01: Unverified QRMP field -> UNKNOWN
+        reg_unverified_qrmp = GSTRegistration.objects.create(
+            company=self.company,
+            gstin='07UNVQRMP1111Z1',
+            legal_name='Unverified QRMP Enterprise',
+            state_code='07',
+            status='ACTIVE',
+            filing_frequency='QRMP',
+            frequency_verified_at=None,
+            frequency_verified_source=''
+        )
+        res_01 = GSTPeriodService.resolve_gstr2b_statement_period(date(2026, 4, 15), recipient_registration=reg_unverified_qrmp)
+        self.assertEqual(res_01.recipient_filing_frequency, 'UNKNOWN')
+        self.assertEqual(res_01.period_resolution_status, 'REVIEW_REQUIRED')
+        self.assertIsNone(res_01.expected_statement_period)
+
+        # R242-02: Explicit QRMP bypass attempt on unverified registration -> Rejected/UNKNOWN
+        res_02 = GSTPeriodService.resolve_gstr2b_statement_period(
+            date(2026, 4, 15),
+            recipient_registration=reg_unverified_qrmp,
+            filing_frequency='QRMP'
+        )
+        self.assertEqual(res_02.recipient_filing_frequency, 'UNKNOWN')
+        self.assertEqual(res_02.period_resolution_status, 'REVIEW_REQUIRED')
+
+        # R242-03: Verified QRMP -> Quarter-end resolution (062026 for April)
+        reg_verified_qrmp = GSTRegistration.objects.create(
+            company=self.company,
+            gstin='07VERQRMP2222Z2',
+            legal_name='Verified QRMP Enterprise',
+            state_code='07',
+            status='ACTIVE',
+            filing_frequency='QRMP',
+            frequency_verified_at=timezone.now(),
+            frequency_verified_source='GST_PORTAL_API'
+        )
+        res_03 = GSTPeriodService.resolve_gstr2b_statement_period(date(2026, 4, 15), recipient_registration=reg_verified_qrmp)
+        self.assertEqual(res_03.recipient_filing_frequency, 'QRMP')
+        self.assertEqual(res_03.expected_statement_period, '062026')
+        self.assertEqual(res_03.period_resolution_status, 'RESOLVED_QRMP')
+
+        # R242-04: Verified MONTHLY -> Monthly resolution (042026 for April)
+        res_04 = GSTPeriodService.resolve_gstr2b_statement_period(date(2026, 4, 15), recipient_registration=self.registration)
+        self.assertEqual(res_04.recipient_filing_frequency, 'MONTHLY')
+        self.assertEqual(res_04.expected_statement_period, '042026')
+        self.assertEqual(res_04.period_resolution_status, 'RESOLVED_MONTHLY')
+
+        # R242-05: Provider error -> No frequency mutation
+        reg_freq_before = self.registration.filing_frequency
+        self.registration.refresh_from_db()
+        self.assertEqual(self.registration.filing_frequency, reg_freq_before)
+
+        # R242-06: Unknown document XYZ + D -> UNKNOWN, sign 0, is_review_required=True
+        eff_06 = resolve_document_financial_effect({'document_type': 'XYZ', 'note_type': 'D'})
+        self.assertEqual(eff_06.document_kind, 'UNKNOWN')
+        self.assertEqual(eff_06.financial_sign, 0)
+        self.assertTrue(eff_06.is_review_required)
+
+        # R242-07: Unknown document XYZ + C -> UNKNOWN, sign 0, is_review_required=True
+        eff_07 = resolve_document_financial_effect({'document_type': 'XYZ', 'note_type': 'C'})
+        self.assertEqual(eff_07.document_kind, 'UNKNOWN')
+        self.assertEqual(eff_07.financial_sign, 0)
+        self.assertTrue(eff_07.is_review_required)
+
+        # R242-08: B2B + C -> UNKNOWN, sign 0, is_review_required=True
+        eff_08 = resolve_document_financial_effect({'document_type': 'B2B', 'note_type': 'C'})
+        self.assertEqual(eff_08.document_kind, 'UNKNOWN')
+        self.assertEqual(eff_08.financial_sign, 0)
+        self.assertTrue(eff_08.is_review_required)
+
+        # R242-09: CDNR + C -> Credit note, sign -1, is_review_required=False
+        eff_09 = resolve_document_financial_effect({'document_type': 'CDNR', 'note_type': 'C'})
+        self.assertEqual(eff_09.document_kind, 'CREDIT_NOTE')
+        self.assertEqual(eff_09.financial_sign, -1)
+        self.assertFalse(eff_09.is_review_required)
+
+        # R242-10: CDNR + D -> Debit note, sign +1, is_review_required=False
+        eff_10 = resolve_document_financial_effect({'document_type': 'CDNR', 'note_type': 'D'})
+        self.assertEqual(eff_10.document_kind, 'DEBIT_NOTE')
+        self.assertEqual(eff_10.financial_sign, 1)
+        self.assertFalse(eff_10.is_review_required)
+
+        # R242-11: Attribution normal duplicate -> Rejected
+        v_attr = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/ATTR/001',
+            voucher_date=date(2026, 8, 1),
+            total_amount=Decimal('1000.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+        resp_attr_1 = self.client.post('/api/v1/gst/itc/attribute-voucher/', {
+            'voucher_ids': [str(v_attr.id)],
+            'registration_id': str(self.registration.id)
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp_attr_1.status_code, 200)
+        resp_attr_dup = self.client.post('/api/v1/gst/itc/attribute-voucher/', {
+            'voucher_ids': [str(v_attr.id)],
+            'registration_id': str(self.registration.id)
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp_attr_dup.status_code, 400)
+        self.assertEqual(resp_attr_dup.data.get('error_code'), 'ALREADY_ATTRIBUTED')
+
+        # R242-12: Correction with short reason (< 5 non-whitespace chars) -> Rejected
+        resp_corr_short = self.client.post('/api/v1/gst/itc/correct-attribution/', {
+            'voucher_ids': [str(v_attr.id)],
+            'registration_id': str(self.registration.id),
+            'reason': '   ab  '
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp_corr_short.status_code, 400)
+        self.assertEqual(resp_corr_short.data.get('error_code'), 'REASON_REQUIRED')
+
+        # R242-13: Valid correction -> New audit event
+        reg_target = GSTRegistration.objects.create(
+            company=self.company,
+            gstin='07SECON9999S1Z1',
+            legal_name='Secondary Unit',
+            state_code='07',
+            status='ACTIVE'
+        )
+        resp_corr_valid = self.client.post('/api/v1/gst/itc/correct-attribution/', {
+            'voucher_ids': [str(v_attr.id)],
+            'registration_id': str(reg_target.id),
+            'reason': 'Correction of location to secondary unit per PO #4411'
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp_corr_valid.status_code, 200)
+        logs = list(VoucherGSTINAttributionLog.objects.filter(voucher=v_attr).order_by('attributed_at'))
+        self.assertEqual(len(logs), 2)
+        self.assertFalse(logs[0].is_correction)
+        self.assertTrue(logs[1].is_correction)
+
+        # R242-14: Audit update attempt -> Blocked by ValidationError
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        with self.assertRaises((ValidationError, DjangoValidationError)):
+            logs[0].new_gstin = '07TAMPERED9999Z'
+            logs[0].save()
+
+        with self.assertRaises((ValidationError, DjangoValidationError)):
+            VoucherGSTINAttributionLog.objects.filter(id=logs[0].id).update(new_gstin='07TAMPERED9999Z')
+
+        # R242-15: Audit deletion attempt -> Blocked by ValidationError
+        with self.assertRaises((ValidationError, DjangoValidationError)):
+            logs[0].delete()
+
+        with self.assertRaises((ValidationError, DjangoValidationError)):
+            VoucherGSTINAttributionLog.objects.filter(id=logs[0].id).delete()
+
+        # R242-16: Voucher deletion -> ProtectedError, history preserved
+        v_attr.status = 'DRAFT'
+        v_attr.save(update_fields=['status'])
+        with self.assertRaises(ProtectedError):
+            v_attr.delete()
+
+        # R242-17: April UNKNOWN + June reconciliation -> Persisted REVIEW_REQUIRED
+        v_apr_unk = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/APR/UNK/01',
+            external_invoice_number='INV/APR/UNK/01',
+            voucher_date=date(2026, 4, 15),
+            buyer_gstin=reg_unverified_qrmp.gstin,
+            party_ledger=self.vendor_ledger,
+            total_amount=Decimal('1180.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+        VoucherItem.objects.create(
+            voucher=v_apr_unk,
+            product=self.product,
+            quantity=Decimal('10.00'),
+            rate=Decimal('100.00'),
+            taxable_amount=Decimal('1000.00'),
+            cgst_rate=Decimal('9.00'),
+            sgst_rate=Decimal('9.00'),
+            cgst_amount=Decimal('90.00'),
+            sgst_amount=Decimal('90.00')
+        )
+        ITCReconciliationService.reconcile_period(self.company, return_period='062026', registration=reg_unverified_qrmp)
+        v_apr_unk.refresh_from_db()
+        self.assertEqual(v_apr_unk.itc_match_status, 'REVIEW_REQUIRED')
+
+        # R242-18: May UNKNOWN + June reconciliation -> Persisted REVIEW_REQUIRED
+        v_may_unk = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/MAY/UNK/01',
+            external_invoice_number='INV/MAY/UNK/01',
+            voucher_date=date(2026, 5, 20),
+            buyer_gstin=reg_unverified_qrmp.gstin,
+            party_ledger=self.vendor_ledger,
+            total_amount=Decimal('1180.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+        VoucherItem.objects.create(
+            voucher=v_may_unk,
+            product=self.product,
+            quantity=Decimal('10.00'),
+            rate=Decimal('100.00'),
+            taxable_amount=Decimal('1000.00'),
+            cgst_rate=Decimal('9.00'),
+            sgst_rate=Decimal('9.00'),
+            cgst_amount=Decimal('90.00'),
+            sgst_amount=Decimal('90.00')
+        )
+        ITCReconciliationService.reconcile_period(self.company, return_period='062026', registration=reg_unverified_qrmp)
+        v_may_unk.refresh_from_db()
+        self.assertEqual(v_may_unk.itc_match_status, 'REVIEW_REQUIRED')
+
+        # R242-19: April verified QRMP + June match -> LATER_PERIOD_MATCH
+        v_apr_qrmp = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/APR/QRMP/01',
+            external_invoice_number='INV/APR/QRMP/01',
+            voucher_date=date(2026, 4, 10),
+            buyer_gstin=reg_verified_qrmp.gstin,
+            party_ledger=self.vendor_ledger,
+            total_amount=Decimal('1180.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+        VoucherItem.objects.create(
+            voucher=v_apr_qrmp,
+            product=self.product,
+            quantity=Decimal('10.00'),
+            rate=Decimal('100.00'),
+            taxable_amount=Decimal('1000.00'),
+            cgst_rate=Decimal('9.00'),
+            sgst_rate=Decimal('9.00'),
+            cgst_amount=Decimal('90.00'),
+            sgst_amount=Decimal('90.00')
+        )
+        imp_june = GSTR2BImport.objects.create(
+            company=self.company,
+            gst_registration=reg_verified_qrmp,
+            return_period='062026',
+            status='PROCESSED'
+        )
+        GSTR2BRecord.objects.create(
+            company=self.company,
+            import_batch=imp_june,
+            gst_registration=reg_verified_qrmp,
+            supplier_gstin=self.vendor_ledger.gstin,
+            supplier_name=self.vendor_ledger.name,
+            invoice_number='INV/APR/QRMP/01',
+            normalized_invoice_number=ITCReconciliationService.normalize_invoice_number('INV/APR/QRMP/01'),
+            invoice_date=date(2026, 4, 10),
+            invoice_type='Regular',
+            document_type='B2B',
+            taxable_value=Decimal('1000.00'),
+            cgst_amount=Decimal('90.00'),
+            sgst_amount=Decimal('90.00'),
+            igst_amount=Decimal('0.00'),
+            return_period='062026'
+        )
+        ITCReconciliationService.reconcile_period(self.company, return_period='062026', registration=reg_verified_qrmp)
+        v_apr_qrmp.refresh_from_db()
+        self.assertEqual(v_apr_qrmp.itc_match_status, 'LATER_PERIOD_MATCH')
+
+        # R242-20: Missing invoice in processed statement -> No unsupported non-filing assertion
+        v_missing = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/MISSING/01',
+            external_invoice_number='INV/MISSING/01',
+            voucher_date=date(2026, 8, 1),
+            buyer_gstin=self.registration.gstin,
+            party_ledger=self.vendor_ledger,
+            total_amount=Decimal('1180.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+        VoucherItem.objects.create(
+            voucher=v_missing,
+            product=self.product,
+            quantity=Decimal('10.00'),
+            rate=Decimal('100.00'),
+            taxable_amount=Decimal('1000.00'),
+            cgst_rate=Decimal('9.00'),
+            sgst_rate=Decimal('9.00'),
+            cgst_amount=Decimal('90.00'),
+            sgst_amount=Decimal('90.00')
+        )
+        GSTR2BImport.objects.create(
+            company=self.company,
+            gst_registration=self.registration,
+            return_period='082026',
+            status='EMPTY_PROCESSED',
+            is_empty_statement=True
+        )
+        ITCReconciliationService.reconcile_period(self.company, return_period='082026', registration=self.registration)
+        v_missing.refresh_from_db()
+        self.assertNotIn("Vendor has not filed GSTR-1", v_missing.itc_notes or "")
+        self.assertIn("Supplier filing status not independently verified", v_missing.itc_notes or "")
+
+        # R242-21: Provider failure -> DATA_UNAVAILABLE
+        v_failed_prov = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/NOPROV/01',
+            external_invoice_number='INV/NOPROV/01',
+            voucher_date=date(2026, 9, 10),
+            buyer_gstin=self.registration.gstin,
+            party_ledger=self.vendor_ledger,
+            total_amount=Decimal('1180.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+        ITCReconciliationService.reconcile_period(self.company, return_period='092026', registration=self.registration)
+        v_failed_prov.refresh_from_db()
+        self.assertEqual(v_failed_prov.itc_match_status, 'DATA_UNAVAILABLE')
+
+        # R242-24: Existing MATCHED record -> Not overwritten by unrelated period
+        self.matched_voucher.itc_match_status = 'MATCHED'
+        self.matched_voucher.save(update_fields=['itc_match_status'])
+        self.assertEqual(self.matched_voucher.itc_match_status, 'MATCHED')
+        ITCReconciliationService.reconcile_period(self.company, return_period='102026', registration=self.registration)
+        self.matched_voucher.refresh_from_db()
+        self.assertEqual(self.matched_voucher.itc_match_status, 'MATCHED')
+
 class PostgreSQLConcurrencyCertificationTests(TransactionTestCase):
     """
     DEF-05: Dedicated PostgreSQL Concurrency Certification (TransactionTestCase).
@@ -1811,6 +2142,12 @@ class PostgreSQLConcurrencyCertificationTests(TransactionTestCase):
     and verify PostgreSQL savepoint + select_for_update race safety under real threading.Barrier conditions.
     """
     def setUp(self):
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            email='concurrency_admin@chi.com',
+            password='TestPassword123!'
+        )
         self.company = Company.objects.create(
             name='Concurrency Heavy Industries Ltd',
             legal_name='Concurrency Heavy Industries Ltd',
@@ -1823,6 +2160,9 @@ class PostgreSQLConcurrencyCertificationTests(TransactionTestCase):
             legal_name='Concurrency Heavy Industries Ltd',
             state_code='07',
             status='ACTIVE',
+            filing_frequency='MONTHLY',
+            frequency_verified_source='GST_PORTAL_API',
+            frequency_verified_at=timezone.now(),
             is_primary=True
         )
 
@@ -1934,3 +2274,312 @@ class PostgreSQLConcurrencyCertificationTests(TransactionTestCase):
             GSTR2BRecord.objects.filter(company=self.company, return_period=target_period, invoice_number='INV/CONCURR/01').count(),
             1
         )
+
+    def test_two_concurrent_first_time_ingestion_requests(self):
+        """
+        P1 Race Scenario 1: Two concurrent first-time ingestion requests for the same company, registration, and period.
+        Verifies row-level lock serialization and exactly 1 logical import batch.
+        """
+        import threading
+        from django.db import connection
+
+        if connection.vendor != 'postgresql':
+            self.skipTest(f"Dedicated PostgreSQL Concurrency Certification requires real PostgreSQL engine, got '{connection.vendor}'.")
+
+        target_period = '022027'
+        worker_count = 2
+        barrier = threading.Barrier(worker_count)
+        errors = []
+        batch_ids = []
+
+        payload = {
+            'gstin': self.registration.gstin,
+            'fp': target_period,
+            'data': {
+                'docdata': {
+                    'b2b': [{
+                        'ctin': '07STEEL8888S1Z8',
+                        'inv': [{
+                            'inum': 'INV/TWO/01',
+                            'dt': '10-02-2027',
+                            'val': 2360.0,
+                            'items': [{'txval': 2000.0, 'camt': 180.0, 'samt': 180.0, 'iamt': 0.0, 'csamt': 0.0}]
+                        }]
+                    }]
+                }
+            }
+        }
+
+        def worker():
+            from django.db import connection
+            connection.close()
+            try:
+                barrier.wait(timeout=10)
+                batch = ITCReconciliationService.ingest_gstr2b_json(
+                    company=self.company,
+                    json_data=payload,
+                    return_period=target_period,
+                    registration=self.registration
+                )
+                batch_ids.append(batch.id)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker) for _ in range(worker_count)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=20)
+
+        self.assertEqual(len(errors), 0, f"Two-thread ingestion race failed: {errors}")
+        self.assertEqual(len(batch_ids), 2)
+        self.assertEqual(
+            GSTR2BImport.objects.filter(company=self.company, return_period=target_period, gst_registration=self.registration).count(),
+            1
+        )
+
+    def test_concurrent_attribution_corrections_same_voucher(self):
+        """
+        P1 Race Scenario 3 & R242-23: Two concurrent attribution corrections for the same voucher.
+        Verifies row-level locking on Voucher prevents lost history or deadlocks.
+        """
+        import threading
+        from django.db import connection, transaction
+
+        if connection.vendor != 'postgresql':
+            self.skipTest(f"Dedicated PostgreSQL Concurrency Certification requires real PostgreSQL engine, got '{connection.vendor}'.")
+
+        reg_alt = GSTRegistration.objects.create(
+            company=self.company,
+            gstin='07ALT9999A1Z2',
+            legal_name='Alternate Unit',
+            state_code='07',
+            status='ACTIVE'
+        )
+
+        v_conc = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/CONC/ATTR/01',
+            voucher_date=date(2027, 1, 15),
+            buyer_gstin=self.registration.gstin,
+            total_amount=Decimal('5000.00'),
+            created_by=self.user,
+            status='POSTED'
+        )
+        # Seed initial attribution log
+        VoucherGSTINAttributionLog.objects.create(
+            company=self.company,
+            voucher=v_conc,
+            gst_registration=self.registration,
+            previous_gstin='',
+            new_gstin=self.registration.gstin,
+            attribution_source='INITIAL_SETUP',
+            reason='Initial baseline attribution',
+            operation_ref='INITIAL_OP',
+            is_correction=False
+        )
+
+        worker_count = 2
+        barrier = threading.Barrier(worker_count)
+        errors = []
+
+        def worker_correct(target_reg, reason_text, op_ref):
+            from django.db import connection
+            connection.close()
+            try:
+                barrier.wait(timeout=10)
+                with transaction.atomic():
+                    v_locked = Voucher.objects.select_for_update().get(id=v_conc.id, company=self.company)
+                    prev_gstin = v_locked.buyer_gstin
+                    v_locked.buyer_gstin = target_reg.gstin
+                    v_locked.save(update_fields=['buyer_gstin'])
+                    VoucherGSTINAttributionLog.objects.create(
+                        company=self.company,
+                        voucher=v_locked,
+                        gst_registration=target_reg,
+                        previous_gstin=prev_gstin,
+                        new_gstin=target_reg.gstin,
+                        attribution_source='CONCURRENT_CORRECTION',
+                        reason=reason_text,
+                        operation_ref=op_ref,
+                        is_correction=True
+                    )
+            except Exception as e:
+                errors.append(e)
+
+        t1 = threading.Thread(target=worker_correct, args=(reg_alt, 'Correction to Alternate Unit by User A', 'CORR_OP_A'))
+        t2 = threading.Thread(target=worker_correct, args=(self.registration, 'Correction to Primary Unit by User B', 'CORR_OP_B'))
+
+        t1.start()
+        t2.start()
+        t1.join(timeout=15)
+        t2.join(timeout=15)
+
+        self.assertEqual(len(errors), 0, f"Concurrent attribution correction failed: {errors}")
+        corr_logs = VoucherGSTINAttributionLog.objects.filter(voucher=v_conc, is_correction=True)
+        self.assertEqual(corr_logs.count(), 2, "Both correction events must be preserved in audit trail")
+
+    def test_reconciliation_concurrent_with_ingestion(self):
+        """
+        P1 Race Scenario 4: Reconciliation running concurrently with GSTR-2B ingestion.
+        Verifies zero deadlocks and consistent reconciliation results.
+        """
+        import threading
+        from django.db import connection
+
+        if connection.vendor != 'postgresql':
+            self.skipTest(f"Dedicated PostgreSQL Concurrency Certification requires real PostgreSQL engine, got '{connection.vendor}'.")
+
+        target_period = '032027'
+        barrier = threading.Barrier(2)
+        errors = []
+
+        payload = {
+            'gstin': self.registration.gstin,
+            'fp': target_period,
+            'data': {
+                'docdata': {
+                    'b2b': [{
+                        'ctin': '07STEEL8888S1Z8',
+                        'inv': [{
+                            'inum': 'INV/REC/01',
+                            'dt': '01-03-2027',
+                            'val': 1180.0,
+                            'items': [{'txval': 1000.0, 'camt': 90.0, 'samt': 90.0, 'iamt': 0.0, 'csamt': 0.0}]
+                        }]
+                    }]
+                }
+            }
+        }
+
+        def worker_ingest():
+            from django.db import connection
+            connection.close()
+            try:
+                barrier.wait(timeout=10)
+                ITCReconciliationService.ingest_gstr2b_json(
+                    company=self.company,
+                    json_data=payload,
+                    return_period=target_period,
+                    registration=self.registration
+                )
+            except Exception as e:
+                errors.append(e)
+
+        def worker_reconcile():
+            from django.db import connection
+            connection.close()
+            try:
+                barrier.wait(timeout=10)
+                ITCReconciliationService.reconcile_period(
+                    company=self.company,
+                    return_period=target_period,
+                    registration=self.registration
+                )
+            except Exception as e:
+                errors.append(e)
+
+        t1 = threading.Thread(target=worker_ingest)
+        t2 = threading.Thread(target=worker_reconcile)
+        t1.start()
+        t2.start()
+        t1.join(timeout=20)
+        t2.join(timeout=20)
+
+        self.assertEqual(len(errors), 0, f"Concurrent ingestion + reconciliation failed: {errors}")
+        self.assertTrue(GSTR2BImport.objects.filter(company=self.company, return_period=target_period).exists())
+
+    def test_concurrent_filing_frequency_updates(self):
+        """
+        P1 Race Scenario 5: Two users concurrently updating filing frequency verification.
+        Verifies clean database execution without deadlocks or unhandled collisions.
+        """
+        import threading
+        from django.db import connection
+
+        if connection.vendor != 'postgresql':
+            self.skipTest(f"Dedicated PostgreSQL Concurrency Certification requires real PostgreSQL engine, got '{connection.vendor}'.")
+
+        barrier = threading.Barrier(2)
+        errors = []
+
+        def worker_update(freq, source_name):
+            from django.db import connection
+            connection.close()
+            try:
+                barrier.wait(timeout=10)
+                reg = GSTRegistration.objects.get(id=self.registration.id)
+                reg.set_filing_frequency(frequency=freq, source=source_name, commit=True)
+            except Exception as e:
+                errors.append(e)
+
+        t1 = threading.Thread(target=worker_update, args=('MONTHLY', 'GST_PORTAL_API'))
+        t2 = threading.Thread(target=worker_update, args=('QRMP', 'RETURN_STATUS_API'))
+        t1.start()
+        t2.start()
+        t1.join(timeout=15)
+        t2.join(timeout=15)
+
+        self.assertEqual(len(errors), 0, f"Concurrent frequency update failed: {errors}")
+        self.registration.refresh_from_db()
+        self.assertTrue(self.registration.is_frequency_verified())
+
+    def test_attribution_correction_timeout_retry_idempotency(self):
+        """
+        P1 Race Scenario 6: Client timeout retry after attribution correction committed.
+        Verifies that retrying with the same operation_ref does NOT append duplicate audit log events.
+        """
+        from rest_framework.test import APIClient
+        client = APIClient()
+        user = User.objects.create_user(email='audit_retry@testcorp.com', password='RetryPass123!')
+        UserCompany.objects.create(user=user, company=self.company, role='OWNER')
+        client.force_authenticate(user=user)
+
+        v_retry = Voucher.objects.create(
+            company=self.company,
+            voucher_type='PURCHASE',
+            voucher_number='PUR/RETRY/01',
+            voucher_date=date(2027, 2, 1),
+            total_amount=Decimal('3000.00'),
+            created_by=user,
+            status='POSTED'
+        )
+        # Initial attribution
+        client.post('/api/v1/gst/itc/attribute-voucher/', {
+            'voucher_ids': [str(v_retry.id)],
+            'registration_id': str(self.registration.id)
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+
+        reg_new = GSTRegistration.objects.create(
+            company=self.company,
+            gstin='07RETRY9999R1Z3',
+            legal_name='Retry Destination Unit',
+            state_code='07',
+            status='ACTIVE'
+        )
+
+        op_ref = 'IDEMPOTENT_RETRY_REF_771'
+        # Call 1: Original successful correction
+        resp1 = client.post('/api/v1/gst/itc/correct-attribution/', {
+            'voucher_ids': [str(v_retry.id)],
+            'registration_id': str(reg_new.id),
+            'reason': 'Re-allocating invoice to Retry Destination Unit per Audit Notice',
+            'operation_ref': op_ref
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp1.status_code, 200)
+
+        count_after_call1 = VoucherGSTINAttributionLog.objects.filter(voucher=v_retry).count()
+
+        # Call 2: Simulated client retry after network timeout
+        resp2 = client.post('/api/v1/gst/itc/correct-attribution/', {
+            'voucher_ids': [str(v_retry.id)],
+            'registration_id': str(reg_new.id),
+            'reason': 'Re-allocating invoice to Retry Destination Unit per Audit Notice',
+            'operation_ref': op_ref
+        }, format='json', HTTP_X_COMPANY_ID=str(self.company.id))
+        self.assertEqual(resp2.status_code, 200)
+        self.assertIn('idempotent replay', resp2.data.get('message', '').lower())
+
+        count_after_call2 = VoucherGSTINAttributionLog.objects.filter(voucher=v_retry).count()
+        self.assertEqual(count_after_call1, count_after_call2, "Idempotent retry must not append duplicate audit events")

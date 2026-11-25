@@ -359,15 +359,18 @@ class GSTPeriodService:
         invoice_date: Union[date, str],
         recipient_registration: Optional[Any] = None,
         filing_frequency: Optional[str] = None,
-        statement_metadata: Optional[Any] = None
+        statement_metadata: Optional[Any] = None,
+        verification_source: Optional[str] = None,
+        verified_at: Optional[Any] = None,
+        verified_by: Optional[Any] = None
     ) -> StatementPeriodResolution:
         """
-        Central Return-Period Resolver with QRMP Intelligence (DEF-02).
-        Maps an invoice date to its statutory GSTR-2B statement period using verified configuration only.
-        - Keeps invoice period and statement period strictly distinct.
-        - Never infers QRMP or MONTHLY filing merely from statement presence or calendar.
+        Central Return-Period Resolver with QRMP Intelligence (P0 / Round 2.4.2).
+        Maps an invoice date to its statutory GSTR-2B statement period using VERIFIED configuration only.
+        - Enforces canonical provenance: Registration-based frequency is usable ONLY after verification.
+        - An explicit filing_frequency argument MUST NOT bypass registration verification.
+        - Direct model field assignment without verified metadata resolves to UNKNOWN.
         - For verified QRMP recipients: Maps M1/M2/M3 of a quarter to quarter-end statement (06/09/12/03YYYY).
-          Also checks statement_metadata for actual IFF interim statement evidence when present.
         - For verified MONTHLY recipients: Maps invoice month to the corresponding monthly statement (MMYYYY).
         - For UNKNOWN filing frequency: Returns REVIEW_REQUIRED with expected_statement_period=None.
         """
@@ -394,20 +397,50 @@ class GSTPeriodService:
         _, q_end_m, q_label = cls.get_quarter_info(m, y)
         qrmp_stmt_period = f"{str(q_end_m).zfill(2)}{y}"
 
-        # Determine verified filing frequency strictly from explicit parameter or registration config
-        freq = (filing_frequency or '').strip().upper()
-        evidence = 'FILING_FREQUENCY_PARAM' if freq in ['MONTHLY', 'QRMP'] else 'FILING_FREQUENCY_UNKNOWN'
-        if not freq and recipient_registration is not None:
-            reg_freq = (getattr(recipient_registration, 'filing_frequency', None) or '').strip().upper()
-            if reg_freq in ['MONTHLY', 'QRMP']:
-                freq = reg_freq
-                evidence = 'REGISTRATION_FREQUENCY'
-            elif reg_freq == 'UNKNOWN':
-                freq = 'UNKNOWN'
-                evidence = 'REGISTRATION_FREQUENCY_UNKNOWN'
+        # Determine verified filing frequency strictly from verified registration provenance or verified context (P0 / Round 2.4.2)
+        # Registration-based frequency is usable ONLY after canonical verification validation.
+        # An explicit filing_frequency argument MUST NOT bypass registration verification.
+        freq = 'UNKNOWN'
+        evidence = 'FILING_FREQUENCY_UNKNOWN'
 
-        if freq not in ['MONTHLY', 'QRMP']:
-            freq = 'UNKNOWN'
+        if recipient_registration is not None:
+            # Check canonical verification on registration
+            is_reg_verified = False
+            if hasattr(recipient_registration, 'is_frequency_verified'):
+                is_reg_verified = recipient_registration.is_frequency_verified()
+            else:
+                reg_freq_val = (getattr(recipient_registration, 'filing_frequency', None) or '').strip().upper()
+                src = (getattr(recipient_registration, 'frequency_verified_source', None) or '').strip().upper()
+                at = getattr(recipient_registration, 'frequency_verified_at', None)
+                by = getattr(recipient_registration, 'frequency_verified_by_id', None) or getattr(recipient_registration, 'frequency_verified_by', None)
+                if reg_freq_val in ['MONTHLY', 'QRMP'] and at and src in ['GST_PORTAL_API', 'RETURN_STATUS_API', 'USER_MANUAL']:
+                    if src != 'USER_MANUAL' or by:
+                        is_reg_verified = True
+
+            if is_reg_verified:
+                freq = (getattr(recipient_registration, 'filing_frequency', None) or '').strip().upper()
+                evidence = 'REGISTRATION_FREQUENCY_VERIFIED'
+            else:
+                # Unverified registration cannot be bypassed by an explicit filing_frequency argument
+                freq = 'UNKNOWN'
+                evidence = 'REGISTRATION_FREQUENCY_UNVERIFIED'
+        elif filing_frequency:
+            # When registration is not provided, explicit frequency argument is accepted ONLY if accompanied
+            # by verified provenance (allowed verification_source and verified_at timestamp)
+            cand_freq = (filing_frequency or '').strip().upper()
+            cand_source = (verification_source or '').strip().upper()
+            if (cand_freq in ['MONTHLY', 'QRMP'] and
+                verified_at is not None and
+                cand_source in ['GST_PORTAL_API', 'RETURN_STATUS_API', 'USER_MANUAL']):
+                if cand_source != 'USER_MANUAL' or verified_by:
+                    freq = cand_freq
+                    evidence = 'VERIFIED_PARAM_PROVENANCE'
+                else:
+                    freq = 'UNKNOWN'
+                    evidence = 'UNVERIFIED_PARAM_MISSING_USER'
+            else:
+                freq = 'UNKNOWN'
+                evidence = 'UNVERIFIED_PARAM_PROVENANCE'
 
         available = set()
         if statement_metadata is not None:

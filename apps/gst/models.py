@@ -30,6 +30,11 @@ def resolve_document_financial_effect(record_or_dict: Any) -> DocumentFinancialE
     Accurately distinguishes CDNR credit notes ('C') from CDNR debit notes ('D').
     Prevents negative inversion of debit notes.
     Flags records with missing or ambiguous note_type as REVIEW_REQUIRED with financial_sign=0.
+    Enforces strict allowlist table:
+    - ('CDNR'/'CDNRA', 'C') -> CREDIT_NOTE (-1)
+    - ('CDNR'/'CDNRA', 'D') -> DEBIT_NOTE (+1)
+    - ('B2B'/'B2BA'/'INV'/'INVOICE', '') -> INVOICE (+1)
+    - Any other combination -> UNKNOWN (0, is_review_required=True)
     """
     if hasattr(record_or_dict, 'document_type'):
         doc_type = (getattr(record_or_dict, 'document_type', None) or '').strip().upper()
@@ -41,9 +46,19 @@ def resolve_document_financial_effect(record_or_dict: Any) -> DocumentFinancialE
         doc_type = ''
         note_type = ''
 
-    # Credit Note / Debit Note sections (CDNR, CDNRA)
-    if doc_type in ['CDNR', 'CDNRA'] or note_type in ['C', 'CR', 'CREDIT', 'D', 'DR', 'DEBIT']:
-        if note_type in ['C', 'CR', 'CREDIT']:
+    # Normalize note_type
+    if note_type in ['C', 'CR', 'CREDIT']:
+        norm_note_type = 'C'
+    elif note_type in ['D', 'DR', 'DEBIT']:
+        norm_note_type = 'D'
+    elif not note_type:
+        norm_note_type = ''
+    else:
+        norm_note_type = note_type
+
+    # Strict Allowlist: Document type validated before note type
+    if doc_type in ['CDNR', 'CDNRA']:
+        if norm_note_type == 'C':
             return DocumentFinancialEffect(
                 document_kind='CREDIT_NOTE',
                 financial_sign=-1,
@@ -52,7 +67,7 @@ def resolve_document_financial_effect(record_or_dict: Any) -> DocumentFinancialE
                 is_review_required=False,
                 reason='Credit note reduces recipient ITC balance'
             )
-        elif note_type in ['D', 'DR', 'DEBIT']:
+        elif norm_note_type == 'D':
             return DocumentFinancialEffect(
                 document_kind='DEBIT_NOTE',
                 financial_sign=1,
@@ -71,25 +86,34 @@ def resolve_document_financial_effect(record_or_dict: Any) -> DocumentFinancialE
                 reason=f"Ambiguous or missing note_type '{note_type}' on {doc_type} record"
             )
 
-    # Standard B2B / B2BA tax invoices
-    if doc_type in ['B2B', 'B2BA', 'INV', 'INVOICE'] and not note_type:
-        return DocumentFinancialEffect(
-            document_kind='INVOICE',
-            financial_sign=1,
-            is_credit_note=False,
-            is_debit_note=False,
-            is_review_required=False,
-            reason='Standard B2B tax invoice'
-        )
+    if doc_type in ['B2B', 'B2BA', 'INV', 'INVOICE']:
+        if norm_note_type == '':
+            return DocumentFinancialEffect(
+                document_kind='INVOICE',
+                financial_sign=1,
+                is_credit_note=False,
+                is_debit_note=False,
+                is_review_required=False,
+                reason='Standard B2B tax invoice'
+            )
+        else:
+            return DocumentFinancialEffect(
+                document_kind='UNKNOWN',
+                financial_sign=0,
+                is_credit_note=False,
+                is_debit_note=False,
+                is_review_required=True,
+                reason=f"Invoice document_type '{doc_type}' must not carry note_type '{note_type}'"
+            )
 
-    # Unknown or unhandled document types must NOT default to positive invoices (P1 / Round 2.4.1)
+    # Any other combination (e.g. XYZ+D, XYZ+C, unknown document types)
     return DocumentFinancialEffect(
         document_kind='UNKNOWN',
         financial_sign=0,
         is_credit_note=False,
         is_debit_note=False,
         is_review_required=True,
-        reason=f"Unknown or unhandled document_type '{doc_type}'" + (f" with note_type '{note_type}'" if note_type else "")
+        reason=f"Unknown or unmapped document_type '{doc_type}'" + (f" with note_type '{note_type}'" if note_type else "")
     )
 
 
@@ -236,6 +260,8 @@ class GSTRegistration(models.Model):
         ('UNKNOWN', 'Unknown'),
     )
 
+    ALLOWED_FREQUENCY_SOURCES = ('GST_PORTAL_API', 'RETURN_STATUS_API', 'USER_MANUAL', 'PORTAL_API')
+
     taxpayer_type = models.CharField(max_length=30, choices=TAXPAYER_TYPE_CHOICES, default='REGULAR')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='ACTIVE')
     filing_frequency = models.CharField(
@@ -315,12 +341,31 @@ class GSTRegistration(models.Model):
         from django.utils import timezone
         return bool(self.auth_token and (not self.token_expires_at or self.token_expires_at > timezone.now()))
 
-    def set_filing_frequency(self, frequency: str, source: str = 'USER_MANUAL', user=None, commit: bool = True):
+    def is_frequency_verified(self) -> bool:
+        """
+        Compliance Provenance Invariant (Round 2.4.2 P0):
+        Returns True if filing frequency has been explicitly verified via an allowed provenance source
+        and timestamped. Unverified registrations must never be presumed MONTHLY or QRMP.
+        """
+        return bool(
+            self.frequency_verified_source in self.ALLOWED_FREQUENCY_SOURCES and
+            self.frequency_verified_at and
+            self.filing_frequency in ['MONTHLY', 'QRMP']
+        )
+
+    def set_filing_frequency(self, frequency: str, source: str = 'USER_MANUAL', user=None, reason: str = '', commit: bool = True):
         clean_freq = (frequency or '').strip().upper()
         if clean_freq not in ['MONTHLY', 'QRMP', 'UNKNOWN']:
             raise ValidationError(f"Invalid filing frequency: '{frequency}'. Must be MONTHLY, QRMP, or UNKNOWN.")
+        clean_source = (source or '').strip().upper()
+        if clean_source == 'PORTAL_API':
+            clean_source = 'GST_PORTAL_API'
+        if clean_source not in self.ALLOWED_FREQUENCY_SOURCES:
+            raise ValidationError(f"Invalid verification source: '{source}'. Must be one of {list(self.ALLOWED_FREQUENCY_SOURCES)}.")
+        if clean_source == 'USER_MANUAL' and not user:
+            raise ValidationError("Manual filing frequency verification requires an authorized user.")
         self.filing_frequency = clean_freq
-        self.frequency_verified_source = source
+        self.frequency_verified_source = clean_source
         self.frequency_verified_at = timezone.now()
         self.frequency_verified_by = user
         if commit:
@@ -592,6 +637,15 @@ class GSTR2BRecord(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    def save(self, *args, **kwargs):
+        if not self.normalized_invoice_number and self.invoice_number:
+            import re
+            cleaned = re.sub(r'[^A-Z0-9]', '', str(self.invoice_number).strip().upper())
+            if cleaned.startswith('INV') and len(cleaned) > 3:
+                cleaned = cleaned[3:]
+            self.normalized_invoice_number = cleaned
+        super().save(*args, **kwargs)
+
     def is_gstr3b_stale(self, threshold_days: int = 30) -> bool:
         """
         Evidence Freshness Rule for GSTR-2B GSTR-3B status:
@@ -746,15 +800,34 @@ class GSTR2BIngestionLock(models.Model):
         return f"Lock {self.company.name} - {self.return_period}"
 
 
+class ImmutableAuditQuerySet(models.QuerySet):
+    """Guarantees QuerySet.update() and QuerySet.delete() cannot mutate or delete audit log entries."""
+    def update(self, **kwargs):
+        raise ValidationError(
+            "Statutory Attribution Audit Invariant: VoucherGSTINAttributionLog rows are append-only. Bulk updates are prohibited."
+        )
+
+    def delete(self):
+        raise ValidationError(
+            "Statutory Attribution Audit Invariant: VoucherGSTINAttributionLog rows are append-only. Bulk deletions are prohibited."
+        )
+
+
+class ImmutableAuditManager(models.Manager):
+    def get_queryset(self):
+        return ImmutableAuditQuerySet(self.model, using=self._db)
+
+
 class VoucherGSTINAttributionLog(models.Model):
     """
     Append-only audit history for purchase voucher GSTIN attributions and corrections (Round 2.4.1 / P0 DEF-04).
     Guarantees tamper-evident tracing of which user mapped or re-mapped a voucher to a GSTIN,
     including the previous GSTIN, new GSTIN, authorization source, and correction reason.
+    Immutable: Updates and deletions are strictly blocked at model, manager, queryset, and DB trigger levels.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='voucher_attribution_logs', db_index=True)
-    voucher = models.ForeignKey(Voucher, on_delete=models.CASCADE, related_name='attribution_audit_logs', db_index=True)
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name='voucher_attribution_logs', db_index=True)
+    voucher = models.ForeignKey(Voucher, on_delete=models.PROTECT, related_name='attribution_audit_logs', db_index=True)
     gst_registration = models.ForeignKey(
         GSTRegistration,
         on_delete=models.SET_NULL,
@@ -771,12 +844,26 @@ class VoucherGSTINAttributionLog(models.Model):
     operation_ref = models.CharField(max_length=100, blank=True, default='')
     is_correction = models.BooleanField(default=False)
 
+    objects = ImmutableAuditManager()
+
     class Meta:
         ordering = ['-attributed_at']
         indexes = [
             models.Index(fields=['company', 'voucher']),
             models.Index(fields=['company', 'new_gstin']),
         ]
+
+    def save(self, *args, **kwargs):
+        if self.pk and not self._state.adding:
+            raise ValidationError(
+                "Statutory Attribution Audit Invariant: Existing attribution log records are immutable and cannot be updated."
+            )
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError(
+            "Statutory Attribution Audit Invariant: VoucherGSTINAttributionLog records are permanent and immutable. Deletion is prohibited."
+        )
 
     def __str__(self):
         op = "CORRECTION" if self.is_correction else "ATTRIBUTION"

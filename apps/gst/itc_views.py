@@ -443,8 +443,26 @@ class ITCVoucherAttributionAPIView(APIView):
             return Response({'success': False, 'error': 'voucher_ids must be a non-empty list.', 'error_code': 'INVALID_VOUCHER_IDS'}, status=status.HTTP_400_BAD_REQUEST)
         if not reg_id:
             return Response({'success': False, 'error': 'registration_id is required.', 'error_code': 'REGISTRATION_REQUIRED'}, status=status.HTTP_400_BAD_REQUEST)
-        if is_correction and not reason:
-            return Response({'success': False, 'error': 'A non-empty reason is required when correcting an existing attribution.', 'error_code': 'REASON_REQUIRED'}, status=status.HTTP_400_BAD_REQUEST)
+        if is_correction and len(reason) < 5:
+            return Response({
+                'success': False,
+                'error': 'A justification reason of at least 5 non-whitespace characters is required when correcting an existing attribution.',
+                'error_code': 'REASON_REQUIRED'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Prevent duplicate correction events from retries with identical operation_ref (P0 / Round 2.4.2)
+        client_op_ref = (request.data.get('operation_ref') or '').strip()
+        if client_op_ref and VoucherGSTINAttributionLog.objects.filter(company=company, operation_ref=client_op_ref).exists():
+            existing_logs = VoucherGSTINAttributionLog.objects.filter(company=company, operation_ref=client_op_ref)
+            first_log = existing_logs.first()
+            return Response({
+                'success': True,
+                'message': f"Operation '{client_op_ref}' previously completed successfully (idempotent replay).",
+                'attributed_count': existing_logs.count(),
+                'attributed_gstin': first_log.new_gstin if first_log else '',
+                'operation_ref': client_op_ref,
+                'is_correction': is_correction
+            }, status=status.HTTP_200_OK)
 
         # Deduplicate voucher IDs preserving submission order
         clean_voucher_ids = list(dict.fromkeys(raw_ids))
@@ -458,7 +476,7 @@ class ITCVoucherAttributionAPIView(APIView):
             return Response({'success': False, 'error': f"GST Registration '{registration.gstin}' is inactive.", 'error_code': 'INACTIVE_REGISTRATION'}, status=status.HTTP_400_BAD_REQUEST)
 
         now = timezone.now()
-        operation_ref = f"ATTR_{uuid.uuid4().hex[:12].upper()}"
+        operation_ref = client_op_ref or f"ATTR_{uuid.uuid4().hex[:12].upper()}"
 
         with transaction.atomic():
             # Acquire row-level locks on candidate vouchers
