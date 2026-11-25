@@ -835,7 +835,7 @@ class GSTR2BSyncAttempt(models.Model):
         blank=True,
         related_name='gstr2b_sync_attempts'
     )
-    return_period = models.CharField(max_length=10, db_index=True)
+    return_period = models.CharField(max_length=32, db_index=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='IN_PROGRESS')
     total_invoices_ingested = models.PositiveIntegerField(default=0)
     records_created = models.PositiveIntegerField(default=0)

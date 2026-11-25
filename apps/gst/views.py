@@ -1223,6 +1223,11 @@ class GSTR2BSyncFromSandboxAPIView(APIView):
                         "success": False,
                         "error": f"GST Registration '{registration.gstin}' is inactive."
                     }, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                registration = (
+                    GSTRegistration.objects.filter(company=company, is_primary=True, status='ACTIVE').first()
+                    or GSTRegistration.objects.filter(company=company, status='ACTIVE').first()
+                )
 
             if periods or (from_period and to_period):
                 if from_period and to_period:

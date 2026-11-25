@@ -32,6 +32,7 @@ import {
   RotateCcw
 } from "lucide-react";
 import { gstApi, GSTRegistration } from "@/lib/api/gst";
+import MonthPickerInput, { parsePeriodToDisplay } from "@/components/ui/MonthPickerInput";
 
 interface SummaryStats {
   itc_at_risk: number;
@@ -342,6 +343,22 @@ export default function VendorITCRiskShieldPage() {
     if (retryPeriods && retryPeriods.length > 0) {
       payload = { periods: retryPeriods };
     } else if (syncMode === "range") {
+      if (!syncFromPeriod || syncFromPeriod.length !== 6 || !syncToPeriod || syncToPeriod.length !== 6) {
+        setSyncError("Please select both a valid From Month and To Month.");
+        setSyncing(false);
+        return;
+      }
+      const fM = parseInt(syncFromPeriod.slice(0, 2), 10);
+      const fY = parseInt(syncFromPeriod.slice(2), 10);
+      const tM = parseInt(syncToPeriod.slice(0, 2), 10);
+      const tY = parseInt(syncToPeriod.slice(2), 10);
+      const fDate = new Date(fY, fM - 1, 1);
+      const tDate = new Date(tY, tM - 1, 1);
+      if (fDate > tDate) {
+        setSyncError("Reversed return period range: From Month cannot be later than To Month.");
+        setSyncing(false);
+        return;
+      }
       payload = {
         from_period: syncFromPeriod,
         to_period: syncToPeriod,
@@ -1119,122 +1136,75 @@ export default function VendorITCRiskShieldPage() {
                     </div>
 
                     <div className="grid grid-cols-2 gap-3 pt-1">
-                      <div>
-                        <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
-                          From Month
-                        </label>
-                        <select
-                          value={syncFromPeriod}
-                          onChange={(e) => setSyncFromPeriod(e.target.value)}
-                          className="w-full px-3 py-2 text-xs rounded-lg border border-border/60 bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary font-mono cursor-pointer"
-                        >
-                          {availablePeriods.length > 0 ? (
-                            availablePeriods.map((p) => (
-                              <option key={p.period} value={p.period}>
-                                {p.period} ({p.label})
-                              </option>
-                            ))
-                          ) : (
-                            <>
-                              <option value="042025">042025 (Apr 2025)</option>
-                              <option value="052025">052025 (May 2025)</option>
-                              <option value="062025">062025 (Jun 2025)</option>
-                              <option value="072025">072025 (Jul 2025)</option>
-                              <option value="082025">082025 (Aug 2025)</option>
-                              <option value="092025">092025 (Sep 2025)</option>
-                              <option value="102025">102025 (Oct 2025)</option>
-                              <option value="042026">042026 (Apr 2026)</option>
-                              <option value="052026">052026 (May 2026)</option>
-                              <option value="062026">062026 (Jun 2026)</option>
-                              <option value="072026">072026 (Jul 2026)</option>
-                              <option value="082026">082026 (Aug 2026)</option>
-                              <option value="092026">092026 (Sep 2026)</option>
-                              <option value="102026">102026 (Oct 2026)</option>
-                            </>
-                          )}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
-                          To Month
-                        </label>
-                        <select
-                          value={syncToPeriod}
-                          onChange={(e) => setSyncToPeriod(e.target.value)}
-                          className="w-full px-3 py-2 text-xs rounded-lg border border-border/60 bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary font-mono cursor-pointer"
-                        >
-                          {availablePeriods.length > 0 ? (
-                            availablePeriods.map((p) => (
-                              <option key={p.period} value={p.period}>
-                                {p.period} ({p.label})
-                              </option>
-                            ))
-                          ) : (
-                            <>
-                              <option value="102025">102025 (Oct 2025)</option>
-                              <option value="092025">092025 (Sep 2025)</option>
-                              <option value="082025">082025 (Aug 2025)</option>
-                              <option value="072025">072025 (Jul 2025)</option>
-                              <option value="062025">062025 (Jun 2025)</option>
-                              <option value="052025">052025 (May 2025)</option>
-                              <option value="042025">042025 (Apr 2025)</option>
-                              <option value="102026">102026 (Oct 2026)</option>
-                              <option value="092026">092026 (Sep 2026)</option>
-                              <option value="082026">082026 (Aug 2026)</option>
-                              <option value="072026">072026 (Jul 2026)</option>
-                              <option value="062026">062026 (Jun 2026)</option>
-                              <option value="052026">052026 (May 2026)</option>
-                              <option value="042026">042026 (Apr 2026)</option>
-                            </>
-                          )}
-                        </select>
-                      </div>
+                      <MonthPickerInput
+                        label="From Month"
+                        value={syncFromPeriod}
+                        onChange={(norm) => {
+                          setSyncFromPeriod(norm);
+                          if (syncToPeriod) {
+                            const fM = parseInt(norm.slice(0, 2), 10);
+                            const fY = parseInt(norm.slice(2), 10);
+                            const tM = parseInt(syncToPeriod.slice(0, 2), 10);
+                            const tY = parseInt(syncToPeriod.slice(2), 10);
+                            if (new Date(fY, fM - 1, 1) > new Date(tY, tM - 1, 1)) {
+                              setSyncError("From Month cannot be later than To Month.");
+                            } else {
+                              setSyncError(null);
+                            }
+                          }
+                        }}
+                        placeholder="April 2026"
+                      />
+                      <MonthPickerInput
+                        label="To Month"
+                        value={syncToPeriod}
+                        onChange={(norm) => {
+                          setSyncToPeriod(norm);
+                          if (syncFromPeriod) {
+                            const fM = parseInt(syncFromPeriod.slice(0, 2), 10);
+                            const fY = parseInt(syncFromPeriod.slice(2), 10);
+                            const tM = parseInt(norm.slice(0, 2), 10);
+                            const tY = parseInt(norm.slice(2), 10);
+                            if (new Date(fY, fM - 1, 1) > new Date(tY, tM - 1, 1)) {
+                              setSyncError("From Month cannot be later than To Month.");
+                            } else {
+                              setSyncError(null);
+                            }
+                          }
+                        }}
+                        placeholder="October 2026"
+                      />
+                    </div>
+
+                    {/* Selected Range Display */}
+                    <div className="p-2.5 rounded-xl bg-muted/40 border border-border/50 flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground font-medium">Selected range:</span>
+                      <span className="font-bold text-foreground font-mono">
+                        {parsePeriodToDisplay(syncFromPeriod) || syncFromPeriod} &ndash; {parsePeriodToDisplay(syncToPeriod) || syncToPeriod}
+                      </span>
                     </div>
                   </div>
                 ) : (
-                  <div>
-                    <label className="block text-xs font-semibold text-foreground mb-1.5">
-                      Return Period (Month &amp; Year)
-                    </label>
-                    <select
+                  <div className="space-y-3">
+                    <MonthPickerInput
+                      label="Return Period (Month & Year)"
                       value={syncPeriod}
-                      onChange={(e) => setSyncPeriod(e.target.value)}
-                      className="w-full px-3 py-2 text-xs rounded-lg border border-border/60 bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary font-mono cursor-pointer mb-2"
-                    >
-                      {availablePeriods.length > 0 ? (
-                        availablePeriods.map((p) => (
-                          <option key={p.period} value={p.period}>
-                            {p.period} &mdash; {p.label} (FY {p.financial_year})
-                          </option>
-                        ))
-                      ) : (
-                        <>
-                          <option value="102025">102025 &mdash; October 2025 (FY 2025-26)</option>
-                          <option value="092025">092025 &mdash; September 2025 (FY 2025-26)</option>
-                          <option value="082025">082025 &mdash; August 2025 (FY 2025-26)</option>
-                          <option value="072025">072025 &mdash; July 2025 (FY 2025-26)</option>
-                          <option value="062025">062025 &mdash; June 2025 (FY 2025-26)</option>
-                          <option value="052025">052025 &mdash; May 2025 (FY 2025-26)</option>
-                          <option value="042025">042025 &mdash; April 2025 (FY 2025-26)</option>
-                          <option value="102026">102026 &mdash; October 2026 (FY 2026-27)</option>
-                          <option value="092026">092026 &mdash; September 2026 (FY 2026-27)</option>
-                          <option value="082026">082026 &mdash; August 2026 (FY 2026-27)</option>
-                          <option value="072026">072026 &mdash; July 2026 (FY 2026-27)</option>
-                          <option value="062026">062026 &mdash; June 2026 (FY 2026-27)</option>
-                          <option value="052026">052026 &mdash; May 2026 (FY 2026-27)</option>
-                          <option value="042026">042026 &mdash; April 2026 (FY 2026-27)</option>
-                        </>
-                      )}
-                    </select>
-                    <input
-                      type="text"
-                      value={syncPeriod}
-                      onChange={(e) => setSyncPeriod(e.target.value)}
-                      placeholder="Or enter custom period: MMYYYY (e.g. 102025)"
-                      className="w-full px-3 py-2 text-xs rounded-lg border border-border/60 bg-background focus:outline-none focus:ring-1 focus:ring-primary font-mono"
+                      onChange={(norm) => {
+                        setSyncPeriod(norm);
+                        setSyncError(null);
+                      }}
+                      placeholder="e.g. October 2026"
                     />
-                    <p className="text-[11px] text-muted-foreground mt-1">
-                      Format: MMYYYY (e.g. <strong>102025</strong> for October 2025, <strong>092025</strong> for September 2025).
+
+                    {/* Selected Single Period Display */}
+                    <div className="p-2.5 rounded-xl bg-muted/40 border border-border/50 flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground font-medium">Selected period:</span>
+                      <span className="font-bold text-foreground font-mono">
+                        {parsePeriodToDisplay(syncPeriod) || syncPeriod}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Type directly (e.g. <strong>April 2026</strong>, <strong>04/2026</strong>, <strong>042026</strong>) or use the month calendar picker.
                     </p>
                   </div>
                 )}

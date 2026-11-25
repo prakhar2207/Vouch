@@ -261,6 +261,10 @@ class GSTReconciliationService:
             "is_empty_statement": bool(getattr(import_batch, 'is_empty_statement', False)),
             "return_period": norm_period,
             "actual_statement_period": norm_period,
+            "from_period": norm_period,
+            "to_period": norm_period,
+            "range_identifier": norm_period,
+            "display_label": period_info.period_label,
             "period_label": period_info.period_label,
             "gstin": registration.gstin if registration else None,
             "filing_frequency": registration.get_verified_filing_frequency() if (registration and hasattr(registration, 'get_verified_filing_frequency')) else 'UNKNOWN',
@@ -318,7 +322,13 @@ class GSTReconciliationService:
             if registration.company_id != company.id:
                 raise ValidationError("GST Registration does not belong to this company.")
 
-        range_key = f"{period_infos[0].normalized_period}-{period_infos[-1].normalized_period}"
+        if len(period_infos) == 1:
+            range_key = period_infos[0].normalized_period
+            display_label = period_infos[0].period_label
+        else:
+            range_key = f"{period_infos[0].normalized_period}-{period_infos[-1].normalized_period}"
+            display_label = f"{period_infos[0].period_label} – {period_infos[-1].period_label}"
+
         sync_attempt = GSTR2BSyncAttempt.objects.create(
             company=company,
             gst_registration=registration,
@@ -340,174 +350,184 @@ class GSTReconciliationService:
         records_unchanged_total = 0
         records_rejected_total = 0
 
-        # Execute each period fetch independently
-        for p_info in period_infos:
-            p_str = p_info.normalized_period
-            single_res = cls.fetch_and_ingest_from_sandbox(
+        try:
+            # Execute each period fetch independently
+            for p_info in period_infos:
+                p_str = p_info.normalized_period
+                single_res = cls.fetch_and_ingest_from_sandbox(
+                    company=company,
+                    registration=registration,
+                    return_period=p_str,
+                    user=user
+                )
+
+                if single_res.get("success"):
+                    success_periods.append(p_str)
+                    invoices_ingested = single_res.get("total_invoices_ingested", 0)
+                    total_unique_invoices += invoices_ingested
+                    total_provider_records += single_res.get("provider_records_count", 0)
+                    records_created_total += single_res.get("records_created", 0)
+                    records_updated_total += single_res.get("records_updated", 0)
+                    records_unchanged_total += single_res.get("records_unchanged", 0)
+                    records_rejected_total += single_res.get("records_rejected", 0)
+
+                    period_st = single_res.get("status") or ("EMPTY_SUCCESS" if single_res.get("is_empty_statement") else "SUCCESS")
+                    period_results.append({
+                        "period": p_str,
+                        "period_label": p_info.period_label,
+                        "status": period_st,
+                        "actual_statement_period": single_res.get("actual_statement_period", p_str),
+                        "gstin": single_res.get("gstin") or (registration.gstin if registration else None),
+                        "filing_frequency": single_res.get("filing_frequency") or (registration.get_verified_filing_frequency() if (registration and hasattr(registration, 'get_verified_filing_frequency')) else 'UNKNOWN'),
+                        "fetch_status": "SUCCESS",
+                        "ingestion_status": single_res.get("ingestion_status", "SUCCESS"),
+                        "reconciliation_status": single_res.get("reconciliation_status", "SUCCESS"),
+                        "provider_records_count": single_res.get("provider_records_count", 0),
+                        "invoice_count": invoices_ingested,
+                        "invoices_ingested": invoices_ingested,
+                        "records_created": single_res.get("records_created", 0),
+                        "records_updated": single_res.get("records_updated", 0),
+                        "records_unchanged": single_res.get("records_unchanged", 0),
+                        "records_rejected": single_res.get("records_rejected", 0),
+                        "is_empty_statement": bool(single_res.get("is_empty_statement", False)),
+                        "error_category": None,
+                        "error_message": None
+                    })
+                elif single_res.get("is_form_not_applicable") or single_res.get("status") == "NOT_APPLICABLE":
+                    err_msg = single_res.get("error") or "GSTR-2B form is not applicable for this period."
+                    err_cat = single_res.get("error_category") or "FORM_NOT_APPLICABLE"
+                    # Only treat as non-fatal QRMP skip if registration is verified QRMP and period is M1/M2
+                    verified_freq = registration.get_verified_filing_frequency() if (registration and hasattr(registration, 'get_verified_filing_frequency')) else 'UNKNOWN'
+                    is_qrmp_verified_skip = bool(
+                        registration
+                        and verified_freq == 'QRMP'
+                        and p_info.month_int in [4, 5, 7, 8, 10, 11, 1, 2]
+                    )
+                    target_bucket = not_applicable_periods if is_qrmp_verified_skip else failed_periods
+                    target_bucket.append({
+                        "period": p_str,
+                        "period_label": p_info.period_label,
+                        "error": err_msg,
+                        "error_category": err_cat
+                    })
+                    period_results.append({
+                        "period": p_str,
+                        "period_label": p_info.period_label,
+                        "status": "NOT_APPLICABLE",
+                        "actual_statement_period": None,
+                        "gstin": single_res.get("gstin") or (registration.gstin if registration else None),
+                        "filing_frequency": single_res.get("filing_frequency") or verified_freq,
+                        "fetch_status": "NOT_APPLICABLE",
+                        "ingestion_status": "SKIPPED",
+                        "reconciliation_status": "SKIPPED",
+                        "provider_records_count": 0,
+                        "invoice_count": 0,
+                        "invoices_ingested": 0,
+                        "records_created": 0,
+                        "records_updated": 0,
+                        "records_unchanged": 0,
+                        "records_rejected": 0,
+                        "is_form_not_applicable": True,
+                        "error_category": err_cat,
+                        "error_message": err_msg
+                    })
+                else:
+                    err_msg = single_res.get("error") or "Failed to sync return period."
+                    err_cat = single_res.get("error_category") or "PROVIDER_ERROR"
+                    failed_periods.append({
+                        "period": p_str,
+                        "period_label": p_info.period_label,
+                        "error": err_msg,
+                        "error_category": err_cat
+                    })
+                    period_results.append({
+                        "period": p_str,
+                        "period_label": p_info.period_label,
+                        "status": "FAILED",
+                        "actual_statement_period": None,
+                        "gstin": single_res.get("gstin") or (registration.gstin if registration else None),
+                        "filing_frequency": single_res.get("filing_frequency") or (registration.get_verified_filing_frequency() if (registration and hasattr(registration, 'get_verified_filing_frequency')) else 'UNKNOWN'),
+                        "fetch_status": "FAILED",
+                        "ingestion_status": "SKIPPED",
+                        "reconciliation_status": "SKIPPED",
+                        "provider_records_count": 0,
+                        "invoice_count": 0,
+                        "invoices_ingested": 0,
+                        "records_created": 0,
+                        "records_updated": 0,
+                        "records_unchanged": 0,
+                        "records_rejected": 0,
+                        "error_category": err_cat,
+                        "error_message": err_msg
+                    })
+
+            # Run consolidated authoritative reconciliation across all requested periods
+            from apps.gst.services.itc_reconciliation_service import ITCReconciliationService
+            rec_summary = ITCReconciliationService.reconcile_period(
                 company=company,
                 registration=registration,
-                return_period=p_str,
-                user=user
+                periods=requested_period_strings,
+                start_date=period_infos[0].start_date,
+                end_date=period_infos[-1].end_date
             )
 
-            if single_res.get("success"):
-                success_periods.append(p_str)
-                invoices_ingested = single_res.get("total_invoices_ingested", 0)
-                total_unique_invoices += invoices_ingested
-                total_provider_records += single_res.get("provider_records_count", 0)
-                records_created_total += single_res.get("records_created", 0)
-                records_updated_total += single_res.get("records_updated", 0)
-                records_unchanged_total += single_res.get("records_unchanged", 0)
-                records_rejected_total += single_res.get("records_rejected", 0)
+            # Determine overall outcome status
+            total_p = len(period_infos)
+            success_p = len(success_periods)
+            failed_p = len(failed_periods)
+            not_app_p = len(not_applicable_periods)
+            all_empty = bool(success_p > 0 and all(pr.get("is_empty_statement") for pr in period_results if pr.get("fetch_status") == "SUCCESS"))
 
-                period_st = single_res.get("status") or ("EMPTY_SUCCESS" if single_res.get("is_empty_statement") else "SUCCESS")
-                period_results.append({
-                    "period": p_str,
-                    "period_label": p_info.period_label,
-                    "status": period_st,
-                    "actual_statement_period": single_res.get("actual_statement_period", p_str),
-                    "gstin": single_res.get("gstin") or (registration.gstin if registration else None),
-                    "filing_frequency": single_res.get("filing_frequency") or (registration.get_verified_filing_frequency() if (registration and hasattr(registration, 'get_verified_filing_frequency')) else 'UNKNOWN'),
-                    "fetch_status": "SUCCESS",
-                    "ingestion_status": single_res.get("ingestion_status", "SUCCESS"),
-                    "reconciliation_status": single_res.get("reconciliation_status", "SUCCESS"),
-                    "provider_records_count": single_res.get("provider_records_count", 0),
-                    "invoice_count": invoices_ingested,
-                    "invoices_ingested": invoices_ingested,
-                    "records_created": single_res.get("records_created", 0),
-                    "records_updated": single_res.get("records_updated", 0),
-                    "records_unchanged": single_res.get("records_unchanged", 0),
-                    "records_rejected": single_res.get("records_rejected", 0),
-                    "is_empty_statement": bool(single_res.get("is_empty_statement", False)),
-                    "error_category": None,
-                    "error_message": None
-                })
-            elif single_res.get("is_form_not_applicable") or single_res.get("status") == "NOT_APPLICABLE":
-                err_msg = single_res.get("error") or "GSTR-2B form is not applicable for this period."
-                err_cat = single_res.get("error_category") or "FORM_NOT_APPLICABLE"
-                # Only treat as non-fatal QRMP skip if registration is verified QRMP and period is M1/M2
-                verified_freq = registration.get_verified_filing_frequency() if (registration and hasattr(registration, 'get_verified_filing_frequency')) else 'UNKNOWN'
-                is_qrmp_verified_skip = bool(
-                    registration
-                    and verified_freq == 'QRMP'
-                    and p_info.month_int in [4, 5, 7, 8, 10, 11, 1, 2]
-                )
-                target_bucket = not_applicable_periods if is_qrmp_verified_skip else failed_periods
-                target_bucket.append({
-                    "period": p_str,
-                    "period_label": p_info.period_label,
-                    "error": err_msg,
-                    "error_category": err_cat
-                })
-                period_results.append({
-                    "period": p_str,
-                    "period_label": p_info.period_label,
-                    "status": "NOT_APPLICABLE",
-                    "actual_statement_period": None,
-                    "gstin": single_res.get("gstin") or (registration.gstin if registration else None),
-                    "filing_frequency": single_res.get("filing_frequency") or verified_freq,
-                    "fetch_status": "NOT_APPLICABLE",
-                    "ingestion_status": "SKIPPED",
-                    "reconciliation_status": "SKIPPED",
-                    "provider_records_count": 0,
-                    "invoice_count": 0,
-                    "invoices_ingested": 0,
-                    "records_created": 0,
-                    "records_updated": 0,
-                    "records_unchanged": 0,
-                    "records_rejected": 0,
-                    "is_form_not_applicable": True,
-                    "error_category": err_cat,
-                    "error_message": err_msg
-                })
+            if success_p == total_p:
+                overall_status = "EMPTY_SUCCESS" if all_empty else "SUCCESS"
+                overall_success = True
+                if all_empty:
+                    msg = f"All {total_p} return periods synchronized (0 invoices reported on GST Portal)."
+                else:
+                    msg = f"All {total_p} return periods synchronized and reconciled successfully ({total_unique_invoices} invoices)."
+            elif failed_p == 0 and success_p > 0:
+                # Verified QRMP: applicable quarters succeeded and interim months are skipped
+                overall_status = "EMPTY_SUCCESS" if all_empty else "SUCCESS"
+                overall_success = True
+                msg = f"Synced {success_p} statement periods successfully ({total_unique_invoices} invoices). {not_app_p} interim months covered under verified QRMP quarterly filing."
+            elif success_p > 0:
+                overall_status = "PARTIAL_SUCCESS"
+                overall_success = False  # Critical: never return overall SUCCESS when periods failed
+                msg = f"Synced {success_p} of {total_p} return periods ({failed_p + not_app_p} failed or not applicable). Reconciled {total_unique_invoices} invoices."
+            elif success_p == 0 and failed_p == 0 and not_app_p > 0:
+                overall_status = "NOT_APPLICABLE"
+                overall_success = False
+                msg = f"GSTR-2B is not applicable for the selected periods under verified QRMP scheme. Select quarter-end return periods (June, September, December, March)."
             else:
-                err_msg = single_res.get("error") or "Failed to sync return period."
-                err_cat = single_res.get("error_category") or "PROVIDER_ERROR"
-                failed_periods.append({
-                    "period": p_str,
-                    "period_label": p_info.period_label,
-                    "error": err_msg,
-                    "error_category": err_cat
-                })
-                period_results.append({
-                    "period": p_str,
-                    "period_label": p_info.period_label,
-                    "status": "FAILED",
-                    "actual_statement_period": None,
-                    "gstin": single_res.get("gstin") or (registration.gstin if registration else None),
-                    "filing_frequency": single_res.get("filing_frequency") or (registration.get_verified_filing_frequency() if (registration and hasattr(registration, 'get_verified_filing_frequency')) else 'UNKNOWN'),
-                    "fetch_status": "FAILED",
-                    "ingestion_status": "SKIPPED",
-                    "reconciliation_status": "SKIPPED",
-                    "provider_records_count": 0,
-                    "invoice_count": 0,
-                    "invoices_ingested": 0,
-                    "records_created": 0,
-                    "records_updated": 0,
-                    "records_unchanged": 0,
-                    "records_rejected": 0,
-                    "error_category": err_cat,
-                    "error_message": err_msg
-                })
+                overall_status = "FAILED"
+                overall_success = False
+                msg = f"Failed to synchronize return periods from GST Portal ({failed_p} failed)."
 
-        # Run consolidated authoritative reconciliation across all requested periods
-        from apps.gst.services.itc_reconciliation_service import ITCReconciliationService
-        rec_summary = ITCReconciliationService.reconcile_period(
-            company=company,
-            registration=registration,
-            periods=requested_period_strings,
-            start_date=period_infos[0].start_date,
-            end_date=period_infos[-1].end_date
-        )
-
-        # Determine overall outcome status
-        total_p = len(period_infos)
-        success_p = len(success_periods)
-        failed_p = len(failed_periods)
-        not_app_p = len(not_applicable_periods)
-        all_empty = bool(success_p > 0 and all(pr.get("is_empty_statement") for pr in period_results if pr.get("fetch_status") == "SUCCESS"))
-
-        if success_p == total_p:
-            overall_status = "EMPTY_SUCCESS" if all_empty else "SUCCESS"
-            overall_success = True
-            if all_empty:
-                msg = f"All {total_p} return periods synchronized (0 invoices reported on GST Portal)."
-            else:
-                msg = f"All {total_p} return periods synchronized and reconciled successfully ({total_unique_invoices} invoices)."
-        elif failed_p == 0 and success_p > 0:
-            # Verified QRMP: applicable quarters succeeded and interim months are skipped
-            overall_status = "EMPTY_SUCCESS" if all_empty else "SUCCESS"
-            overall_success = True
-            msg = f"Synced {success_p} statement periods successfully ({total_unique_invoices} invoices). {not_app_p} interim months covered under verified QRMP quarterly filing."
-        elif success_p > 0:
-            overall_status = "PARTIAL_SUCCESS"
-            overall_success = False  # Critical: never return overall SUCCESS when periods failed
-            msg = f"Synced {success_p} of {total_p} return periods ({failed_p + not_app_p} failed or not applicable). Reconciled {total_unique_invoices} invoices."
-        elif success_p == 0 and failed_p == 0 and not_app_p > 0:
-            overall_status = "NOT_APPLICABLE"
-            overall_success = False
-            msg = f"GSTR-2B is not applicable for the selected periods under verified QRMP scheme. Select quarter-end return periods (June, September, December, March)."
-        else:
-            overall_status = "FAILED"
-            overall_success = False
-            msg = f"Failed to synchronize return periods from GST Portal ({failed_p} failed)."
-
-        sync_attempt.status = overall_status if overall_status != "EMPTY_SUCCESS" else "SUCCESS"
-        sync_attempt.total_invoices_ingested = total_unique_invoices
-        sync_attempt.records_created = records_created_total
-        sync_attempt.records_updated = records_updated_total
-        sync_attempt.records_unchanged = records_unchanged_total
-        sync_attempt.error_message = msg if not overall_success else ""
-        sync_attempt.save(update_fields=[
-            'status', 'total_invoices_ingested', 'records_created',
-            'records_updated', 'records_unchanged', 'error_message'
-        ])
+            sync_attempt.status = overall_status if overall_status != "EMPTY_SUCCESS" else "SUCCESS"
+            sync_attempt.total_invoices_ingested = total_unique_invoices
+            sync_attempt.records_created = records_created_total
+            sync_attempt.records_updated = records_updated_total
+            sync_attempt.records_unchanged = records_unchanged_total
+            sync_attempt.error_message = msg if not overall_success else ""
+            sync_attempt.save(update_fields=[
+                'status', 'total_invoices_ingested', 'records_created',
+                'records_updated', 'records_unchanged', 'error_message'
+            ])
+        except Exception as exc:
+            sync_attempt.status = 'FAILED'
+            sync_attempt.error_message = f"Synchronization aborted due to unexpected error: {str(exc)}"
+            sync_attempt.save(update_fields=['status', 'error_message'])
+            raise
 
         return {
             "status": overall_status,
             "success": overall_success,
             "message": msg,
             "error": msg if not overall_success else None,
+            "from_period": period_infos[0].normalized_period,
+            "to_period": period_infos[-1].normalized_period,
+            "range_identifier": range_key,
+            "display_label": display_label,
             "gstin": registration.gstin if registration else None,
             "filing_frequency": registration.get_verified_filing_frequency() if (registration and hasattr(registration, 'get_verified_filing_frequency')) else 'UNKNOWN',
             "periods_requested": requested_period_strings,
