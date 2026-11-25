@@ -129,14 +129,9 @@ class SandboxGSTClient:
         # SSRF Protection: Validate base_url against explicit allowlist of HTTPS hosts
         clean_url = str(base_url).strip()
         parsed = urlparse(clean_url)
-        if parsed.scheme != 'https':
+        if parsed.scheme != 'https' or parsed.netloc not in self.ALLOWED_SANDBOX_HOSTS:
             logger.warning(
-                f"Insecure or invalid Sandbox base URL scheme '{parsed.scheme}'. Scheme must be https."
-            )
-            clean_url = ""
-        elif parsed.netloc not in self.ALLOWED_SANDBOX_HOSTS:
-            logger.warning(
-                f"Untrusted or invalid Sandbox base URL host '{parsed.netloc}'. "
+                f"Untrusted, insecure, or invalid Sandbox base URL '{clean_url}'. "
                 f"Resetting to authoritative DEFAULT_BASE_URL for security."
             )
             clean_url = self.DEFAULT_TEST_URL if (is_sandbox and 'test-api' in env_mode) else self.DEFAULT_BASE_URL

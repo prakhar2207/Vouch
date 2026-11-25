@@ -158,9 +158,9 @@ class GSTAllocationService:
             return 'INWARD_RCM' if getattr(voucher, 'is_reverse_charge', False) else 'INWARD_ITC'
         elif vtype == 'CREDIT_NOTE':
             # Check Section 34 vs Section 15(3)(b) Commercial Credit Note
-            orig_ref = getattr(voucher, 'original_invoice', None) or getattr(voucher, 'reference_number', '')
+            # Commercial credit notes have no GST adjustment (zero tax) or are explicitly flagged as commercial
             summary = cls.compute_voucher_monetary_summary(voucher)
-            if not orig_ref or summary["total_tax"] <= Decimal('0.00'):
+            if getattr(voucher, 'is_commercial', False) or summary["total_tax"] <= Decimal('0.00'):
                 return 'COMMERCIAL_CREDIT_NOTE'
             return 'CREDIT_NOTE'
         elif vtype == 'DEBIT_NOTE':
@@ -235,8 +235,8 @@ class GSTAllocationService:
         company = voucher.company
         event_type = cls.resolve_event_type(voucher)
         v_date = voucher.voucher_date
-        entry_date = received_date or goods_received_date or (voucher.created_at.date() if voucher.created_at else timezone.now().date())
         original_period = v_date.strftime('%m%Y')
+        entry_date = received_date or goods_received_date or (v_date if preferred_period == original_period else (voucher.created_at.date() if voucher.created_at else timezone.now().date()))
         financial_year = cls.get_financial_year(v_date)
         statutory_cutoff = cls.get_statutory_cutoff_date(
             v_date,
@@ -750,6 +750,7 @@ class GSTAllocationService:
             cls.allocate_voucher(
                 v,
                 preferred_period=period_code,
+                received_date=v.voucher_date,
                 is_receipt_confirmed=True if v.voucher_type == 'PURCHASE' else None,
                 goods_received_date=v.voucher_date if v.voucher_type == 'PURCHASE' else None
             )

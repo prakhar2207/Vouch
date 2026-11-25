@@ -2,7 +2,7 @@ import re
 import uuid
 import logging
 from decimal import Decimal
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone as dt_timezone
 from typing import Dict, Any, Optional
 from django.utils import timezone
 from apps.companies.models import Company
@@ -286,6 +286,8 @@ class EInvoiceService:
         if ack_dt_str:
             try:
                 ack_dt = datetime.strptime(ack_dt_str, '%Y-%m-%d %H:%M:%S')
+                if timezone.is_naive(ack_dt):
+                    ack_dt = timezone.make_aware(ack_dt, dt_timezone.utc)
             except Exception:
                 ack_dt = timezone.now()
 

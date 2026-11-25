@@ -668,6 +668,7 @@ class GSTReconciliationService:
 
                 mismatches = []
                 is_tax_mismatch = False
+                is_date_mismatch = False
                 if diff_txval > cls.TOLERANCE:
                     mismatches.append(f"Taxable value mismatch: Books ₹{v_txval:,.2f} vs 2B ₹{r_txval:,.2f} (Diff ₹{diff_txval:,.2f})")
                     is_tax_mismatch = True
@@ -677,30 +678,67 @@ class GSTReconciliationService:
                 if (v_igst > Decimal('0.00') and target_rec.cgst_amount > Decimal('0.00')) or (v_cgst > Decimal('0.00') and target_rec.igst_amount > Decimal('0.00')):
                     mismatches.append("Tax head mismatch (Inter-state IGST vs Intra-state CGST/SGST)")
                     is_tax_mismatch = True
+                if diff_days > 7:
+                    mismatches.append(f"Date discrepancy: Books {v.voucher_date} vs 2B {target_rec.invoice_date} ({diff_days} days difference)")
+                    is_date_mismatch = True
+
+                is_blocked_credit = (
+                    getattr(v, 'is_itc_ineligible', False)
+                    or v.itc_match_status == 'INELIGIBLE'
+                    or '17(5)' in (v.itc_notes or '')
+                )
 
                 if not target_rec.itc_available:
                     target_rec.match_status = 'INELIGIBLE_ITC'
                     category_counts['INELIGIBLE_ITC'] += 1
                     v.itc_match_status = 'INELIGIBLE'
                     v.itc_notes = target_rec.itc_ineligible_reason or "Supplier marked as ITC Ineligible in GSTR-2B / Section 17(5)."
+                    conf_score = 1.00
+                    conf_level = 'EXACT_MATCH'
+                    stat_eligibility = 'INELIGIBLE'
                 elif mismatches:
-                    match_cat = 'TAX_MISMATCH' if is_tax_mismatch else 'MISMATCHED'
+                    if is_date_mismatch and not is_tax_mismatch:
+                        match_cat = 'DATE_MISMATCH'
+                        conf_score = 0.40
+                        conf_level = 'MISMATCH'
+                        stat_eligibility = 'REVIEW_REQUIRED'
+                    elif is_tax_mismatch and not is_date_mismatch:
+                        match_cat = 'TAX_MISMATCH'
+                        conf_score = 0.50
+                        conf_level = 'MISMATCH'
+                        stat_eligibility = 'REVIEW_REQUIRED'
+                    else:
+                        match_cat = 'MISMATCHED'
+                        conf_score = 0.65
+                        conf_level = 'AMBIGUOUS'
+                        stat_eligibility = 'REVIEW_REQUIRED'
+
                     target_rec.match_status = match_cat
                     category_counts[match_cat] += 1
                     v.itc_match_status = match_cat
                     v.itc_notes = " | ".join(mismatches)
                 else:
+                    match_cat = 'MATCHED'
+                    conf_score = 1.00
+                    conf_level = 'EXACT_MATCH'
                     target_rec.match_status = 'MATCHED'
                     category_counts['MATCHED'] += 1
-                    v.itc_match_status = 'MATCHED'
-                    v.itc_notes = f"Reconciled successfully with GSTR-2B ({target_rec.return_period})."
-                    if v.itc_held_amount > Decimal('0.00') and not (v.itc_notes or '').startswith('MANUAL_HOLD'):
-                        v.itc_held_amount = Decimal('0.00')
+                    if is_blocked_credit:
+                        v.itc_match_status = 'INELIGIBLE'
+                        stat_eligibility = 'BLOCKED_SEC17_5'
+                        v.itc_notes = "Matched with GSTR-2B, but credit is blocked under Section 17(5)."
+                    else:
+                        v.itc_match_status = 'MATCHED'
+                        stat_eligibility = 'ELIGIBLE'
+                        v.itc_notes = f"Reconciled successfully with GSTR-2B ({target_rec.return_period})."
+                        if v.itc_held_amount > Decimal('0.00') and not (v.itc_notes or '').startswith('MANUAL_HOLD'):
+                            v.itc_held_amount = Decimal('0.00')
 
                 target_rec.mismatch_details = {
                     "category": target_rec.match_status,
-                    "confidence_score": 1.0 if not mismatches else 0.65,
-                    "confidence_level": "EXACT_MATCH" if not mismatches else "AMBIGUOUS",
+                    "confidence_score": conf_score,
+                    "confidence_level": conf_level,
+                    "statutory_itc_eligibility": stat_eligibility,
                     "explanation": v.itc_notes,
                     "days_difference": diff_days,
                     "book_voucher_number": v.voucher_number,
@@ -738,6 +776,13 @@ class GSTReconciliationService:
                 if r.match_status != 'MISSING_IN_BOOKS' or r.matched_voucher is not None:
                     r.match_status = 'MISSING_IN_BOOKS'
                     r.matched_voucher = None
+                    r.mismatch_details = {
+                        "category": 'MISSING_IN_BOOKS',
+                        "confidence_score": 0.0,
+                        "confidence_level": 'MISMATCH',
+                        "statutory_itc_eligibility": 'REVIEW_REQUIRED' if r.itc_available else 'INELIGIBLE',
+                        "explanation": "Invoice reported by supplier in GSTR-2B but not found in purchase books."
+                    }
                     records_to_update.append(r)
                 category_counts["MISSING_IN_BOOKS"] += 1
 
@@ -765,5 +810,10 @@ class GSTReconciliationService:
             "total_gstr2b_itc": float(total_2b_itc),
             "matched_itc": float(matched_itc),
             "at_risk_itc": float(at_risk_itc),
-            "category_counts": category_counts
+            "category_counts": category_counts,
+            "category_breakdown": category_counts,
+            "matched_count": category_counts.get("MATCHED", 0),
+            "missing_in_2b_count": category_counts.get("MISSING_IN_2B", 0),
+            "missing_in_books_count": category_counts.get("MISSING_IN_BOOKS", 0),
+            "mismatched_count": category_counts.get("MISMATCHED", 0) + category_counts.get("TAX_MISMATCH", 0) + category_counts.get("DATE_MISMATCH", 0),
         }

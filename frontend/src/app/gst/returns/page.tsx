@@ -79,10 +79,10 @@ export default function GSTReturnCenterPage() {
   // Direct GST Portal Upload states
   const [showPortalModal, setShowPortalModal] = useState(false);
   const [portalStep, setPortalStep] = useState<"auth" | "otp" | "confirm" | "success">("auth");
-  const [taxpayerUsername, setTaxpayerUsername] = useState("srilekh_taxpayer");
-  const [portalGstin, setPortalGstin] = useState(activeCompany?.gstin || "09CIFPS1329P2ZL");
+  const [taxpayerUsername, setTaxpayerUsername] = useState("");
+  const [portalGstin, setPortalGstin] = useState(activeCompany?.gstin || "");
   const [portalOtp, setPortalOtp] = useState("");
-  const [maskedMobile, setMaskedMobile] = useState("******9821");
+  const [maskedMobile, setMaskedMobile] = useState("");
   const [portalTxnId, setPortalTxnId] = useState("");
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [portalLoading, setPortalLoading] = useState(false);

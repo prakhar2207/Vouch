@@ -1,7 +1,7 @@
 import re
 import logging
 from decimal import Decimal
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
 from typing import Dict, Any, Optional
 from django.utils import timezone
 from apps.companies.models import Company
@@ -189,12 +189,16 @@ class EWayBillService:
         if ewb_date_str:
             try:
                 ewb_date = datetime.strptime(ewb_date_str, '%d/%m/%Y %I:%M:%S %p')
+                if timezone.is_naive(ewb_date):
+                    ewb_date = timezone.make_aware(ewb_date, dt_timezone.utc)
             except Exception:
                 pass
 
         if valid_until_str:
             try:
                 valid_until = datetime.strptime(valid_until_str, '%d/%m/%Y %I:%M:%S %p')
+                if timezone.is_naive(valid_until):
+                    valid_until = timezone.make_aware(valid_until, dt_timezone.utc)
             except Exception:
                 pass
 
