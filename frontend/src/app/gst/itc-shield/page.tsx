@@ -164,7 +164,7 @@ export default function VendorITCRiskShieldPage() {
   // Sync Results Breakdown
   const [periodResults, setPeriodResults] = useState<PeriodSyncResult[]>([]);
   const [failedPeriods, setFailedPeriods] = useState<string[]>([]);
-  const [overallSyncStatus, setOverallSyncStatus] = useState<"SUCCESS" | "PARTIAL_SUCCESS" | "FAILED" | null>(null);
+  const [overallSyncStatus, setOverallSyncStatus] = useState<"SUCCESS" | "PARTIAL_SUCCESS" | "FAILED" | "API_ACCESS_DISABLED" | "AUTHENTICATION_REQUIRED" | null>(null);
 
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isExpiryModalOpen, setIsExpiryModalOpen] = useState(false);
@@ -421,17 +421,19 @@ export default function VendorITCRiskShieldPage() {
       if (errData?.period_results) {
         setPeriodResults(errData.period_results);
         setFailedPeriods(errData.periods_failed || (errData.period ? [errData.period] : []));
-      } else if (errData?.period) {
+      } else if (errData?.period || errData?.return_period) {
+        const p = errData.period || errData.return_period;
         setPeriodResults([{
-          period: errData.period,
-          status: "FAILED",
-          error_code: errData.error_code,
+          period: p,
+          status: errData.status || "FAILED",
+          error_category: errData.error_category || errData.error_code,
+          error_code: errData.error_code || errData.error_category,
           error_message: errData.error,
           is_form_not_applicable: errData.is_form_not_applicable || errData.error_code === "FORM_NOT_APPLICABLE",
         }]);
-        setFailedPeriods([errData.period]);
+        setFailedPeriods([p]);
       }
-      setOverallSyncStatus("FAILED");
+      setOverallSyncStatus(errData?.status || "FAILED");
       setSyncError(errData?.error || "Failed to fetch GSTR-2B from GST Portal. Please ensure GST Portal is connected in Settings.");
     } finally {
       setSyncing(false);
@@ -1209,12 +1211,99 @@ export default function VendorITCRiskShieldPage() {
                   </div>
                 )}
 
-                {syncError && (
-                  <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-xs text-rose-500 flex items-start gap-2">
-                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                    <span>{syncError}</span>
-                  </div>
-                )}
+                {syncError && (() => {
+                  const errLower = syncError.toLowerCase();
+                  const isPrivilegeOrApiError =
+                    overallSyncStatus === "API_ACCESS_DISABLED" ||
+                    errLower.includes("privilege") ||
+                    errLower.includes("api access") ||
+                    errLower.includes("manage api");
+
+                  const isSessionAuthError =
+                    overallSyncStatus === "AUTHENTICATION_REQUIRED" ||
+                    errLower.includes("session") ||
+                    errLower.includes("reconnect") ||
+                    errLower.includes("token");
+
+                  if (isPrivilegeOrApiError) {
+                    return (
+                      <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-900 dark:text-amber-200 space-y-2.5">
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                          <div className="space-y-1">
+                            <div className="font-bold text-amber-800 dark:text-amber-300">
+                              GST Portal API Access Required
+                            </div>
+                            <p className="text-[11px] leading-relaxed text-muted-foreground">
+                              The GST Portal returned <code className="font-mono text-rose-500 bg-rose-500/10 px-1 py-0.5 rounded">Insufficient privilege</code>. Your GST API access is currently disabled or expired on the government portal (<strong className="text-foreground">services.gst.gov.in</strong>).
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="bg-background/60 p-2.5 rounded-lg border border-amber-500/20 text-[11px] space-y-1 text-muted-foreground">
+                          <div className="font-semibold text-foreground">How to enable in 4 simple steps:</div>
+                          <ol className="list-decimal list-inside space-y-0.5">
+                            <li>Sign in to <strong className="text-foreground">services.gst.gov.in</strong></li>
+                            <li>Navigate to <strong className="text-foreground">My Profile &gt; Manage API Access</strong></li>
+                            <li>Toggle master switch <strong className="text-foreground">&apos;Enable API Request&apos;</strong> to <strong className="text-emerald-600 dark:text-emerald-400 font-bold">Yes</strong> (duration: 30 days) and Save</li>
+                            <li>Select <strong className="text-foreground">Quicko Infosoft</strong> as authorized GSP</li>
+                          </ol>
+                        </div>
+
+                        <div className="pt-1 flex flex-wrap items-center gap-2">
+                          <a
+                            href="https://services.gst.gov.in"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors shadow-sm"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                            <span>Open GST Portal ↗</span>
+                          </a>
+                          <Link
+                            href="/settings"
+                            className="px-3 py-1.5 bg-muted hover:bg-muted/80 text-foreground rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors border border-border"
+                          >
+                            <span>Reconnect in Settings →</span>
+                          </Link>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  if (isSessionAuthError) {
+                    return (
+                      <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-900 dark:text-amber-200 space-y-2">
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                          <div className="space-y-1">
+                            <div className="font-bold text-amber-800 dark:text-amber-300">
+                              GST Portal Session Expired
+                            </div>
+                            <p className="text-[11px] leading-relaxed text-muted-foreground">
+                              {syncError}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="pt-1">
+                          <Link
+                            href="/settings"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg text-xs font-semibold transition-colors"
+                          >
+                            <span>Reconnect GST Portal in Settings →</span>
+                          </Link>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-xs text-rose-500 flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <span>{syncError}</span>
+                    </div>
+                  );
+                })()}
 
                 {syncSuccess && (
                   <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
@@ -1255,13 +1344,28 @@ export default function VendorITCRiskShieldPage() {
                               pr.is_form_not_applicable ||
                               (pr.error_message && pr.error_message.toLowerCase().includes("not applicable"));
 
+                            const isApiDisabled =
+                              pr.status === "API_ACCESS_DISABLED" ||
+                              pr.error_category === "API_ACCESS_DISABLED" ||
+                              (pr.error_message && (pr.error_message.toLowerCase().includes("privilege") || pr.error_message.toLowerCase().includes("api access")));
+
                             const invCount = pr.invoice_count ?? pr.invoices_ingested ?? 0;
                             const recCount = pr.records_created ?? pr.invoices_reconciled ?? 0;
 
                             return (
                               <tr key={pr.period} className="hover:bg-muted/30">
-                                <td className="p-2.5 font-mono font-medium text-foreground">
-                                  {formatPeriodLabel(pr.period)}
+                                <td className="p-2.5 font-medium text-foreground">
+                                  <div className="font-mono">{formatPeriodLabel(pr.period)}</div>
+                                  {pr.error_message && !isSuccess && !isNotApplicable && (
+                                    <div
+                                      className="text-[10px] text-rose-500 font-sans font-normal mt-0.5 max-w-[200px] leading-tight"
+                                      title={pr.error_message}
+                                    >
+                                      {isApiDisabled
+                                        ? "API Access Disabled on Portal"
+                                        : (pr.error_message.length > 35 ? `${pr.error_message.slice(0, 35)}...` : pr.error_message)}
+                                    </div>
+                                  )}
                                 </td>
                                 <td className="p-2.5">
                                   {isSuccess ? (
@@ -1298,7 +1402,8 @@ export default function VendorITCRiskShieldPage() {
                                       className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/10 text-rose-500 border border-rose-500/20"
                                       title={pr.error_message || "Sync failed"}
                                     >
-                                      <XCircle className="w-3 h-3" /> Failed
+                                      <XCircle className="w-3 h-3" />
+                                      {isApiDisabled ? "API Disabled" : "Failed"}
                                     </span>
                                   )}
                                 </td>
@@ -1327,6 +1432,46 @@ export default function VendorITCRiskShieldPage() {
                       </div>
                     )}
 
+                    {/* Government GST Portal Action Required Banner (API Access / Privilege error) */}
+                    {periodResults.some(
+                      (pr) =>
+                        pr.status === "API_ACCESS_DISABLED" ||
+                        pr.error_category === "API_ACCESS_DISABLED" ||
+                        (pr.error_message && (pr.error_message.toLowerCase().includes("privilege") || pr.error_message.toLowerCase().includes("api access")))
+                    ) && (
+                      <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-900 dark:text-amber-200 space-y-2">
+                        <div className="font-bold flex items-center gap-1.5 text-amber-800 dark:text-amber-300">
+                          <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                          <span>Government GST Portal Action Required</span>
+                        </div>
+                        <p className="text-[11px] leading-relaxed text-muted-foreground">
+                          All failed periods above encountered <code className="font-mono text-rose-500 bg-rose-500/10 px-1 py-0.5 rounded">Insufficient privilege</code> from the official GST Portal. API access must be activated on the government portal before statements can be downloaded.
+                        </p>
+                        <ol className="list-decimal list-inside space-y-0.5 text-[11px] text-muted-foreground">
+                          <li>Log in to <strong className="text-foreground">services.gst.gov.in</strong></li>
+                          <li>Go to <strong className="text-foreground">My Profile &gt; Manage API Access</strong></li>
+                          <li>Set <strong className="text-foreground">&apos;Enable API Request&apos;</strong> to <strong className="text-emerald-600 dark:text-emerald-400 font-bold">Yes</strong> (duration: 30 days) and Save</li>
+                          <li>Authorize <strong className="text-foreground">Quicko Infosoft</strong> as GSP</li>
+                        </ol>
+                        <div className="pt-1 flex flex-wrap items-center gap-2">
+                          <a
+                            href="https://services.gst.gov.in"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[11px] font-semibold flex items-center gap-1 transition-colors shadow-sm"
+                          >
+                            <ExternalLink className="w-3 h-3" /> Open services.gst.gov.in ↗
+                          </a>
+                          <Link
+                            href="/settings"
+                            className="px-3 py-1.5 bg-muted hover:bg-muted/80 text-foreground rounded-lg text-[11px] font-semibold flex items-center gap-1 transition-colors border border-border"
+                          >
+                            Reconnect in Settings →
+                          </Link>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Retry Button for Failed Periods (transient/network/portal errors) */}
                     {failedPeriods.filter((p) => {
                       const match = periodResults.find((pr) => pr.period === p);
@@ -1338,7 +1483,7 @@ export default function VendorITCRiskShieldPage() {
                     }).length > 0 && (
                       <div className="flex items-center justify-between p-2.5 rounded-xl bg-rose-500/5 border border-rose-500/20">
                         <span className="text-[11px] text-muted-foreground">
-                          Some periods failed due to temporary network or portal errors.
+                          Failed periods can be retried once API access is active.
                         </span>
                         <button
                           type="button"

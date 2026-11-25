@@ -152,15 +152,16 @@ def get_structured_gst_error(
             "correlation_id": cid,
         }
 
-    # 4. API Access disabled on government portal
+    # 4. API Access disabled on government portal or insufficient privileges
     if any(phrase in raw_lower for phrase in [
         "api access", "enable api", "manage api access", "duration",
         "api_access_disabled", "access is disabled", "access not enabled", "gsp access",
-        "api access is disabled", "api access is not enabled", "api access disabled"
+        "api access is disabled", "api access is not enabled", "api access disabled",
+        "insufficient privilege", "insufficient privileges", "privilege", "unauthorized access"
     ]):
         return {
             "code": "API_ACCESS_DISABLED",
-            "message": "GST API access is currently disabled for this GST registration. Please enable API access in your GST Portal account and try again.",
+            "message": "GST API access is disabled or has insufficient privileges on the GST Portal. Please log in to services.gst.gov.in > My Profile > Manage API Access, set Enable API Request to 'Yes' (30 days), select Quicko as GSP, and reconnect.",
             "action": "ENABLE_PORTAL_API_ACCESS",
             "portal_help": PORTAL_HELP_GUIDE,
             "correlation_id": cid,

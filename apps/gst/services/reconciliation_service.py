@@ -139,9 +139,21 @@ class GSTReconciliationService:
                     f"Under QRMP (Quarterly Return Monthly Payment), official GSTR-2B statements are generated "
                     f"on quarter-end months ({qe_period} for {q_lbl}), or preceding returns may be pending on the GST Portal."
                 )
+            elif any(t in raw_err.lower() for t in ["privilege", "api access", "access is disabled", "access not enabled", "insufficient privilege"]):
+                err_cat = "API_ACCESS_DISABLED"
+                auth_st = "AUTHENTICATION_REQUIRED"
+                err_msg = (
+                    "GST API access is disabled or has insufficient privileges on the GST Portal for this GSTIN. "
+                    "Please log in to services.gst.gov.in > My Profile > Manage API Access, set Enable API Request to 'Yes' (30 days), "
+                    "select Quicko as GSP, and reconnect your GST Portal session under Settings."
+                )
             elif "session" in raw_err.lower() or "token" in raw_err.lower() or "auth" in raw_err.lower() or "otp" in raw_err.lower():
                 err_cat = "AUTHENTICATION_REQUIRED"
                 auth_st = "AUTHENTICATION_REQUIRED"
+                err_msg = (
+                    "Your GST Portal connection session has expired or is invalid. "
+                    "Please reconnect under Settings > Government GST Portal Integration."
+                )
 
             is_not_app = (err_cat == "FORM_NOT_APPLICABLE")
             # Authoritative Filing Frequency Interface (Round 2.4.3 P1):
@@ -152,7 +164,7 @@ class GSTReconciliationService:
                 is_not_app and is_qrmp_interim and verified_freq == 'QRMP'
             )
 
-            if err_cat != "AUTHENTICATION_REQUIRED" and not is_qrmp_not_app:
+            if err_cat not in ["AUTHENTICATION_REQUIRED", "API_ACCESS_DISABLED"] and not is_qrmp_not_app:
                 # Record REQUEST_FAILED lifecycle entry outside ingestion transaction (Section 6)
                 GSTR2BImport.objects.create(
                     company=company,
@@ -167,17 +179,20 @@ class GSTReconciliationService:
                     source_info='SANDBOX_API'
                 )
 
+            outcome_st = "NOT_APPLICABLE" if is_qrmp_not_app else ("API_ACCESS_DISABLED" if err_cat == "API_ACCESS_DISABLED" else ("AUTHENTICATION_REQUIRED" if err_cat == "AUTHENTICATION_REQUIRED" else "PROVIDER_ERROR"))
             return {
                 "success": False,
-                "status": "NOT_APPLICABLE" if is_qrmp_not_app else ("PROVIDER_ERROR" if err_cat != "AUTHENTICATION_REQUIRED" else "AUTHENTICATION_REQUIRED"),
+                "status": outcome_st,
                 "fetch_status": "NOT_APPLICABLE" if is_qrmp_not_app else "REQUEST_FAILED",
                 "auth_status": auth_st,
                 "ingestion_status": "SKIPPED",
                 "reconciliation_status": "NOT_RECONCILED",
                 "error_category": err_cat,
+                "error_code": err_cat,
                 "is_form_not_applicable": is_qrmp_not_app,
                 "is_qrmp_not_applicable": is_qrmp_not_app,
                 "error": err_msg,
+                "period": norm_period,
                 "return_period": norm_period,
                 "actual_statement_period": None,
                 "period_label": period_info.period_label,
@@ -259,6 +274,7 @@ class GSTReconciliationService:
             "import_batch_id": str(import_batch.id),
             "batch_status": getattr(import_batch, 'status', 'PROCESSED'),
             "is_empty_statement": bool(getattr(import_batch, 'is_empty_statement', False)),
+            "period": norm_period,
             "return_period": norm_period,
             "actual_statement_period": norm_period,
             "from_period": norm_period,
@@ -433,7 +449,8 @@ class GSTReconciliationService:
                     })
                 else:
                     err_msg = single_res.get("error") or "Failed to sync return period."
-                    err_cat = single_res.get("error_category") or "PROVIDER_ERROR"
+                    err_cat = single_res.get("error_category") or single_res.get("error_code") or "PROVIDER_ERROR"
+                    period_st = "API_ACCESS_DISABLED" if err_cat == "API_ACCESS_DISABLED" else ("AUTHENTICATION_REQUIRED" if err_cat == "AUTHENTICATION_REQUIRED" else "FAILED")
                     failed_periods.append({
                         "period": p_str,
                         "period_label": p_info.period_label,
@@ -443,7 +460,7 @@ class GSTReconciliationService:
                     period_results.append({
                         "period": p_str,
                         "period_label": p_info.period_label,
-                        "status": "FAILED",
+                        "status": period_st,
                         "actual_statement_period": None,
                         "gstin": single_res.get("gstin") or (registration.gstin if registration else None),
                         "filing_frequency": single_res.get("filing_frequency") or (registration.get_verified_filing_frequency() if (registration and hasattr(registration, 'get_verified_filing_frequency')) else 'UNKNOWN'),
@@ -458,6 +475,7 @@ class GSTReconciliationService:
                         "records_unchanged": 0,
                         "records_rejected": 0,
                         "error_category": err_cat,
+                        "error_code": err_cat,
                         "error_message": err_msg
                     })
 
@@ -501,7 +519,20 @@ class GSTReconciliationService:
             else:
                 overall_status = "FAILED"
                 overall_success = False
-                msg = f"Failed to synchronize return periods from GST Portal ({failed_p} failed)."
+                all_api_disabled = bool(failed_periods and all(p.get("error_category") == "API_ACCESS_DISABLED" for p in failed_periods))
+                all_auth = bool(failed_periods and all(p.get("error_category") in ["AUTHENTICATION_REQUIRED", "API_ACCESS_DISABLED"] for p in failed_periods))
+                if all_api_disabled:
+                    overall_status = "API_ACCESS_DISABLED"
+                    msg = (
+                        "GST API access is disabled or has insufficient privileges on the GST Portal. "
+                        "Please log in to services.gst.gov.in > My Profile > Manage API Access, set Enable API Request to 'Yes' (30 days), "
+                        "select Quicko as GSP, and reconnect your GST Portal under Settings."
+                    )
+                elif all_auth:
+                    overall_status = "AUTHENTICATION_REQUIRED"
+                    msg = "GST Portal connection session has expired or is invalid. Please reconnect under Settings > Government GST Portal Integration."
+                else:
+                    msg = f"Failed to synchronize return periods from GST Portal ({failed_p} failed)."
 
             sync_attempt.status = overall_status if overall_status != "EMPTY_SUCCESS" else "SUCCESS"
             sync_attempt.total_invoices_ingested = total_unique_invoices
