@@ -162,6 +162,39 @@ class GSTReconciliationService:
                     "Please reconnect under Settings > Government GST Portal Integration."
                 )
 
+            # Invalidate stale local session and notify user when the government gateway rejects authentication
+            if err_cat in ["API_ACCESS_DISABLED", "AUTHENTICATION_REQUIRED"]:
+                try:
+                    from apps.gst.services.gst_sandbox_service import GSTPortalService
+                    GSTPortalService.clear_session_token(company, registration.gstin if registration else None)
+                except Exception as ex:
+                    logger.warning(f"Failed to clear expired GST session token for company {company.id}: {ex}")
+
+                if user and getattr(user, 'is_authenticated', False):
+                    try:
+                        from apps.notifications.services import NotificationService
+                        from apps.notifications.models import Notification
+
+                        has_pending = Notification.objects.filter(
+                            user=user,
+                            link="/settings",
+                            is_read=False,
+                            title__icontains="GST Portal"
+                        ).exists()
+                        if not has_pending:
+                            gstin_tag = f" for {registration.gstin}" if (registration and registration.gstin) else ""
+                            NotificationService.send_notification(
+                                user=user,
+                                title="GST Portal Session Reset",
+                                message=(
+                                    f"Your government GST Portal session{gstin_tag} has expired or was reset by the GST Portal. "
+                                    f"Please reconnect with OTP in Settings to continue syncing returns."
+                                ),
+                                link="/settings"
+                            )
+                    except Exception as ex:
+                        logger.warning(f"Failed to dispatch GST session expiry notification: {ex}")
+
             is_not_app = (err_cat == "FORM_NOT_APPLICABLE")
             # Authoritative Filing Frequency Interface (Round 2.4.3 P1):
             # Only treat as QRMP interim skip if QRMP is conclusively verified on registration.

@@ -463,6 +463,49 @@ class Round247MultiPeriodSyncWorkflowTests(TestCase):
         self.assertEqual(attempt.status, 'FAILED')
         self.assertIn('Database deadlock', attempt.error_message)
 
+    @patch('apps.gst.services.reconciliation_service.SandboxGSTClient')
+    def test_13_insufficient_privilege_clears_token_and_dispatches_notification(self, mock_client_cls):
+        """When provider returns Insufficient privilege / authentication error, session token is cleared and notification is created."""
+        from apps.notifications.models import Notification
+        from apps.gst.models import CompanyGSTConfig
+        config, _ = CompanyGSTConfig.objects.get_or_create(company=self.company)
+        self.registration.auth_token = "stale_token_before_maintenance"
+        self.registration.save(update_fields=['auth_token'])
+        config.auth_token = "stale_token_before_maintenance"
+        config.save(update_fields=['auth_token'])
+
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.is_configured.return_value = True
+        mock_client.fetch_gstr2b.return_value = {
+            "success": False,
+            "status_code": 400,
+            "error": "Insufficient privilege",
+            "error_category": "API_ACCESS_DISABLED"
+        }
+
+        res = GSTReconciliationService.fetch_and_ingest_from_sandbox(
+            company=self.company,
+            registration=self.registration,
+            return_period="102026",
+            user=self.user
+        )
+        self.assertFalse(res['success'])
+        self.assertEqual(res['status'], 'API_ACCESS_DISABLED')
+
+        # 1. Local session token must be cleared so Settings does not falsely report Connected
+        self.registration.refresh_from_db()
+        config.refresh_from_db()
+        self.assertEqual(self.registration.auth_token, '')
+        self.assertIsNone(self.registration.token_expires_at)
+        self.assertEqual(config.auth_token, '')
+
+        # 2. In-app notification must be delivered to the user
+        notif = Notification.objects.filter(user=self.user, link="/settings").first()
+        self.assertIsNotNone(notif)
+        self.assertIn("GST Portal", notif.title)
+        self.assertIn("reconnect with OTP", notif.message)
+
 
 class Round247AccountingAndIsolationInvariantTests(TestCase):
     """
