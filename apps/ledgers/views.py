@@ -23,9 +23,12 @@ class LedgerGroupListView(APIView):
             return [IsAuthenticated(), IsCompanyMember()]
         return [IsAuthenticated(), CanManageLedgers()]
 
-    def get(self, request, company_id):
+    def get(self, request, company_id=None):
         try:
-            company = get_authorized_company(request, company_id)
+            cid = company_id or request.query_params.get('company_id') or request.headers.get('X-Company-ID')
+            if not cid:
+                return Response({"success": False, "error": "company_id is required either in URL path, query params, or X-Company-ID header."}, status=400)
+            company = get_authorized_company(request, cid)
             groups = LedgerGroup.objects.filter(company=company).order_by('nature', 'name')
             data = [
                 {
@@ -41,9 +44,12 @@ class LedgerGroupListView(APIView):
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
 
-    def post(self, request, company_id):
+    def post(self, request, company_id=None):
         try:
-            company = get_authorized_company(request, company_id)
+            cid = company_id or request.data.get('company_id') or request.query_params.get('company_id') or request.headers.get('X-Company-ID')
+            if not cid:
+                return Response({"success": False, "error": "company_id is required."}, status=400)
+            company = get_authorized_company(request, cid)
             data = request.data
             name = str(data.get('name') or '').strip()
             nature = str(data.get('nature') or 'ASSET').strip().upper()
@@ -249,9 +255,12 @@ class LedgerListView(APIView):
             return [IsAuthenticated(), IsCompanyMember()]
         return [IsAuthenticated(), CanManageLedgers()]
     
-    def get(self, request, company_id):
+    def get(self, request, company_id=None):
         try:
-            company = get_authorized_company(request, company_id)
+            cid = company_id or request.query_params.get('company_id') or request.headers.get('X-Company-ID')
+            if not cid:
+                return Response({"success": False, "error": "company_id is required either in URL path, query params, or X-Company-ID header."}, status=400)
+            company = get_authorized_company(request, cid)
             
             # Enforce strict GST separation & auto-heal historical entries
             # REMOVED: SalesInvoiceService.reassign_misallocated_tax_entries(company)
@@ -266,6 +275,27 @@ class LedgerListView(APIView):
                 qs = qs.filter(is_archived=True)
             else:
                 qs = qs.filter(is_archived=False)
+
+            # Party / Ledger type filtering (e.g. ?ledger_type=SUPPLIER)
+            ledger_type = request.query_params.get('ledger_type')
+            if ledger_type:
+                lt_clean = ledger_type.strip().upper()
+                if lt_clean == 'SUPPLIER':
+                    qs = qs.filter(
+                        Q(ledger_type__iexact='SUPPLIER') |
+                        Q(ledger_type__iexact='BOTH') |
+                        Q(group__name__icontains='creditor') |
+                        Q(group__name__icontains='supplier')
+                    )
+                elif lt_clean == 'CUSTOMER':
+                    qs = qs.filter(
+                        Q(ledger_type__iexact='CUSTOMER') |
+                        Q(ledger_type__iexact='BOTH') |
+                        Q(group__name__icontains='debtor') |
+                        Q(group__name__icontains='customer')
+                    )
+                else:
+                    qs = qs.filter(ledger_type__iexact=lt_clean)
 
             ledgers = qs.order_by('name')
 
@@ -332,9 +362,12 @@ class LedgerListView(APIView):
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=400)
 
-    def post(self, request, company_id):
+    def post(self, request, company_id=None):
         try:
-            company = get_authorized_company(request, company_id)
+            cid = company_id or request.data.get('company_id') or request.query_params.get('company_id') or request.headers.get('X-Company-ID')
+            if not cid:
+                return Response({"success": False, "error": "company_id is required."}, status=400)
+            company = get_authorized_company(request, cid)
             data = request.data
             
             name = str(data.get('name') or '').strip()

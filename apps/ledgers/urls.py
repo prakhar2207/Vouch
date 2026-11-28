@@ -7,6 +7,8 @@ from .views import (
 from apps.accounting.views import LedgerStatementAPIView
 
 urlpatterns = [
+    path('', LedgerListView.as_view(), name='ledger-list-query'),
+    path('groups/', LedgerGroupListView.as_view(), name='ledger-groups-query'),
     path('<uuid:company_id>/', LedgerListView.as_view(), name='ledger-list'),
     path('<uuid:company_id>/groups/', LedgerGroupListView.as_view(), name='ledger-groups'),
     path('<uuid:company_id>/merge-preview/', PartyMergePreviewView.as_view(), name='party-merge-preview'),

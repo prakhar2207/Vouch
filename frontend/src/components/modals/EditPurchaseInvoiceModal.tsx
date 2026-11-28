@@ -31,6 +31,7 @@ interface EditableItem {
   quantity: number;
   unit: string;
   rate: number;
+  discount_percent?: number;
   gst_rate: number;
   description?: string;
 }
@@ -178,6 +179,7 @@ export default function EditPurchaseInvoiceModal({
           quantity: parseFloat(item.quantity) || 1,
           unit: item.unit || "PCS",
           rate: parseFloat(item.rate) || 0,
+          discount_percent: parseFloat(item.discount_percent) || 0,
           gst_rate: parseFloat(item.gst_rate) || 18,
           description: item.description || "",
         }));
@@ -192,6 +194,7 @@ export default function EditPurchaseInvoiceModal({
             quantity: 1,
             unit: "PCS",
             rate: 0,
+            discount_percent: 0,
             gst_rate: 18,
           });
         }
@@ -227,6 +230,7 @@ export default function EditPurchaseInvoiceModal({
         quantity: 1,
         unit: "PCS",
         rate: 0,
+        discount_percent: 0,
         gst_rate: 18,
       },
     ]);
@@ -300,6 +304,7 @@ export default function EditPurchaseInvoiceModal({
         hsn_code: hsn,
         unit: prod.unit || current.unit || "PCS",
         rate: price,
+        discount_percent: current.discount_percent || 0,
         gst_rate: gst,
       };
       return copy;
@@ -324,11 +329,16 @@ export default function EditPurchaseInvoiceModal({
   };
 
   // Calculations
-  const taxableTotal = items.reduce((acc, item) => acc + (item.quantity * item.rate), 0);
-  const totalTax = items.reduce(
-    (acc, item) => acc + (item.quantity * item.rate * (item.gst_rate / 100)),
-    0
-  );
+  const taxableTotal = items.reduce((acc, item) => {
+    const gross = item.quantity * item.rate;
+    const disc = gross * ((item.discount_percent || 0) / 100);
+    return acc + (gross - disc);
+  }, 0);
+  const totalTax = items.reduce((acc, item) => {
+    const gross = item.quantity * item.rate;
+    const disc = gross * ((item.discount_percent || 0) / 100);
+    return acc + (gross - disc) * (item.gst_rate / 100);
+  }, 0);
   const unroundedGrandTotal = taxableTotal + totalTax;
   let grandTotal = 0;
   let roundOff = 0;
@@ -389,6 +399,7 @@ export default function EditPurchaseInvoiceModal({
           hsn_code: it.hsn_code.trim(),
           quantity: it.quantity,
           rate: it.rate,
+          discount_percent: it.discount_percent || 0,
           unit: it.unit.trim().toUpperCase() || "PCS",
           gst_rate: it.gst_rate,
           description: it.description || "",
@@ -559,7 +570,7 @@ export default function EditPurchaseInvoiceModal({
               </div>
 
               <div className="border border-border/70 rounded-xl overflow-visible">
-                <table className="w-full min-w-[620px] text-xs text-left border-collapse">
+                <table className="w-full min-w-[680px] text-xs text-left border-collapse">
                   <thead className="bg-muted/60 border-b border-border text-muted-foreground uppercase text-xs tracking-wider font-semibold">
                     <tr>
                       <th className="p-2.5 w-6 text-center">#</th>
@@ -570,6 +581,7 @@ export default function EditPurchaseInvoiceModal({
                       <th className="p-2.5 w-18 text-right">Qty</th>
                       <th className="p-2.5 w-14 text-center">Unit</th>
                       <th className="p-2.5 w-22 text-right">Rate (₹)</th>
+                      <th className="p-2.5 w-18 text-right">Disc %</th>
                       <th className="p-2.5 w-18 text-right">GST %</th>
                       <th className="p-2.5 w-24 text-right">Total (₹)</th>
                       <th className="p-2.5 w-10 text-center"></th>
@@ -577,7 +589,9 @@ export default function EditPurchaseInvoiceModal({
                   </thead>
                   <tbody className="divide-y divide-border/40">
                     {items.map((item, idx) => {
-                      const lineTaxable = item.quantity * item.rate;
+                      const gross = item.quantity * item.rate;
+                      const disc = gross * ((item.discount_percent || 0) / 100);
+                      const lineTaxable = gross - disc;
                       const lineTax = lineTaxable * (item.gst_rate / 100);
                       const lineTotal = lineTaxable + lineTax;
 
@@ -771,6 +785,19 @@ export default function EditPurchaseInvoiceModal({
                               value={item.rate}
                               onChange={(e) => updateItemField(idx, "rate", parseFloat(e.target.value) || 0)}
                               className="w-full min-h-[32px] bg-background/50 border border-border/60 text-foreground font-mono tabular-nums px-2 py-1 rounded-md outline-none focus:border-primary focus:bg-background text-right font-bold text-xs"
+                            />
+                          </td>
+
+                          {/* Discount % */}
+                          <td className="p-2 text-right">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              max="100"
+                              value={item.discount_percent ?? 0}
+                              onChange={(e) => updateItemField(idx, "discount_percent", parseFloat(e.target.value) || 0)}
+                              className="w-full min-h-[32px] bg-background/50 border border-border/60 text-amber-500 font-mono tabular-nums text-xs px-1.5 py-1 rounded-md outline-none text-right font-bold focus:border-primary focus:bg-background"
                             />
                           </td>
 

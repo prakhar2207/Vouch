@@ -490,3 +490,64 @@ class BillingAndSubscriptionTests(TestCase):
         # Attempting with competitor's company_id should return 403 (unauthorized company)
         response = self.client.get(f"{url}?company_id={self.other_company.id}")
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    # ==========================================
+    # 9. Enterprise Grant & Custom Operational Limit Overrides
+    # ==========================================
+
+    def test_grant_enterprise_subscription_and_custom_quotas(self):
+        """Administrative grant of Enterprise subscription unlocks all features and custom quotas."""
+        # 1. Simulate quota exhaustion on baseline free tier
+        DailyUsageTracker.objects.create(
+            company=self.company,
+            metric="ocr_fast_scans",
+            date=timezone.localdate(),
+            count=2
+        )
+        # Verify blocked on baseline (max_limit=2)
+        allowed, current, max_lim = EntitlementService.check_and_increment_usage(
+            self.company.id, "ocr_fast_scans", "ocr_fast_daily"
+        )
+        self.assertFalse(allowed)
+        self.assertEqual(current, 2)
+        self.assertEqual(max_lim, 2)
+
+        # 2. Grant Enterprise subscription with elevated quotas
+        sub = EntitlementService.grant_enterprise_subscription(
+            company_id=self.company.id,
+            user_id=self.user.id,
+            days=3650,
+            custom_limits={"ocr_fast_daily": 1000, "ocr_deep_daily": 200},
+            notes="Administrative test grant"
+        )
+        self.assertEqual(sub.status, "active")
+        self.assertEqual(sub.plan_id, "enterprise")
+
+        # 3. Verify company entitlements reflect all features and custom limits
+        entitlements = EntitlementService.get_company_entitlements(self.company.id)
+        self.assertTrue(entitlements["has_active_subscription"])
+        self.assertEqual(entitlements["plan_id"], "enterprise")
+        self.assertEqual(entitlements["limits"]["ocr_fast_daily"], 1000)
+        self.assertEqual(entitlements["limits"]["ocr_deep_daily"], 200)
+
+        # All BI & Enterprise features must be True
+        for feat_key in [
+            "b2b_edi_network", "sales_invoicing", "double_entry_accounting",
+            "gst_compliance", "inventory_management", "banking_reconciliation",
+            "offline_pwa", "audit_trail", "bi_sales_timeline", "bi_monthly_trajectory",
+            "bi_brand_mix", "bi_sales_forecast", "bi_rfm_segmentation",
+            "bi_inventory_turnover", "bi_pareto_matrix", "bi_churn_radar", "bi_cash_cycle"
+        ]:
+            self.assertTrue(
+                EntitlementService.check_feature_access(self.company.id, feat_key),
+                f"Feature {feat_key} must be enabled on Enterprise tier!"
+            )
+
+        # 4. Verify usage tracker was reset and subsequent OCR request succeeds
+        allowed, new_count, max_lim = EntitlementService.check_and_increment_usage(
+            self.company.id, "ocr_fast_scans", "ocr_fast_daily"
+        )
+        self.assertTrue(allowed)
+        self.assertEqual(new_count, 1)
+        self.assertEqual(max_lim, 1000)
+

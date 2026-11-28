@@ -1,4 +1,5 @@
 import logging
+from datetime import timedelta
 from typing import Dict, Any, Tuple, Optional
 from django.utils import timezone
 from django.db import transaction
@@ -68,6 +69,18 @@ class EntitlementService:
         sub = cls.get_company_subscription(company_id)
         if sub and sub.plan:
             plan = sub.plan
+            features = dict(plan.features)
+            limits = dict(plan.limits)
+
+            # Support subscription-level overrides via metadata (e.g. enterprise promotions or internal quotas)
+            if isinstance(sub.metadata, dict):
+                custom_feats = sub.metadata.get("features")
+                if isinstance(custom_feats, dict):
+                    features.update(custom_feats)
+                custom_lims = sub.metadata.get("limits")
+                if isinstance(custom_lims, dict):
+                    limits.update(custom_lims)
+
             return {
                 "has_active_subscription": True,
                 "subscription_id": str(sub.id),
@@ -78,8 +91,8 @@ class EntitlementService:
                 "current_period_start": sub.current_period_start.isoformat(),
                 "current_period_end": sub.current_period_end.isoformat(),
                 "next_billing_at": sub.next_billing_at.isoformat() if sub.next_billing_at else None,
-                "features": dict(plan.features),
-                "limits": dict(plan.limits),
+                "features": features,
+                "limits": limits,
             }
 
         # Baseline fallback
@@ -153,3 +166,84 @@ class EntitlementService:
             date=today
         ).first()
         return tracker.count if tracker else 0
+
+    @classmethod
+    def reset_company_usage(cls, company_id, metric: Optional[str] = None) -> int:
+        """
+        Resets daily usage trackers for the company, immediately unblocking rate-limited actions.
+        """
+        qs = DailyUsageTracker.objects.filter(company_id=company_id)
+        if metric:
+            qs = qs.filter(metric=metric)
+        deleted_count, _ = qs.delete()
+        return deleted_count
+
+    @classmethod
+    def grant_enterprise_subscription(
+        cls,
+        company_id,
+        user_id=None,
+        days: int = 3650,
+        custom_limits: Optional[Dict[str, int]] = None,
+        custom_features: Optional[Dict[str, bool]] = None,
+        notes: str = "Enterprise access grant"
+    ) -> Subscription:
+        """
+        Grants or upgrades a company to the Enterprise tier with long-term validity
+        and elevated operational quotas.
+        """
+        cls.sync_default_plans()
+
+        enterprise_plan = SubscriptionPlan.objects.get(id="enterprise")
+        now = timezone.now()
+        period_end = now + timedelta(days=days)
+
+        merged_limits = dict(enterprise_plan.limits)
+        # Default generous quotas for administrative grants
+        merged_limits.update({
+            "ocr_fast_daily": 1000,
+            "ocr_deep_daily": 200,
+        })
+        if custom_limits:
+            merged_limits.update(custom_limits)
+
+        metadata = {
+            "granted_by": "system_admin",
+            "notes": notes,
+            "limits": merged_limits,
+        }
+        if custom_features:
+            metadata["features"] = custom_features
+
+        with transaction.atomic():
+            sub = Subscription.objects.filter(company_id=company_id).first()
+            if sub:
+                sub.plan = enterprise_plan
+                sub.status = "active"
+                sub.billing_interval = "annual"
+                sub.current_period_start = now
+                sub.current_period_end = period_end
+                sub.cancelled_at = None
+                sub.ended_at = None
+                if user_id:
+                    sub.user_id = user_id
+                sub.metadata = metadata
+                sub.save()
+            else:
+                sub = Subscription.objects.create(
+                    company_id=company_id,
+                    user_id=user_id,
+                    plan=enterprise_plan,
+                    billing_interval="annual",
+                    status="active",
+                    current_period_start=now,
+                    current_period_end=period_end,
+                    metadata=metadata
+                )
+
+            # Reset usage trackers so company is unblocked immediately
+            cls.reset_company_usage(company_id)
+
+        logger.info(f"Granted Enterprise subscription to company={company_id} until {period_end.isoformat()}")
+        return sub
+

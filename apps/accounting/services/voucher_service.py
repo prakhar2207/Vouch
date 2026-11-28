@@ -459,6 +459,22 @@ class VoucherService:
                 if rev_v:
                     rev_v.items.all().delete()
                     rev_v.ledger_entries.all().delete()
+                    try:
+                        from apps.gst.models import GSTReportingAllocation, GSTReversalReclaimLineage
+                        rev_allocs = GSTReportingAllocation.objects.filter(voucher=rev_v)
+                        rev_alloc_ids = list(rev_allocs.values_list('id', flat=True))
+                        if rev_alloc_ids:
+                            GSTReportingAllocation.objects.filter(id__in=rev_alloc_ids).update(
+                                is_active=False, status='EXCLUDED', source_reversal=None, superseded_by=None
+                            )
+                            GSTReportingAllocation.objects.filter(superseded_by_id__in=rev_alloc_ids).update(superseded_by=None)
+                            GSTReportingAllocation.objects.filter(source_reversal_id__in=rev_alloc_ids).update(source_reversal=None)
+                            GSTReversalReclaimLineage.objects.filter(
+                                Q(voucher=rev_v) | Q(reversal_allocation_id__in=rev_alloc_ids) | Q(reclaim_allocation_id__in=rev_alloc_ids)
+                            ).delete()
+                            GSTReportingAllocation.objects.filter(id__in=rev_alloc_ids).delete()
+                    except Exception:
+                        pass
                     rev_v.delete()
             except Exception:
                 pass
@@ -473,6 +489,39 @@ class VoucherService:
         # 8. Delete items and ledger entries
         voucher.items.all().delete()
         voucher.ledger_entries.all().delete()
+
+        # 8b. Statutory GST allocation integrity check & unfiled cleanup
+        try:
+            from apps.gst.models import GSTReportingAllocation, GSTReversalReclaimLineage
+            # Guard: Statutory Returns Invariant - Never delete an invoice filed or reported in official GST returns
+            allocs = GSTReportingAllocation.objects.filter(voucher=voucher)
+            if allocs.filter(status__in=['REPORTED', 'FILED']).exists():
+                raise ValidationError(
+                    f"Cannot delete voucher #{voucher_num} because it has already been reported or filed in a statutory GST return. "
+                    f"To adjust or reverse this transaction, please issue a Credit Note instead."
+                )
+
+            alloc_ids = list(allocs.values_list('id', flat=True))
+            if alloc_ids:
+                # Disconnect self-referential relations within the set to allow clean deletion
+                GSTReportingAllocation.objects.filter(id__in=alloc_ids).update(
+                    is_active=False,
+                    status='EXCLUDED',
+                    source_reversal=None,
+                    superseded_by=None
+                )
+                GSTReportingAllocation.objects.filter(superseded_by_id__in=alloc_ids).update(superseded_by=None)
+                GSTReportingAllocation.objects.filter(source_reversal_id__in=alloc_ids).update(source_reversal=None)
+
+                # Delete any associated reclaim lineages
+                GSTReversalReclaimLineage.objects.filter(
+                    Q(voucher=voucher) | Q(reversal_allocation_id__in=alloc_ids) | Q(reclaim_allocation_id__in=alloc_ids)
+                ).delete()
+
+                # Cleanly delete unfiled allocations
+                GSTReportingAllocation.objects.filter(id__in=alloc_ids).delete()
+        except ImportError:
+            pass
 
         # 9. Delete the voucher
         voucher.delete()
