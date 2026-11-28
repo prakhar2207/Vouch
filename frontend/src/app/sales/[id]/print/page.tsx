@@ -1364,7 +1364,7 @@ export default function PrintInvoicePage() {
 
   const renderA4Sheet = (sheet: SheetConfig, sheetIndex: number, totalSheets: number) => {
     const isSinglePage = sheet.isFirstPage && sheet.isLastPage;
-    const isCompactDensity = isSinglePage && sheet.pageItems.length > 8;
+    const isCompactDensity = isSinglePage && (sheet.pageItems.length > 6 || (showItemDescription && sheet.pageItems.length > 4));
 
     return (
       <div 
@@ -1385,7 +1385,7 @@ export default function PrintInvoicePage() {
               }
             : undefined
         }
-        className="invoice-print-sheet w-[210mm] max-w-[210mm] shrink-0 min-h-[270mm] print:min-h-0 print:h-full print:w-full print:max-w-none print:m-0 print:p-0 bg-white text-black p-6 sm:p-8 shadow-[0_0_15px_rgba(0,0,0,0.15)] print:shadow-none flex flex-col mx-auto print:static print:transform-none"
+        className="invoice-print-sheet w-[210mm] max-w-[210mm] shrink-0 min-h-[270mm] print:min-h-[270mm] print:h-full print:w-full print:max-w-none print:m-0 print:p-0 bg-white text-black p-6 sm:p-8 shadow-[0_0_15px_rgba(0,0,0,0.15)] print:shadow-none flex flex-col mx-auto print:static print:transform-none"
       >
         {/* Main Border Box */}
         <div className="border-2 border-black flex-1 flex flex-col justify-between">
@@ -1740,7 +1740,7 @@ export default function PrintInvoicePage() {
 
             {/* Bottom Footer Section */}
             {sheet.isLastPage && (
-            <div className={`flex ${isCompactDensity ? 'h-40 print:h-38 text-[10px]' : 'h-48 print:h-44 text-xs'} shrink-0`}>
+            <div className={`flex ${isCompactDensity ? 'h-40 print:h-36 text-[10px]' : 'h-48 print:h-38 text-xs'} shrink-0`}>
                 {/* Column 1: Terms */}
                 <div className="w-[45%] p-2 border-r-2 border-black flex flex-col justify-between">
                     <div>
@@ -1756,7 +1756,7 @@ export default function PrintInvoicePage() {
                 <div className="w-[20%] p-1.5 border-r-2 border-black flex flex-col items-center justify-between text-center">
                     <span className="font-bold text-[9px] mb-0.5">{getQrData().label}</span>
                     {typeof window !== 'undefined' && (
-                        <QRCode value={getQrData().value} size={isCompactDensity ? 72 : 92} className="mx-auto my-auto" />
+                        <QRCode value={getQrData().value} size={isCompactDensity ? 70 : 82} className="mx-auto my-auto" />
                     )}
                     <span className="text-[8px] text-slate-600 font-mono tracking-tighter text-center">{getQrData().sublabel}</span>
                 </div>
@@ -1830,7 +1830,7 @@ export default function PrintInvoicePage() {
               : `
             @page {
               size: A4 portrait;
-              margin: 0;
+              margin: 4mm 5mm;
             }
             html, body {
               height: 100% !important;
@@ -1842,18 +1842,19 @@ export default function PrintInvoicePage() {
             }
             .invoice-print-wrapper {
               box-sizing: border-box !important;
-              display: block !important;
+              display: flex !important;
+              flex-direction: column !important;
               width: 100% !important;
               max-width: 100% !important;
               min-width: 0 !important;
-              height: auto !important;
-              min-height: 100% !important;
-              max-height: none !important;
-              padding: 6mm 6mm !important;
-              margin: 0 !important;
+              height: 100% !important;
+              min-height: 270mm !important;
+              max-height: 275mm !important;
+              padding: 0 !important;
+              margin: 0 auto !important;
               page-break-inside: avoid !important;
               break-inside: avoid !important;
-              overflow: visible !important;
+              overflow: hidden !important;
             }
             .invoice-print-wrapper:not(:last-child) {
               page-break-after: always !important;
@@ -1868,13 +1869,17 @@ export default function PrintInvoicePage() {
               width: 100% !important;
               max-width: 100% !important;
               min-width: 0 !important;
-              height: auto !important;
-              min-height: 100% !important;
-              max-height: none !important;
-              overflow: visible !important;
-              position: static !important;
+              height: 100% !important;
+              min-height: 270mm !important;
+              max-height: 275mm !important;
+              display: flex !important;
+              flex-direction: column !important;
+              flex: 1 1 auto !important;
               margin: 0 !important;
+              padding: 0 !important;
               transform: none !important;
+              position: static !important;
+              overflow: hidden !important;
             }
             #invoice-sheet, .invoice-print-sheet {
               box-sizing: border-box !important;
@@ -1883,50 +1888,67 @@ export default function PrintInvoicePage() {
               width: 100% !important;
               max-width: 100% !important;
               min-width: 0 !important;
-              height: auto !important;
-              min-height: 100% !important;
-              max-height: none !important;
+              height: 100% !important;
+              min-height: 270mm !important;
+              max-height: 275mm !important;
               padding: 0 !important;
               margin: 0 !important;
               box-shadow: none !important;
               display: flex !important;
               flex-direction: column !important;
               justify-content: space-between !important;
+              flex: 1 1 auto !important;
               page-break-inside: avoid !important;
               break-inside: avoid !important;
               page-break-after: auto !important;
               break-after: auto !important;
-              overflow: visible !important;
+              overflow: hidden !important;
             }
             #invoice-sheet > .border-2, .invoice-print-sheet > .border-2 {
+              box-sizing: border-box !important;
+              width: 100% !important;
               height: 100% !important;
-              min-height: 0 !important;
+              min-height: 263mm !important;
               max-height: 100% !important;
               display: flex !important;
               flex-direction: column !important;
               justify-content: space-between !important;
-              box-sizing: border-box !important;
+              flex: 1 1 0% !important;
+              border-width: 2px !important;
+              border-color: #000000 !important;
             }
-            #invoice-sheet .invoice-items-table-container, .invoice-print-sheet .invoice-items-table-container {
-              flex: 1 1 auto !important;
+            #invoice-sheet > .border-2 > div:first-child,
+            .invoice-print-sheet > .border-2 > div:first-child {
+              flex: 1 1 0% !important;
+              min-height: 0 !important;
               display: flex !important;
               flex-direction: column !important;
-              min-height: 0 !important;
-              height: 100% !important;
             }
-            #invoice-sheet .invoice-items-table-container table, .invoice-print-sheet .invoice-items-table-container table {
-              height: 100% !important;
+            #invoice-sheet .invoice-items-table-container,
+            .invoice-print-sheet .invoice-items-table-container {
+              flex: 1 1 0% !important;
+              min-height: 40px !important;
+              display: flex !important;
+              flex-direction: column !important;
+              overflow: hidden !important;
+            }
+            #invoice-sheet .invoice-items-table-container table,
+            .invoice-print-sheet .invoice-items-table-container table {
               width: 100% !important;
+              height: 100% !important;
               display: table !important;
               border-collapse: collapse !important;
             }
-            #invoice-sheet .invoice-items-table-container tbody, .invoice-print-sheet .invoice-items-table-container tbody {
+            #invoice-sheet .invoice-items-table-container tbody,
+            .invoice-print-sheet .invoice-items-table-container tbody {
               height: 100% !important;
             }
-            #invoice-sheet .invoice-items-table-container tr.item-row, .invoice-print-sheet .invoice-items-table-container tr.item-row {
+            #invoice-sheet .invoice-items-table-container tr.item-row,
+            .invoice-print-sheet .invoice-items-table-container tr.item-row {
               height: 1px !important;
             }
-            #invoice-sheet .invoice-items-table-container tr.filler-row, .invoice-print-sheet .invoice-items-table-container tr.filler-row {
+            #invoice-sheet .invoice-items-table-container tr.filler-row,
+            .invoice-print-sheet .invoice-items-table-container tr.filler-row {
               height: auto !important;
             }
             `
